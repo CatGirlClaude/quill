@@ -25,9 +25,9 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] Record Phase 1 review answers in [docs/reports/phase-1-review.md](docs/reports/phase-1-review.md) and obtain user approval for ADR-003 (Option A) and [plans/001-mvp.md](plans/001-mvp.md).
 - [x] Document local testing workflow (`git clone` once, `git pull`, `./gradlew test`, `./gradlew runClient` across Windows/macOS/Linux) in [docs/MC_NOTES.md](docs/MC_NOTES.md) and remove hardcoded VM user paths.
 
-## Phase 2: MVP Implementation (Pending User Approval — see [plans/001-mvp.md](plans/001-mvp.md))
+## Phase 2: MVP Implementation (In Progress — see [plans/001-mvp.md](plans/001-mvp.md))
 
-- [ ] **Step 1 — Backend Core & Security (`src/main`)**: Define `EditorBackend` contract, DTOs, `PathSandbox` security validator, and `LocalEditorBackend` for singleplayer integrated server.
+- [x] **Step 1 — Backend Core & Security (`src/main`)**: Define `EditorBackend` contract, DTOs, `PathSandbox` security validator, and `LocalEditorBackend` for singleplayer integrated server.
 - [ ] **Step 2 — Preset & Scaffolding Engine (`src/main`)**: Implement `pack.mcmeta` generator (`min_format: 121, max_format: 121`), namespace/function scaffolding, and resource-driven presets (`minecraft:load`, `minecraft:tick`).
 - [ ] **Step 3 — Non-Pausing VS Code Shell & Keybinding (`src/client`)**: Register keybinding (`K` / configurable) to open `QuillIdeScreen` (`isPauseScreen() == false`) with dark VS Code layout (Activity Bar, Sidebar, Editor Area, Status Bar).
 - [ ] **Step 4 — World & Datapack File Explorer (`src/client`)**: Build interactive tree view for `datapacks/` supporting open, create file/folder, rename, and delete actions via `EditorBackend`.

@@ -232,7 +232,9 @@ public final class ClientEditorSession {
 			if (openTabs.get(i).relativePath().equals(relativePath)) {
 				activeTabIndex = i;
 				if (oneBasedLine > 0) {
-					openTabs.get(i).buffer().jumpToLine(oneBasedLine);
+					OpenTabState tab = openTabs.get(i);
+					tab.buffer().jumpToLine(oneBasedLine);
+					tab.requestScrollToCaret();
 				}
 				return;
 			}
@@ -247,6 +249,7 @@ public final class ClientEditorSession {
 			OpenTabState tab = openOrFocusDocument(doc);
 			if (oneBasedLine > 0) {
 				tab.buffer().jumpToLine(oneBasedLine);
+				tab.requestScrollToCaret();
 			}
 			setStatus("Opened " + tab.fileName(), false);
 		}));

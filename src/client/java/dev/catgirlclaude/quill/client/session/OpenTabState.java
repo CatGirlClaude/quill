@@ -14,6 +14,7 @@ public final class OpenTabState {
 	private String sha256;
 	private int scrollLine = 0;
 	private int scrollX = 0;
+	private boolean pendingScrollToCaret = false;
 
 	public OpenTabState(FileDocument document) {
 		Objects.requireNonNull(document, "document");
@@ -62,5 +63,17 @@ public final class OpenTabState {
 
 	public void setScrollX(int scrollX) {
 		this.scrollX = Math.max(0, scrollX);
+	}
+
+	public void requestScrollToCaret() {
+		this.pendingScrollToCaret = true;
+	}
+
+	public boolean consumeScrollToCaret() {
+		if (!pendingScrollToCaret) {
+			return false;
+		}
+		pendingScrollToCaret = false;
+		return true;
 	}
 }

@@ -149,3 +149,30 @@ Choosing Option A means we do not get browser DOM/CSS or pre-built tree/code wid
 - **Rationale**:
   - Guarantees that UI components in `src/client` make zero assumptions about local disk access or synchronous execution.
   - When multiplayer (`RemoteEditorBackend` using Fabric `CustomPacketPayload` C2S/S2C packets) is added in Phase 3, UI code does not need structural changes.
+
+---
+
+## ADR-005: Post-Reload Explicit Syntax Diagnostics (`DatapackReloadCoordinator`)
+
+- **Date**: 2026-11-17
+- **Status**: Accepted
+- **Context**:
+  In Minecraft `26.3`, `ServerFunctionLibrary.reload(...)` catches and logs per-`.mcfunction` syntax exceptions internally without failing the `CompletableFuture<Void>` returned by `MinecraftServer.reloadResources(...)`.
+- **Decision**:
+  After `PackRepository.reload()` and `server.reloadResources(...)` complete on the server thread, `DatapackReloadCoordinator` explicitly re-parses enabled directory datapacks in `<world>/datapacks/` using `CommandFunction.fromLines(...)` (with a `GAMEMASTER` compilation source) and Gson `JsonParser.parseString(...)`, capturing parse exceptions and extracted line numbers into `List<ReloadDiagnostic>`.
+- **Rationale**:
+  - Avoids brittle Log4j appender interception or Mixin hooks into vanilla `ServerFunctionLibrary`.
+  - Guarantees deterministic, file-anchored, line-numbered error banners with click-to-jump navigation inside `QuillIdeScreen`.
+
+---
+
+## ADR-006: Pure-Java Client Model Separation for Unit Testing
+
+- **Date**: 2026-11-17
+- **Status**: Accepted
+- **Context**:
+  Fabric Loom's `splitEnvironmentSourceSets()` isolates `src/client` from `src/test` by default, while `CodeEditorWidget` and `IdeLayout` contain critical cursor, selection, undo/redo, CRLF normalization, and viewport math prone to off-by-one regressions.
+- **Decision**:
+  Keep `TextDocumentBuffer` and `IdeLayout` free of client-only Minecraft/LWJGL class references (`java.*` + `QuillTheme` constants only) and expose `sourceSets.client.output` to `sourceSets.test` in `build.gradle`.
+- **Rationale**:
+  - Enables fast JUnit 5 regression testing (`./gradlew test`) for editor editing primitives and layout math in headless CI/VMs without spinning up OpenGL/LWJGL.

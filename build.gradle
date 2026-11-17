@@ -43,6 +43,13 @@ tasks.withType(JavaCompile).configureEach {
 	it.options.release = 25
 }
 
+sourceSets {
+	test {
+		compileClasspath += sourceSets.client.output
+		runtimeClasspath += sourceSets.client.output
+	}
+}
+
 test {
 	useJUnitPlatform()
 }

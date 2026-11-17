@@ -6,11 +6,11 @@ Single source of truth for project progress, planned tasks, optional feature pro
 
 - [x] Inspect environment (`git 2.39.5`, system OpenJDK 17) and install JDK 25 (`temurin-25.0.5+8`) in user space (`~/.jdks/temurin-25`).
 - [x] Confirm project metadata with user (`modid=quill`, `group=dev.catgirlclaude`, `package=dev.catgirlclaude.quill`, `author=CatGirlClaude`).
-- [ ] **Confirm and approve project license with user** (currently `MIT` in `LICENSE` and `fabric.mod.json` — awaiting explicit confirmation).
+- [x] Confirm and approve project license with user (`MIT` in `LICENSE` and `fabric.mod.json`).
 - [x] Generate Fabric `26.3` project skeleton with split `main` and `client` source sets (`loom.splitEnvironmentSourceSets()`).
 - [x] Configure `.gitignore`, `.gitattributes`, `LICENSE`, `fabric.mod.json`, and mixin configs.
 - [x] Verify `./gradlew build` and `./gradlew runClient` tasks on pinned Fabric Loom `1.19.4`.
-- [x] Create initial local commit for Phase 0 (push pending user approval).
+- [x] Create initial local commit for Phase 0 and push to remote repository.
 
 ## Phase 1: Architecture, Decisions & Documentation
 
@@ -22,7 +22,7 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] Create [docs/DECISIONS.md](docs/DECISIONS.md) (MC `26.3`, official Mojang mappings, custom `Screen` UI engine).
 - [x] Create [docs/MC_NOTES.md](docs/MC_NOTES.md) (MC `26.3` datapack folder names, `pack.mcmeta` `min_format`/`max_format`, unobfuscated Loom, GUI rendering).
 - [x] Create [plans/001-mvp.md](plans/001-mvp.md) (vertical-slice MVP implementation plan).
-- [ ] Present Phase 1 summary and wait for user approval before starting MVP implementation.
+- [x] Record Phase 1 review answers in [docs/reports/phase-1-review.md](docs/reports/phase-1-review.md) and obtain user approval for ADR-003 (Option A) and [plans/001-mvp.md](plans/001-mvp.md).
 
 ## Phase 2: MVP Implementation (Pending User Approval — see [plans/001-mvp.md](plans/001-mvp.md))
 

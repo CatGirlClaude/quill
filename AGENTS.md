@@ -27,7 +27,7 @@
   - `dev.catgirlclaude.quill.*` (`src/main/java`) — common data models, `EditorBackend` interface, local/server backend implementations, path/security validators, networking payloads, preset registry.
   - `dev.catgirlclaude.quill.client.*` (`src/client/java`) — keybindings, IDE `Screen`, UI layout/widgets, client backend adapter.
 - **Strict Client/Server Boundary**: Never reference `net.minecraft.client.*` from `src/main`. Even in singleplayer, all client UI file/reload actions MUST go through the `EditorBackend` interface.
-- **Commits**: Small, descriptive commits following **Conventional Commits** (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`). Never `git push` without explicit user approval.
+- **Commits & Pushing**: Small, descriptive commits following **Conventional Commits** (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`). Push to the remote repository (`git push`) after every commit.
 
 ## 4. Workflow Rules
 

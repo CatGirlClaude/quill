@@ -46,7 +46,7 @@ See [docs/DECISIONS.md](../DECISIONS.md) (`ADR-003`) for the authoritative decis
 
 ### 3a) Bytecode Source Confirming `GuiGraphicsExtractor` and `Screen.extractRenderState` in MC `26.3`
 
-- **Verified JAR Path**: `/home/antigravity/.gradle/caches/fabric-loom/26.3/minecraft-client-only.jar`
+- **Verified JAR Path**: `~/.gradle/caches/fabric-loom/26.3/minecraft-client-only.jar`
 - **`javap` output for `net.minecraft.client.gui.screens.Screen`**:
   ```text
   Compiled from "Screen.java"

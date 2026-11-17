@@ -11,12 +11,13 @@
 
 ## 2. Commands
 
-> In the cloud VM, use JDK 25 installed at `/home/antigravity/.jdks/temurin-25`:
-> `export JAVA_HOME=/home/antigravity/.jdks/temurin-25`
+> In the cloud VM, use JDK 25 installed in user space (`$HOME/.jdks/temurin-25`):
+> `export JAVA_HOME="$HOME/.jdks/temurin-25"`
 
 - **Build & verify**: `./gradlew build`
+- **Run unit tests**: `./gradlew test`
 - **Compile only**: `./gradlew compileJava compileClientJava`
-- **Run client (desktop)**: `./gradlew runClient`
+- **Run client (desktop)**: `./gradlew runClient` (or `.\gradlew.bat runClient` on Windows)
 - **Run client (headless VM smoke test)**: `xvfb-run -a ./gradlew runClient`
 - **Inspect MC/Fabric bytecode signatures**: `javap -cp <jar> <fully.qualified.ClassName>`
 
@@ -50,5 +51,5 @@
 | [TODO.md](TODO.md) | At the start and end of every task to check current progress, active scope, proposals, and `Inbox`. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Before adding/modifying packages, `EditorBackend` methods, client-server flows, or security checks. |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | When checking why MC `26.3`, Mojang mappings, or the UI approach were chosen, or before proposing new dependencies. |
-| [docs/MC_NOTES.md](docs/MC_NOTES.md) | Before writing datapack scaffolding (`pack.mcmeta`, `function/` folders, tags) or Minecraft `26.3` `Screen` / `GuiGraphicsExtractor` / reload code. |
+| [docs/MC_NOTES.md](docs/MC_NOTES.md) | Before writing datapack scaffolding (`pack.mcmeta`, `function/` folders, tags), Minecraft `26.3` `Screen` / `GuiGraphicsExtractor` / reload code, or checking local testing instructions. |
 | [plans/001-mvp.md](plans/001-mvp.md) | When implementing or reviewing any step of the MVP vertical slice. |

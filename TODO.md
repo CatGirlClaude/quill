@@ -20,9 +20,10 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] Create [TODO.md](TODO.md).
 - [x] Create [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (module boundaries, `EditorBackend` interface, multiplayer plan, server security).
 - [x] Create [docs/DECISIONS.md](docs/DECISIONS.md) (MC `26.3`, official Mojang mappings, custom `Screen` UI engine).
-- [x] Create [docs/MC_NOTES.md](docs/MC_NOTES.md) (MC `26.3` datapack folder names, `pack.mcmeta` `min_format`/`max_format`, unobfuscated Loom, GUI rendering).
+- [x] Create [docs/MC_NOTES.md](docs/MC_NOTES.md) (MC `26.3` datapack folder names, `pack.mcmeta` `min_format`/`max_format`, unobfuscated Loom, GUI rendering, and `Local testing` guide).
 - [x] Create [plans/001-mvp.md](plans/001-mvp.md) (vertical-slice MVP implementation plan).
 - [x] Record Phase 1 review answers in [docs/reports/phase-1-review.md](docs/reports/phase-1-review.md) and obtain user approval for ADR-003 (Option A) and [plans/001-mvp.md](plans/001-mvp.md).
+- [x] Document local testing workflow (`git clone` once, `git pull`, `./gradlew test`, `./gradlew runClient` across Windows/macOS/Linux) in [docs/MC_NOTES.md](docs/MC_NOTES.md) and remove hardcoded VM user paths.
 
 ## Phase 2: MVP Implementation (Pending User Approval — see [plans/001-mvp.md](plans/001-mvp.md))
 

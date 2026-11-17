@@ -138,3 +138,82 @@ KeyMappingHelper.registerKeyMapping(new KeyMapping(
   2. Call `packRepo.reload();` so newly created datapacks are discovered.
   3. Enable any newly discovered datapack IDs (`file/<packName>`) in the selected collection passed to `server.reloadResources(selectedIds)` (returns `CompletableFuture<Void>`).
   4. Must be invoked on the main `MinecraftServer` thread (`server.execute(...)`).
+
+---
+
+## 5. Local testing
+
+Follow this workflow to test Quill locally on your machine by cloning the repository **once** and pulling incremental updates (`git pull`) without re-downloading the project or losing local test worlds in `run/`.
+
+### 5.1 Prerequisites
+
+1. **Git**: Installed and available on `PATH`.
+2. **JDK 25**: Required by Minecraft `26.3` (`sourceCompatibility = 25`, `options.release = 25`).
+   - Recommended distributions: **Eclipse Temurin 25** (Adoptium), **Microsoft Build of OpenJDK 25**, or **Azul Zulu 25**.
+   - Verify with `java -version` (must report version `25.x`).
+   - If you have multiple JDKs installed, point `JAVA_HOME` to your JDK 25 installation (or pass `-Dorg.gradle.java.home=/path/to/jdk-25`).
+3. **No Global Gradle Required**:
+   - The repository includes the **Gradle Wrapper** (`gradlew`, `gradlew.bat`, and `gradle/wrapper/`), which automatically downloads and caches Gradle `9.8.2` inside your user home (`~/.gradle/wrapper/dists/` or `%USERPROFILE%\.gradle\wrapper\dists\`) on first run.
+   - No hardcoded machine paths exist in the build scripts (`build.gradle`, `gradle.properties`, `settings.gradle`).
+
+### 5.2 Platform Differences (Windows / macOS / Linux)
+
+| Action | Linux / macOS (`bash` / `zsh`) | Windows (PowerShell) | Windows (CMD) |
+| :--- | :--- | :--- | :--- |
+| **Wrapper script** | `./gradlew <task>` | `.\gradlew.bat <task>` | `gradlew.bat <task>` |
+| **Set `JAVA_HOME` (session)** | `export JAVA_HOME="/path/to/jdk-25"` | `$env:JAVA_HOME = "C:\path\to\jdk-25"` | `set "JAVA_HOME=C:\path\to\jdk-25"` |
+| **Make wrapper executable** | `chmod +x ./gradlew` (if needed) | Not needed | Not needed |
+| **macOS LWJGL thread flag** | Handled automatically by Fabric Loom (`-XstartOnFirstThread`) | N/A | N/A |
+
+### 5.3 Step-by-Step: Clone Once, Update with `git pull`, and Run
+
+#### Step 1 — Clone the repository once
+
+```bash
+git clone https://github.com/CatGirlClaude/quill.git
+cd quill
+```
+
+#### Step 2 — Pull new commits before testing
+
+Whenever new commits are pushed to the repository, stay inside your existing `quill` directory and pull the latest changes:
+
+```bash
+git pull --ff-only
+```
+
+- Because you reuse the same working directory, Gradle reuses `.gradle/` and `~/.gradle/caches/fabric-loom/26.3/`, and your singleplayer test worlds inside `run/saves/` are preserved across updates.
+
+#### Step 3 — Run JUnit tests and build checks locally
+
+To run the unit test suite (`test` task) or full build verification (`build` task):
+
+```bash
+# Linux / macOS
+./gradlew test
+./gradlew build
+```
+
+```powershell
+# Windows (PowerShell)
+.\gradlew.bat test
+.\gradlew.bat build
+```
+
+#### Step 4 — Launch Minecraft `26.3` client locally (without `xvfb`)
+
+On a local computer with a display/monitor (Windows, macOS, or Linux desktop with X11/Wayland), run `runClient` **directly without `xvfb-run`** (`xvfb-run` is only needed on headless Linux servers/VMs that lack a physical screen):
+
+```bash
+# Linux / macOS (Desktop with display)
+./gradlew runClient
+```
+
+```powershell
+# Windows (PowerShell)
+.\gradlew.bat runClient
+```
+
+- Minecraft `26.3` will open in a normal desktop window using `./run/` as its game directory.
+- Any worlds and datapacks you create while testing are stored in `run/saves/<world_name>/datapacks/` and ignored by Git (`.gitignore`).
+

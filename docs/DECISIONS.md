@@ -47,7 +47,7 @@ This document records key architectural and technical decisions for **Quill**, a
 ### 1. Bytecode Verification of Minecraft `26.3` GUI APIs
 
 Verified via `javap` against the local Loom-cached client JAR:
-`/home/antigravity/.gradle/caches/fabric-loom/26.3/minecraft-client-only.jar`
+`~/.gradle/caches/fabric-loom/26.3/minecraft-client-only.jar`
 
 ```text
 $ ~/.jdks/temurin-25/bin/javap -cp ~/.gradle/caches/fabric-loom/26.3/minecraft-client-only.jar \

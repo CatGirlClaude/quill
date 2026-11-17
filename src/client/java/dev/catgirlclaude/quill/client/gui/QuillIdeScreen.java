@@ -7,6 +7,7 @@ import dev.catgirlclaude.quill.client.session.ClientEditorSession;
 import dev.catgirlclaude.quill.client.session.OpenTabState;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
@@ -16,6 +17,9 @@ import net.minecraft.network.chat.Component;
  */
 public class QuillIdeScreen extends Screen {
 	private final ClientEditorSession session;
+	private final FileExplorerTreeWidget explorerTree;
+
+	private ModalPromptOverlay activeModal = null;
 
 	private IdeLayout.Rect maximizeBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect closeBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
@@ -23,14 +27,24 @@ public class QuillIdeScreen extends Screen {
 	private IdeLayout.Rect presetsIconRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect saveReloadBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect reloadBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect lastSidebarRect = new IdeLayout.Rect(0, 0, 0, 0);
 
 	public QuillIdeScreen(ClientEditorSession session) {
 		super(Component.literal("Quill IDE"));
 		this.session = session;
+		this.explorerTree = new FileExplorerTreeWidget(session, this::openModal, this::closeModal);
 	}
 
 	public ClientEditorSession session() {
 		return session;
+	}
+
+	protected void openModal(ModalPromptOverlay modal) {
+		this.activeModal = modal;
+	}
+
+	protected void closeModal() {
+		this.activeModal = null;
 	}
 
 	@Override
@@ -52,22 +66,30 @@ public class QuillIdeScreen extends Screen {
 		ReloadReport report = session.lastReloadReport();
 		boolean showDiag = report != null && report.hasErrors() && session.isDiagnosticsExpanded();
 		IdeLayout layout = IdeLayout.compute(width, height, session.isMaximized(), session.isSidebarCollapsed(), showDiag);
+		lastSidebarRect = layout.sidebar();
+
+		int uiMouseX = activeModal != null ? -1 : mouseX;
+		int uiMouseY = activeModal != null ? -1 : mouseY;
 
 		// Outer frame
 		QuillDraw.fill(graphics, layout.window().x(), layout.window().y(), layout.window().width(), layout.window().height(), QuillTheme.BG_EDITOR);
 		QuillDraw.outline(graphics, layout.window().x(), layout.window().y(), layout.window().width(), layout.window().height(), QuillTheme.BORDER_SUBTLE);
 
-		renderTitleBar(graphics, layout.titleBar(), mouseX, mouseY);
-		renderActivityBar(graphics, layout.activityBar(), mouseX, mouseY);
+		renderTitleBar(graphics, layout.titleBar(), uiMouseX, uiMouseY);
+		renderActivityBar(graphics, layout.activityBar(), uiMouseX, uiMouseY);
 		if (layout.sidebar().width() > 0) {
-			renderSidebar(graphics, layout.sidebar(), mouseX, mouseY);
+			renderSidebar(graphics, layout.sidebar(), uiMouseX, uiMouseY);
 		}
-		renderTabBar(graphics, layout.tabBar(), mouseX, mouseY);
-		renderEditorArea(graphics, layout.editor(), mouseX, mouseY);
+		renderTabBar(graphics, layout.tabBar(), uiMouseX, uiMouseY);
+		renderEditorArea(graphics, layout.editor(), uiMouseX, uiMouseY);
 		if (layout.diagnosticsBanner().height() > 0) {
-			renderDiagnosticsBanner(graphics, layout.diagnosticsBanner(), report, mouseX, mouseY);
+			renderDiagnosticsBanner(graphics, layout.diagnosticsBanner(), report, uiMouseX, uiMouseY);
 		}
-		renderStatusBar(graphics, layout.statusBar(), mouseX, mouseY);
+		renderStatusBar(graphics, layout.statusBar(), uiMouseX, uiMouseY);
+
+		if (activeModal != null) {
+			activeModal.render(graphics, font, width, height, mouseX, mouseY);
+		}
 	}
 
 	protected void renderTitleBar(GuiGraphicsExtractor graphics, IdeLayout.Rect bar, int mouseX, int mouseY) {
@@ -139,18 +161,16 @@ public class QuillIdeScreen extends Screen {
 		QuillDraw.fill(graphics, sidebar.x(), sidebar.y(), sidebar.width(), sidebar.height(), QuillTheme.BG_SIDEBAR);
 		QuillDraw.vLine(graphics, sidebar.right() - 1, sidebar.y(), sidebar.height(), QuillTheme.BORDER_SUBTLE);
 
-		QuillDraw.beginClip(graphics, sidebar);
-		String heading = session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER
-				? "EXPLORER"
-				: "QUICK ACTIONS & PRESETS";
-		QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, heading, sidebar.width() - 16),
-				sidebar.x() + 8, sidebar.y() + 6, QuillTheme.TEXT_MUTED);
-		QuillDraw.hLine(graphics, sidebar.x(), sidebar.width() - 1, sidebar.y() + 19, QuillTheme.BORDER_SUBTLE);
-
-		int packCount = session.rootTree().children().size();
-		QuillDraw.text(graphics, font, packCount + " datapack(s) found", sidebar.x() + 8, sidebar.y() + 26, QuillTheme.TEXT_PRIMARY);
-		QuillDraw.text(graphics, font, "Press Ctrl+B to toggle sidebar", sidebar.x() + 8, sidebar.y() + 40, QuillTheme.TEXT_MUTED);
-		QuillDraw.endClip(graphics);
+		if (session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER) {
+			explorerTree.render(graphics, font, sidebar, mouseX, mouseY);
+		} else {
+			QuillDraw.beginClip(graphics, sidebar);
+			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, "QUICK ACTIONS & PRESETS", sidebar.width() - 16),
+					sidebar.x() + 8, sidebar.y() + 6, QuillTheme.TEXT_MUTED);
+			QuillDraw.hLine(graphics, sidebar.x(), sidebar.width() - 1, sidebar.y() + 19, QuillTheme.BORDER_SUBTLE);
+			QuillDraw.text(graphics, font, "Quick Actions UI coming in Step 5", sidebar.x() + 8, sidebar.y() + 26, QuillTheme.TEXT_MUTED);
+			QuillDraw.endClip(graphics);
+		}
 	}
 
 	protected void renderTabBar(GuiGraphicsExtractor graphics, IdeLayout.Rect tabBar, int mouseX, int mouseY) {
@@ -160,20 +180,36 @@ public class QuillIdeScreen extends Screen {
 		if (session.openTabs().isEmpty()) {
 			QuillDraw.text(graphics, font, "No open files", tabBar.x() + 10,
 					tabBar.y() + (tabBar.height() - font.lineHeight) / 2, QuillTheme.TEXT_MUTED);
+		} else {
+			OpenTabState active = session.activeTab();
+			String label = active != null ? active.fileName() + (active.isDirty() ? " *" : "") : "";
+			QuillDraw.fill(graphics, tabBar.x(), tabBar.y(), Math.min(tabBar.width(), font.width(label) + 20), tabBar.height() - 1, QuillTheme.BG_TAB_ACTIVE);
+			QuillDraw.fill(graphics, tabBar.x(), tabBar.y(), Math.min(tabBar.width(), font.width(label) + 20), 2, QuillTheme.ACCENT_BLUE);
+			QuillDraw.text(graphics, font, label, tabBar.x() + 8, tabBar.y() + (tabBar.height() - font.lineHeight) / 2, QuillTheme.TEXT_BRIGHT);
 		}
 	}
 
 	protected void renderEditorArea(GuiGraphicsExtractor graphics, IdeLayout.Rect editor, int mouseX, int mouseY) {
 		QuillDraw.fill(graphics, editor.x(), editor.y(), editor.width(), editor.height(), QuillTheme.BG_EDITOR);
 		QuillDraw.beginClip(graphics, editor);
-		if (session.openTabs().isEmpty()) {
+		OpenTabState active = session.activeTab();
+		if (active == null) {
 			int centerY = editor.y() + Math.max(16, editor.height() / 3);
 			int leftX = editor.x() + 20;
 			QuillDraw.textShadow(graphics, font, "Quill Datapack IDE", leftX, centerY, QuillTheme.TEXT_BRIGHT);
-			QuillDraw.text(graphics, font, "Shortcuts: Ctrl+S Save & Reload  |  Ctrl+B Toggle Sidebar  |  Esc Close",
+			QuillDraw.text(graphics, font, "Click a file in Explorer or press Ctrl+B to toggle sidebar.",
 					leftX, centerY + 16, QuillTheme.TEXT_MUTED);
-			QuillDraw.text(graphics, font, "World stays running in background (non-pausing screen).",
+			QuillDraw.text(graphics, font, "Shortcuts: Ctrl+S Save & Reload  |  Esc Close",
 					leftX, centerY + 30, QuillTheme.TEXT_MUTED);
+		} else {
+			int y = editor.y() + 8;
+			int maxLines = Math.max(1, (editor.height() - 12) / (font.lineHeight + 2));
+			int count = Math.min(active.buffer().lineCount(), maxLines);
+			for (int i = 0; i < count; i++) {
+				QuillDraw.text(graphics, font, String.valueOf(i + 1), editor.x() + 8, y, QuillTheme.TEXT_MUTED);
+				QuillDraw.text(graphics, font, active.buffer().line(i), editor.x() + 34, y, QuillTheme.TEXT_PRIMARY);
+				y += font.lineHeight + 2;
+			}
 		}
 		QuillDraw.endClip(graphics);
 	}
@@ -237,6 +273,9 @@ public class QuillIdeScreen extends Screen {
 
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+		if (activeModal != null) {
+			return activeModal.mouseClicked(event);
+		}
 		if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 			double mx = event.x();
 			double my = event.y();
@@ -264,6 +303,11 @@ public class QuillIdeScreen extends Screen {
 				}
 				return true;
 			}
+			if (lastSidebarRect.contains(mx, my) && session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER) {
+				if (explorerTree.mouseClicked(event)) {
+					return true;
+				}
+			}
 			if (saveReloadBtnRect.contains(mx, my)) {
 				session.saveActiveTab(true);
 				return true;
@@ -277,7 +321,23 @@ public class QuillIdeScreen extends Screen {
 	}
 
 	@Override
+	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+		if (activeModal != null) {
+			return true;
+		}
+		if (lastSidebarRect.contains(mouseX, mouseY) && session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER) {
+			if (explorerTree.mouseScrolled(mouseX, mouseY, scrollY)) {
+				return true;
+			}
+		}
+		return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+	}
+
+	@Override
 	public boolean keyPressed(KeyEvent event) {
+		if (activeModal != null) {
+			return activeModal.keyPressed(event);
+		}
 		if (event.hasControlDownWithQuirk() && !event.hasAltDown() && event.shortcutKey() == InputConstants.KEYCODE_B) {
 			session.toggleSidebarCollapsed();
 			return true;
@@ -287,5 +347,13 @@ public class QuillIdeScreen extends Screen {
 			return true;
 		}
 		return super.keyPressed(event);
+	}
+
+	@Override
+	public boolean charTyped(CharacterEvent event) {
+		if (activeModal != null) {
+			return activeModal.charTyped(event);
+		}
+		return super.charTyped(event);
 	}
 }

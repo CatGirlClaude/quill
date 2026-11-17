@@ -30,7 +30,7 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] **Step 1 — Backend Core & Security (`src/main`)**: Define `EditorBackend` contract, DTOs, `PathSandbox` security validator, and `LocalEditorBackend` for singleplayer integrated server.
 - [x] **Step 2 — Preset & Scaffolding Engine (`src/main`)**: Implement `pack.mcmeta` generator (`min_format: 121, max_format: 121`), namespace/function scaffolding, and resource-driven presets (`minecraft:load`, `minecraft:tick`).
 - [x] **Step 3 — Non-Pausing VS Code Shell & Keybinding (`src/client`)**: Register keybinding (`K` / configurable) to open `QuillIdeScreen` (`isPauseScreen() == false`) with dark VS Code layout (Activity Bar, Sidebar, Editor Area, Status Bar).
-- [ ] **Step 4 — World & Datapack File Explorer (`src/client`)**: Build interactive tree view for `datapacks/` supporting open, create file/folder, rename, and delete actions via `EditorBackend`.
+- [x] **Step 4 — World & Datapack File Explorer (`src/client`)**: Build interactive tree view for `datapacks/` supporting open, create file/folder, rename, and delete actions via `EditorBackend`.
 - [ ] **Step 5 — Quick Actions & Presets UI (`src/client`)**: Wire "New Datapack", "New Namespace", "New `.mcfunction`", and `data/minecraft` preset insertion (`load.json` / `tick.json`) in the IDE UI.
 - [ ] **Step 6 — Multi-Tab `.mcfunction` Editor, Save & Live Reload (`src/client` & `src/main`)**: Multi-line text editor with line numbers, dirty-state tabs, `Ctrl+S` save, automatic datapack reload, and reload result/error feedback in the status bar / diagnostics bar.
 

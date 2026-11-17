@@ -28,7 +28,7 @@ Single source of truth for project progress, planned tasks, optional feature pro
 ## Phase 2: MVP Implementation (In Progress — see [plans/001-mvp.md](plans/001-mvp.md))
 
 - [x] **Step 1 — Backend Core & Security (`src/main`)**: Define `EditorBackend` contract, DTOs, `PathSandbox` security validator, and `LocalEditorBackend` for singleplayer integrated server.
-- [ ] **Step 2 — Preset & Scaffolding Engine (`src/main`)**: Implement `pack.mcmeta` generator (`min_format: 121, max_format: 121`), namespace/function scaffolding, and resource-driven presets (`minecraft:load`, `minecraft:tick`).
+- [x] **Step 2 — Preset & Scaffolding Engine (`src/main`)**: Implement `pack.mcmeta` generator (`min_format: 121, max_format: 121`), namespace/function scaffolding, and resource-driven presets (`minecraft:load`, `minecraft:tick`).
 - [ ] **Step 3 — Non-Pausing VS Code Shell & Keybinding (`src/client`)**: Register keybinding (`K` / configurable) to open `QuillIdeScreen` (`isPauseScreen() == false`) with dark VS Code layout (Activity Bar, Sidebar, Editor Area, Status Bar).
 - [ ] **Step 4 — World & Datapack File Explorer (`src/client`)**: Build interactive tree view for `datapacks/` supporting open, create file/folder, rename, and delete actions via `EditorBackend`.
 - [ ] **Step 5 — Quick Actions & Presets UI (`src/client`)**: Wire "New Datapack", "New Namespace", "New `.mcfunction`", and `data/minecraft` preset insertion (`load.json` / `tick.json`) in the IDE UI.

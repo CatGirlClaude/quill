@@ -7,6 +7,8 @@ import dev.catgirlclaude.quill.api.FileTreeNode;
 import dev.catgirlclaude.quill.api.PresetDescriptor;
 import dev.catgirlclaude.quill.api.ReloadReport;
 import dev.catgirlclaude.quill.api.SaveResult;
+import dev.catgirlclaude.quill.preset.DatapackScaffolder;
+import dev.catgirlclaude.quill.preset.PresetRegistry;
 import dev.catgirlclaude.quill.reload.DatapackReloadCoordinator;
 import dev.catgirlclaude.quill.security.EditorLimits;
 import dev.catgirlclaude.quill.security.EditorPermissionChecker;
@@ -41,6 +43,7 @@ public class ServerEditorBackend implements EditorBackend {
 	private final MinecraftServer server;
 	private final ServerPlayer actingPlayer;
 	private final PathSandbox sandbox;
+	private final PresetRegistry presetRegistry;
 
 	public ServerEditorBackend(MinecraftServer server) {
 		this(server, null);
@@ -51,6 +54,7 @@ public class ServerEditorBackend implements EditorBackend {
 		this.actingPlayer = actingPlayer;
 		Path datapacksRoot = server.getWorldPath(LevelResource.DATAPACK_DIR);
 		this.sandbox = new PathSandbox(datapacksRoot);
+		this.presetRegistry = PresetRegistry.loadDefault();
 	}
 
 	protected PathSandbox sandbox() {
@@ -116,27 +120,42 @@ public class ServerEditorBackend implements EditorBackend {
 
 	@Override
 	public CompletableFuture<String> createDatapack(String packName, String description) {
-		return CompletableFuture.failedFuture(new UnsupportedOperationException("Datapack scaffolding will be implemented in Step 2."));
+		return CompletableFuture.supplyAsync(() -> {
+			requireAuthorized();
+			return DatapackScaffolder.createDatapack(sandbox, packName, description);
+		}, IO_EXECUTOR);
 	}
 
 	@Override
 	public CompletableFuture<String> createNamespace(String packName, String namespace) {
-		return CompletableFuture.failedFuture(new UnsupportedOperationException("Namespace scaffolding will be implemented in Step 2."));
+		return CompletableFuture.supplyAsync(() -> {
+			requireAuthorized();
+			return DatapackScaffolder.createNamespace(sandbox, packName, namespace);
+		}, IO_EXECUTOR);
 	}
 
 	@Override
 	public CompletableFuture<String> createFunction(String packName, String namespace, String functionPath) {
-		return CompletableFuture.failedFuture(new UnsupportedOperationException("Function scaffolding will be implemented in Step 2."));
+		return CompletableFuture.supplyAsync(() -> {
+			requireAuthorized();
+			return DatapackScaffolder.createFunction(sandbox, packName, namespace, functionPath);
+		}, IO_EXECUTOR);
 	}
 
 	@Override
 	public CompletableFuture<List<PresetDescriptor>> listPresets() {
-		return CompletableFuture.failedFuture(new UnsupportedOperationException("Presets will be implemented in Step 2."));
+		return CompletableFuture.supplyAsync(() -> {
+			requireAuthorized();
+			return presetRegistry.listPresets();
+		}, IO_EXECUTOR);
 	}
 
 	@Override
 	public CompletableFuture<FileDocument> applyPreset(String packName, String presetId, Map<String, String> variables) {
-		return CompletableFuture.failedFuture(new UnsupportedOperationException("Presets will be implemented in Step 2."));
+		return CompletableFuture.supplyAsync(() -> {
+			requireAuthorized();
+			return presetRegistry.applyPreset(sandbox, packName, presetId, variables);
+		}, IO_EXECUTOR);
 	}
 
 	@Override

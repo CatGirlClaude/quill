@@ -117,6 +117,7 @@ In `26.3`, input methods receive record wrappers from `net.minecraft.client.inpu
 - `boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY)`
 - `boolean keyPressed(KeyEvent event)` — `event.key()` (`InputConstants.KEY_*` physical scancode), `event.shortcutKey()` (`event.keycode()`, `InputConstants.KEYCODE_*` or ASCII char like `'s'`), `event.hasControlDownWithQuirk()`, `event.hasShiftDown()`, `event.isCopy()`, `event.isPaste()`, `event.isCut()`, `event.isSelectAll()`. Do **not** import `org.lwjgl.glfw.GLFW` in `src/client`.
 - `boolean charTyped(CharacterEvent event)` — `event.codepoint()`, `event.codepointAsString()`
+- **SDL3 Text Input Pitfall (`TextInputManager`)**: Minecraft `26.3` uses SDL3, which only emits `SDL_EVENT_TEXT_INPUT` -> `Screen.charTyped(CharacterEvent)` while text input is explicitly started via `minecraft.textInputManager().startTextInput(owner)` (and stopped via `stopTextInput(owner)` in `removed()`). Without this call, `keyPressed` (`Backspace`, `Enter`, `Home`, `End`, arrows) still fires while `charTyped` stays silent. Custom `Screen`s that do not focus a vanilla `EditBox` must manage `TextInputManager` and override `isInputCaptured()`.
 
 ### 4.4 Fabric Key Mapping Registration
 

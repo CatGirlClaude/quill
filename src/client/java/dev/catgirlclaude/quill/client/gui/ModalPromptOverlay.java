@@ -99,6 +99,10 @@ public final class ModalPromptOverlay {
 		);
 	}
 
+	public boolean hasTextFields() {
+		return !fields.isEmpty();
+	}
+
 	public void render(GuiGraphicsExtractor graphics, Font font, int screenWidth, int screenHeight, int mouseX, int mouseY) {
 		QuillDraw.fill(graphics, 0, 0, screenWidth, screenHeight, 0x88000000);
 

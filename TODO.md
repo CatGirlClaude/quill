@@ -33,6 +33,7 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] **Step 4 — World & Datapack File Explorer (`src/client`)**: Build interactive tree view for `datapacks/` supporting open, create file/folder, rename, and delete actions via `EditorBackend`.
 - [x] **Step 5 — Quick Actions & Presets UI (`src/client`)**: Wire "New Datapack", "New Namespace", "New `.mcfunction`", and `data/minecraft` preset insertion (`load.json` / `tick.json`) in the IDE UI.
 - [x] **Step 6 — Multi-Tab `.mcfunction` Editor, Save & Live Reload (`src/client` & `src/main`)**: Multi-line text editor with line numbers, dirty-state tabs, `Ctrl+S` save, automatic datapack reload, and reload result/error feedback in the status bar / diagnostics bar.
+- [x] **Bugfix — MC `26.3` SDL3 Text Input Capture (`QuillIdeScreen`)**: Activate `TextInputManager.startTextInput(this)` / `stopTextInput(this)` and override `isInputCaptured()` on `QuillIdeScreen` whenever a text-field `ModalPromptOverlay` or code tab is active so printable `CharacterEvent` typing works in MC `26.3`'s SDL3 backend (verified by `QuillIdeScreenTextInputTest`).
 
 ## Phase 3: Multiplayer Networking (Planned — Post-MVP)
 

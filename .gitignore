@@ -36,5 +36,6 @@ run/
 
 hs_err_*.log
 replay_*.log
+logs/
 *.hprof
 *.jfr

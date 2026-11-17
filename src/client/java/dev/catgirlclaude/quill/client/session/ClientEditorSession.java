@@ -16,6 +16,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executor;
 
 /**
  * Persistent client-side IDE state shared across open/close cycles of {@code QuillIdeScreen}
@@ -28,6 +29,7 @@ public final class ClientEditorSession {
 	}
 
 	private final EditorBackend backend;
+	private final Executor uiExecutor;
 	private final List<OpenTabState> openTabs = new ArrayList<>();
 	private final Set<String> expandedPaths = new HashSet<>();
 
@@ -45,7 +47,12 @@ public final class ClientEditorSession {
 	private SidebarView sidebarView = SidebarView.EXPLORER;
 
 	public ClientEditorSession(EditorBackend backend) {
+		this(backend, task -> Minecraft.getInstance().execute(task));
+	}
+
+	public ClientEditorSession(EditorBackend backend, Executor uiExecutor) {
 		this.backend = Objects.requireNonNull(backend, "backend");
+		this.uiExecutor = Objects.requireNonNull(uiExecutor, "uiExecutor");
 		this.expandedPaths.add("");
 	}
 
@@ -461,8 +468,8 @@ public final class ClientEditorSession {
 		setStatus(message, true);
 	}
 
-	private static void runOnClient(Runnable task) {
-		Minecraft.getInstance().execute(task);
+	private void runOnClient(Runnable task) {
+		uiExecutor.execute(task);
 	}
 
 	private static String unwrapMessage(Throwable throwable) {

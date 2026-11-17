@@ -176,3 +176,20 @@ Choosing Option A means we do not get browser DOM/CSS or pre-built tree/code wid
   Keep `TextDocumentBuffer` and `IdeLayout` free of client-only Minecraft/LWJGL class references (`java.*` + `QuillTheme` constants only) and expose `sourceSets.client.output` to `sourceSets.test` in `build.gradle`.
 - **Rationale**:
   - Enables fast JUnit 5 regression testing (`./gradlew test`) for editor editing primitives and layout math in headless CI/VMs without spinning up OpenGL/LWJGL.
+
+---
+
+## ADR-007: Explicit SDL3 `TextInputManager` Lifecycle on Custom `Screen` (`QuillIdeScreen`)
+
+- **Date**: 2026-11-17
+- **Status**: Accepted
+- **Context**:
+  Minecraft `26.3` uses SDL3 (`org.lwjgl.sdl.SDLKeyboard`) via `com.mojang.blaze3d.platform.TextInputManager`. Unlike legacy GLFW `glfwSetCharCallback` (which always fired `charTyped`), SDL3 suppresses `SDL_EVENT_TEXT_INPUT` (`KeyboardHandler.textInput` -> `Screen.charTyped(CharacterEvent)`) unless `SDLKeyboard.SDL_StartTextInput(...)` is enabled via `minecraft.textInputManager().startTextInput(owner)`. Only `KeyEvent` (`Backspace`, `Enter`, `Home`, `End`, arrows) fires without active text input, preventing character typing in custom-drawn text inputs (`ModalPromptOverlay` fields and `CodeEditorWidget`) that do not wrap vanilla `EditBox`.
+- **Decision**:
+  Keep Quill's custom VS Code-styled `ModalPromptOverlay` and `CodeEditorWidget` inputs (consistent with ADR-003 Option A), and manage SDL3 text input directly in `QuillIdeScreen` via a small `TextInputBridge` seam delegating to `minecraft.textInputManager().startTextInput(this)` / `stopTextInput(this)` plus overriding `Screen.isInputCaptured()`:
+  - Enable text input when `activeModal != null && activeModal.hasTextFields()`, or when `activeModal == null && session.activeTab() != null`.
+  - Synchronize state on `init()`, `tick()`, `extractRenderState(...)`, `openModal(...)`, and `closeModal()`, and unconditionally stop text input in `removed()`.
+- **Rationale**:
+  - Preserves exact VS Code Dark+ styling and multi-line/modal ergonomics without mixing vanilla `EditBox` widgets into custom scissor-clipped panels.
+  - Prevents global keybindings (e.g., `options.keyFriends`) from intercepting characters via `Screen.isInputCaptured()`.
+  - Enables headless JUnit verification (`QuillIdeScreenTextInputTest`) through `TextInputBridge` without initializing LWJGL/SDL3 windows.

@@ -45,8 +45,8 @@ tasks.withType(JavaCompile).configureEach {
 
 sourceSets {
 	test {
-		compileClasspath += sourceSets.client.output
-		runtimeClasspath += sourceSets.client.output
+		compileClasspath += sourceSets.client.output + sourceSets.client.compileClasspath
+		runtimeClasspath += sourceSets.client.output + sourceSets.client.runtimeClasspath
 	}
 }
 

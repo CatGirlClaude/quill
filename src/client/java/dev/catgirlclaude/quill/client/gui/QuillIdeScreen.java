@@ -6,6 +6,8 @@ import dev.catgirlclaude.quill.api.ReloadDiagnostic;
 import dev.catgirlclaude.quill.api.ReloadReport;
 import dev.catgirlclaude.quill.client.session.ClientEditorSession;
 import dev.catgirlclaude.quill.client.session.OpenTabState;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
@@ -15,15 +17,41 @@ import net.minecraft.network.chat.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Non-pausing VS Code Dark+ IDE screen rendered directly over the live Minecraft world.
  */
 public class QuillIdeScreen extends Screen {
+	interface TextInputBridge {
+		void startTextInput(Object owner);
+
+		void stopTextInput(Object owner);
+
+		static TextInputBridge forMinecraft(Minecraft minecraft) {
+			return new TextInputBridge() {
+				@Override
+				public void startTextInput(Object owner) {
+					if (minecraft != null) {
+						minecraft.textInputManager().startTextInput(owner);
+					}
+				}
+
+				@Override
+				public void stopTextInput(Object owner) {
+					if (minecraft != null) {
+						minecraft.textInputManager().stopTextInput(owner);
+					}
+				}
+			};
+		}
+	}
+
 	private record DiagnosticRowBounds(ReloadDiagnostic diagnostic, IdeLayout.Rect rect) {
 	}
 
 	private final ClientEditorSession session;
+	private final TextInputBridge textInputBridge;
 	private final FileExplorerTreeWidget explorerTree;
 	private final QuickActionsAndPresetsWidget quickActions;
 	private final EditorTabBarWidget tabBarWidget;
@@ -31,6 +59,7 @@ public class QuillIdeScreen extends Screen {
 	private final List<DiagnosticRowBounds> diagnosticRows = new ArrayList<>();
 
 	private ModalPromptOverlay activeModal = null;
+	private boolean textInputActive = false;
 
 	private IdeLayout.Rect maximizeBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect closeBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
@@ -45,8 +74,13 @@ public class QuillIdeScreen extends Screen {
 	private IdeLayout.Rect lastSidebarRect = new IdeLayout.Rect(0, 0, 0, 0);
 
 	public QuillIdeScreen(ClientEditorSession session) {
-		super(Component.literal("Quill IDE"));
-		this.session = session;
+		this(Minecraft.getInstance(), Minecraft.getInstance().font, session, TextInputBridge.forMinecraft(Minecraft.getInstance()));
+	}
+
+	QuillIdeScreen(Minecraft minecraft, Font font, ClientEditorSession session, TextInputBridge textInputBridge) {
+		super(minecraft, font, Component.literal("Quill IDE"));
+		this.session = Objects.requireNonNull(session, "session");
+		this.textInputBridge = Objects.requireNonNull(textInputBridge, "textInputBridge");
 		this.explorerTree = new FileExplorerTreeWidget(session, this::openModal, this::closeModal);
 		this.quickActions = new QuickActionsAndPresetsWidget(session, this::openModal, this::closeModal);
 		this.tabBarWidget = new EditorTabBarWidget(session, this::openModal, this::closeModal);
@@ -57,12 +91,62 @@ public class QuillIdeScreen extends Screen {
 		return session;
 	}
 
+	QuickActionsAndPresetsWidget quickActions() {
+		return quickActions;
+	}
+
 	protected void openModal(ModalPromptOverlay modal) {
 		this.activeModal = modal;
+		syncTextInputState();
 	}
 
 	protected void closeModal() {
 		this.activeModal = null;
+		syncTextInputState();
+	}
+
+	private boolean wantsTextInput() {
+		if (activeModal != null) {
+			return activeModal.hasTextFields();
+		}
+		return session.activeTab() != null;
+	}
+
+	private void syncTextInputState() {
+		boolean shouldCapture = wantsTextInput();
+		if (shouldCapture == textInputActive) {
+			return;
+		}
+		textInputActive = shouldCapture;
+		if (shouldCapture) {
+			textInputBridge.startTextInput(this);
+		} else {
+			textInputBridge.stopTextInput(this);
+		}
+	}
+
+	@Override
+	protected void init() {
+		super.init();
+		syncTextInputState();
+	}
+
+	@Override
+	public void tick() {
+		super.tick();
+		syncTextInputState();
+	}
+
+	@Override
+	public void removed() {
+		textInputActive = false;
+		textInputBridge.stopTextInput(this);
+		super.removed();
+	}
+
+	@Override
+	public boolean isInputCaptured() {
+		return wantsTextInput() || super.isInputCaptured();
 	}
 
 	@Override
@@ -79,6 +163,7 @@ public class QuillIdeScreen extends Screen {
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+		syncTextInputState();
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
 
 		ReloadReport report = session.lastReloadReport();

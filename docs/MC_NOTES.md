@@ -111,22 +111,24 @@ In `26.2+`, screen management moved from `Minecraft` to `net.minecraft.client.gu
 ### 4.3 Typed Input Events on `Screen` / `GuiEventListener`
 
 In `26.3`, input methods receive record wrappers from `net.minecraft.client.input.*`:
-- `boolean mouseClicked(MouseButtonEvent event, boolean doubleClick)` — `event.x()`, `event.y()`, `event.button()`, `event.modifiers()`
+- `boolean mouseClicked(MouseButtonEvent event, boolean doubleClick)` — `event.x()`, `event.y()`, `event.button()`, `event.modifiers()` (note: `InputConstants.MOUSE_BUTTON_LEFT == 1`, `MOUSE_BUTTON_MIDDLE == 2`, `MOUSE_BUTTON_RIGHT == 3`, **not** GLFW's `0/1/2`!)
 - `boolean mouseReleased(MouseButtonEvent event)`
 - `boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY)`
 - `boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY)`
-- `boolean keyPressed(KeyEvent event)` — `event.key()`, `event.keycode()`, `event.modifiers()`
+- `boolean keyPressed(KeyEvent event)` — `event.key()` (`InputConstants.KEY_*` physical scancode), `event.shortcutKey()` (`event.keycode()`, `InputConstants.KEYCODE_*` or ASCII char like `'s'`), `event.hasControlDownWithQuirk()`, `event.hasShiftDown()`, `event.isCopy()`, `event.isPaste()`, `event.isCut()`, `event.isSelectAll()`. Do **not** import `org.lwjgl.glfw.GLFW` in `src/client`.
 - `boolean charTyped(CharacterEvent event)` — `event.codepoint()`, `event.codepointAsString()`
 
 ### 4.4 Fabric Key Mapping Registration
 
 Use `net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper`:
 ```java
+private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Quill.id("general"));
+
 KeyMappingHelper.registerKeyMapping(new KeyMapping(
     "key.quill.open_ide",
-    InputConstants.Type.KEYSYM,
-    GLFW.GLFW_KEY_K,
-    "category.quill.general"
+    InputConstants.Type.KEYBOARD,
+    InputConstants.KEY_K,
+    CATEGORY
 ));
 ```
 

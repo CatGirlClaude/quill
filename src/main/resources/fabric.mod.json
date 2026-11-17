@@ -1,0 +1,38 @@
+{
+	"schemaVersion": 1,
+	"id": "quill",
+	"version": "${version}",
+	"name": "Quill",
+	"description": "In-game VS Code-style IDE for editing and live-reloading Minecraft datapack functions (.mcfunction).",
+	"authors": [
+		"CatGirlClaude"
+	],
+	"contact": {
+		"homepage": "https://github.com/CatGirlClaude/quill",
+		"sources": "https://github.com/CatGirlClaude/quill"
+	},
+	"license": "MIT",
+	"icon": "assets/quill/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"dev.catgirlclaude.quill.Quill"
+		],
+		"client": [
+			"dev.catgirlclaude.quill.client.QuillClient"
+		]
+	},
+	"mixins": [
+		"quill.mixins.json",
+		{
+			"config": "quill.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

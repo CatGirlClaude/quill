@@ -5,7 +5,7 @@
 - **Minecraft**: `26.3` (unobfuscated, official Mojang names)
 - **Loader**: Fabric Loader `0.20.1`
 - **Fabric API**: `0.166.2+26.3`
-- **Build System**: Gradle `9.8.2` + Fabric Loom `1.19-SNAPSHOT` (`net.fabricmc.fabric-loom`)
+- **Build System**: Gradle `9.8.2` + Fabric Loom `1.19.4` (`net.fabricmc.fabric-loom`)
 - **Java**: JDK `25` (`sourceCompatibility` / `targetCompatibility` = `25`)
 - **Source Sets**: Split environment (`src/main` for common/server logic, `src/client` for client-only UI/rendering)
 

@@ -5,10 +5,11 @@ Single source of truth for project progress, planned tasks, optional feature pro
 ## Phase 0: Repository & Toolchain Setup
 
 - [x] Inspect environment (`git 2.39.5`, system OpenJDK 17) and install JDK 25 (`temurin-25.0.5+8`) in user space (`~/.jdks/temurin-25`).
-- [x] Confirm project metadata with user (`modid=quill`, `group=dev.catgirlclaude`, `package=dev.catgirlclaude.quill`, `license=MIT`, `author=CatGirlClaude`).
+- [x] Confirm project metadata with user (`modid=quill`, `group=dev.catgirlclaude`, `package=dev.catgirlclaude.quill`, `author=CatGirlClaude`).
+- [ ] **Confirm and approve project license with user** (currently `MIT` in `LICENSE` and `fabric.mod.json` — awaiting explicit confirmation).
 - [x] Generate Fabric `26.3` project skeleton with split `main` and `client` source sets (`loom.splitEnvironmentSourceSets()`).
 - [x] Configure `.gitignore`, `.gitattributes`, `LICENSE`, `fabric.mod.json`, and mixin configs.
-- [x] Verify `./gradlew build` and `./gradlew runClient` tasks.
+- [x] Verify `./gradlew build` and `./gradlew runClient` tasks on pinned Fabric Loom `1.19.4`.
 - [x] Create initial local commit for Phase 0 (push pending user approval).
 
 ## Phase 1: Architecture, Decisions & Documentation

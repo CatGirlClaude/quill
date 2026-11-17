@@ -18,7 +18,7 @@ Inspired by Minecraft Education Edition's Code Builder and modeled after **Visua
 - **Minecraft**: `26.3` (unobfuscated, official Mojang mappings)
 - **Mod Loader**: Fabric Loader `0.20.1`
 - **Fabric API**: `0.166.2+26.3`
-- **Build System**: Gradle `9.8.2` + Fabric Loom `1.19-SNAPSHOT`
+- **Build System**: Gradle `9.8.2` + Fabric Loom `1.19.4`
 - **Java**: JDK `25`
 - **License**: [MIT](LICENSE)
 

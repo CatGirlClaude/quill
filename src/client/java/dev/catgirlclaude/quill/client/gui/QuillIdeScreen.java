@@ -987,8 +987,9 @@ public class QuillIdeScreen extends Screen {
 		QuillDraw.text(graphics, font, badgeText, statusRemoteBadgeRect.x() + 5, textY, QuillTheme.TEXT_BRIGHT);
 		leftX = statusRemoteBadgeRect.right() + 4;
 
-		String saveKey = cfg.shortcut(QuillClientConfig.ShortcutAction.SAVE).displayLabel();
-		String saveLabel = (cfg.shouldReloadOnSave() ? "Save & Reload" : "Save") + " (" + saveKey + ")";
+		dev.catgirlclaude.quill.client.config.KeyShortcut saveShortcut = cfg.shortcut(QuillClientConfig.ShortcutAction.SAVE);
+		String saveBase = cfg.shouldReloadOnSave() ? "Save & Reload" : "Save";
+		String saveLabel = saveShortcut.isUnbound() ? saveBase : saveBase + " (" + saveShortcut.displayLabel() + ")";
 		String reloadLabel = "Reload";
 		String problemsLabel = "!" + errorCount;
 		String outputLabel = "Output";
@@ -1099,12 +1100,17 @@ public class QuillIdeScreen extends Screen {
 		return "Plain Text";
 	}
 
+	private static String shortcutBadge(QuillClientConfig cfg, QuillClientConfig.ShortcutAction action) {
+		var shortcut = cfg.shortcut(action);
+		return shortcut.isUnbound() ? "" : shortcut.displayLabel();
+	}
+
 	private List<QuickPickOverlay.PickItem> buildCommandPaletteItems() {
 		QuillClientConfig cfg = QuillClientConfig.current();
 		List<QuickPickOverlay.PickItem> items = new ArrayList<>();
 		items.add(new QuickPickOverlay.PickItem(
 				"save_config", "File: Save Active File", "Save active file (follows Reload Trigger setting)",
-				cfg.shortcut(QuillClientConfig.ShortcutAction.SAVE).displayLabel(),
+				shortcutBadge(cfg, QuillClientConfig.ShortcutAction.SAVE),
 				"File: Save Active File save", session::saveActiveTabAccordingToConfig));
 		items.add(new QuickPickOverlay.PickItem(
 				"save_reload", "File: Save & Reload Datapacks", "Save active file and run /reload", "",
@@ -1114,24 +1120,24 @@ public class QuillIdeScreen extends Screen {
 				"File: Save Without Reload save", () -> session.saveActiveTab(false)));
 		items.add(new QuickPickOverlay.PickItem(
 				"quick_open", "File: Quick Open...", "Fuzzy-search files across datapacks/",
-				cfg.shortcut(QuillClientConfig.ShortcutAction.QUICK_OPEN).displayLabel(),
+				shortcutBadge(cfg, QuillClientConfig.ShortcutAction.QUICK_OPEN),
 				"File: Quick Open go to file switcher", () -> openQuickPick(QuickPickOverlay.Mode.FILES)));
 		items.add(new QuickPickOverlay.PickItem(
 				"open_settings", "Preferences: Open Settings", "Configure theme, font, text size, autosave, pause, and shortcuts",
-				cfg.shortcut(QuillClientConfig.ShortcutAction.OPEN_SETTINGS).displayLabel(),
+				shortcutBadge(cfg, QuillClientConfig.ShortcutAction.OPEN_SETTINGS),
 				"Preferences: Open Settings config theme font keybinds autosave pause", this::openSettings));
 
 		String activeFn = session.activeFunctionId();
 		if (activeFn != null) {
 			items.add(new QuickPickOverlay.PickItem(
 					"run_function", "Datapack: Run Current Function", "/function " + activeFn,
-					cfg.shortcut(QuillClientConfig.ShortcutAction.RUN_FUNCTION).displayLabel(),
+					shortcutBadge(cfg, QuillClientConfig.ShortcutAction.RUN_FUNCTION),
 					"Datapack: Run Current Function execute run " + activeFn, session::runCurrentFunction));
 		}
 
 		items.add(new QuickPickOverlay.PickItem(
 				"reload", "Datapack: Reload Datapacks", "Trigger world datapack reload",
-				cfg.shortcut(QuillClientConfig.ShortcutAction.RELOAD_DATAPACKS).displayLabel(),
+				shortcutBadge(cfg, QuillClientConfig.ShortcutAction.RELOAD_DATAPACKS),
 				"Datapack: Reload Datapacks reload", session::reloadDatapacks));
 		items.add(new QuickPickOverlay.PickItem(
 				"new_pack", "Datapack: New Datapack...", "Scaffold pack.mcmeta (MC 26.3) and data/", "",
@@ -1170,17 +1176,17 @@ public class QuillIdeScreen extends Screen {
 		if (session.activeTab() != null) {
 			items.add(new QuickPickOverlay.PickItem(
 					"close_tab", "Editor: Close Active Tab", session.activeTab().fileName(),
-					cfg.shortcut(QuillClientConfig.ShortcutAction.CLOSE_TAB).displayLabel(),
+					shortcutBadge(cfg, QuillClientConfig.ShortcutAction.CLOSE_TAB),
 					"Editor: Close Active Tab", () -> tabBarWidget.requestCloseTab(session.activeTabIndex())));
 		}
 
 		items.add(new QuickPickOverlay.PickItem(
 				"toggle_sidebar", "View: Toggle Sidebar", "Show or hide left sidebar",
-				cfg.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_SIDEBAR).displayLabel(),
+				shortcutBadge(cfg, QuillClientConfig.ShortcutAction.TOGGLE_SIDEBAR),
 				"View: Toggle Sidebar collapse", session::toggleSidebarCollapsed));
 		items.add(new QuickPickOverlay.PickItem(
 				"toggle_panel", "View: Toggle Bottom Panel", "Show or hide Problems / Output panel",
-				cfg.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL).displayLabel(),
+				shortcutBadge(cfg, QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL),
 				"View: Toggle Bottom Panel problems output terminal console", session::toggleBottomPanel));
 		items.add(new QuickPickOverlay.PickItem(
 				"show_problems", "View: Show Problems", "Open Problems diagnostics tab", "",
@@ -1196,7 +1202,7 @@ public class QuillIdeScreen extends Screen {
 				"View: Show Explorer files", () -> session.setSidebarView(ClientEditorSession.SidebarView.EXPLORER)));
 		items.add(new QuickPickOverlay.PickItem(
 				"view_search", "Search: Find & Replace in Files", "Search across all datapack files",
-				cfg.shortcut(QuillClientConfig.ShortcutAction.SEARCH_IN_FILES).displayLabel(),
+				shortcutBadge(cfg, QuillClientConfig.ShortcutAction.SEARCH_IN_FILES),
 				"Search: Find & Replace in Files grep workspace", this::openSearchSidebar));
 		items.add(new QuickPickOverlay.PickItem(
 				"view_inspector", "View: Show Macro & Scoreboard Inspector", "Inspect scoreboard objectives, storage, and macros", "",
@@ -1219,15 +1225,15 @@ public class QuillIdeScreen extends Screen {
 				}));
 		items.add(new QuickPickOverlay.PickItem(
 				"zoom_in", "View: Zoom In", "Increase overall IDE UI & font scale",
-				cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_IN).displayLabel(),
+				shortcutBadge(cfg, QuillClientConfig.ShortcutAction.ZOOM_IN),
 				"View: Zoom In scale font size larger", () -> applyZoomChange(QuillClientConfig.current().zoomIn())));
 		items.add(new QuickPickOverlay.PickItem(
 				"zoom_out", "View: Zoom Out", "Decrease overall IDE UI & font scale",
-				cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_OUT).displayLabel(),
+				shortcutBadge(cfg, QuillClientConfig.ShortcutAction.ZOOM_OUT),
 				"View: Zoom Out scale font size smaller", () -> applyZoomChange(QuillClientConfig.current().zoomOut())));
 		items.add(new QuickPickOverlay.PickItem(
 				"zoom_reset", "View: Reset Zoom", "Reset overall IDE UI & font scale to 100%",
-				cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_RESET).displayLabel(),
+				shortcutBadge(cfg, QuillClientConfig.ShortcutAction.ZOOM_RESET),
 				"View: Reset Zoom 100% default scale font size", () -> applyZoomChange(QuillClientConfig.current().resetZoom())));
 
 		for (PresetDescriptor preset : session.presets()) {

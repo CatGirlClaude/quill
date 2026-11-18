@@ -437,7 +437,7 @@ public final class SettingsPanelWidget {
 		QuillDraw.hLine(graphics, x, contentW, y, QuillTheme.BORDER_SUBTLE);
 		y += 10;
 		y = renderSectionTitle(graphics, font, x, y, "Keyboard Shortcuts");
-		for (String line : QuillDraw.wrapLines(font, "Click a binding to record a new key combination (Esc cancels).", contentW)) {
+		for (String line : QuillDraw.wrapLines(font, "Click a binding to record a new key combination (Esc sets Not Bound).", contentW)) {
 			QuillDraw.text(graphics, font, line, x, y, QuillTheme.TEXT_MUTED);
 			y += lineStep;
 		}
@@ -573,6 +573,8 @@ public final class SettingsPanelWidget {
 	public boolean keyPressed(KeyEvent event) {
 		if (recordingAction != null) {
 			if (event.isEscape()) {
+				QuillClientConfig.current().setShortcut(recordingAction, KeyShortcut.UNBOUND);
+				QuillClientConfig.saveCurrent();
 				recordingAction = null;
 				return true;
 			}

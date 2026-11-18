@@ -785,6 +785,48 @@ class QuillIdeScreenTextInputTest {
 		assertFalse(session.isSidebarCollapsed());
 	}
 
+	@Test
+	void pressingEscapeDuringKeybindRecordingBindsUnboundAndPersists(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws Exception {
+		StubEditorBackend backend = new StubEditorBackend();
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		screen.openSettings();
+		assertTrue(screen.isSettingsOpen());
+
+		QuillClientConfig cfg = QuillClientConfig.current();
+		assertFalse(cfg.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL).isUnbound());
+
+		// Start recording Toggle Bottom Panel, then press Escape -> must bind Unbound (MC keybinds behavior)
+		screen.settingsPanel().beginRecordingKeybind(QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL);
+		assertTrue(screen.settingsPanel().isRecordingKeybind());
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0)));
+		assertFalse(screen.settingsPanel().isRecordingKeybind());
+		assertTrue(screen.isSettingsOpen(), "Escape during keybind recording must unbind the action without closing Settings.");
+
+		var unbound = cfg.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL);
+		assertTrue(unbound.isUnbound(), "Pressing Escape while recording must bind UNBOUND.");
+		assertEquals("Not Bound", unbound.displayLabel());
+		assertFalse(unbound.matches(new KeyEvent(0, 'j', net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER)));
+		assertFalse(unbound.matches(new KeyEvent(0, 0, 0)));
+
+		// Pressing old default Ctrl+J must no longer toggle bottom panel
+		assertFalse(session.isBottomPanelOpen());
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0)); // close Settings now
+		assertFalse(screen.isSettingsOpen());
+		screen.keyPressed(new KeyEvent(0, 'j', net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER));
+		assertFalse(session.isBottomPanelOpen(), "Unbound shortcut must not fire.");
+
+		// Config JSON persistence round-trip preserves UNBOUND
+		java.nio.file.Path file = tempDir.resolve("quill-client.json");
+		cfg.save(file);
+		QuillClientConfig reloaded = QuillClientConfig.load(file);
+		assertTrue(reloaded.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL).isUnbound());
+		assertEquals("Not Bound", reloaded.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL).displayLabel());
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

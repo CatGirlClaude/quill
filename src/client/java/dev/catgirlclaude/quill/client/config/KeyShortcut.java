@@ -10,7 +10,12 @@ import java.util.Locale;
  * (e.g., {@code 's'}, {@code ','}, {@code Space}), and function keys ({@code F1}–{@code F12}).
  */
 public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode, int scanCode) {
+	public static final KeyShortcut UNBOUND = new KeyShortcut(false, false, false, 0, 0);
 	private static final int KEY_KP_SUBTRACT = 86;
+
+	public boolean isUnbound() {
+		return keyCode <= 0 && scanCode <= 0;
+	}
 
 	public static KeyShortcut ofChar(boolean ctrl, boolean shift, boolean alt, char ch) {
 		return new KeyShortcut(ctrl, shift, alt, Character.toLowerCase(ch), 0);
@@ -40,7 +45,7 @@ public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode,
 	}
 
 	public boolean matches(KeyEvent event) {
-		if (event == null) {
+		if (event == null || isUnbound()) {
 			return false;
 		}
 		if (event.hasControlDownWithQuirk() != ctrl
@@ -131,6 +136,9 @@ public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode,
 	}
 
 	public String displayLabel() {
+		if (isUnbound()) {
+			return "Not Bound";
+		}
 		StringBuilder sb = new StringBuilder();
 		if (ctrl) {
 			sb.append("Ctrl+");
@@ -146,7 +154,7 @@ public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode,
 	}
 
 	public String format() {
-		return displayLabel();
+		return isUnbound() ? "UNBOUND" : displayLabel();
 	}
 
 	public static KeyShortcut parse(String raw, KeyShortcut fallback) {
@@ -154,6 +162,10 @@ public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode,
 			return fallback;
 		}
 		String trimmed = raw.trim();
+		String trimmedUpper = trimmed.toUpperCase(Locale.ROOT);
+		if ("UNBOUND".equals(trimmedUpper) || "NONE".equals(trimmedUpper) || "NOT BOUND".equals(trimmedUpper)) {
+			return UNBOUND;
+		}
 		boolean trailingPlus = trimmed.equals("+") || trimmed.endsWith("++");
 		String[] parts = trimmed.split("\\+");
 		boolean c = false;

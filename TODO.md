@@ -81,7 +81,7 @@ odtwarzającym błąd przed poprawką.
 - [x] Skróty gry (np. F3) działają w GUI. Mają być wyłączone, gdy otwarte jest IDE.
 - [x] Po utworzeniu datapacka widok przełącza się automatycznie na File Explorer.
 - [x] Pole tworzenia nowego pliku: różowe pole jest za duże i nie widać w nim znaku `_`.
-- [ ] Rebinding: ESC przypisuje pusty klawisz zamiast anulować.
+- [x] Rebinding: ESC przypisuje pusty klawisz zamiast anulować.
 - [ ] Ctrl+Z rozdzielone na dwa stosy: w edytorze cofa zmiany w kodzie, poza edytorem cofa operacje na plikach (usunięcia, zmiany nazw itd.).
 - [x] Wcięcie przed pierwszą literą w edytorze jest zbyt duże (zajmuje szerokość całej litery).
 - [ ] Kolor czerwony dla niezapisanych zmian w sidebarze wygląda jak błąd. Zmienić na neutralny znacznik `*`.

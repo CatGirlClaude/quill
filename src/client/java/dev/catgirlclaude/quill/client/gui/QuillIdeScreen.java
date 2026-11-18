@@ -1752,15 +1752,22 @@ public class QuillIdeScreen extends Screen {
 		if (settingsOpen) {
 			if (event.isEscape()) {
 				closeSettings();
-				return true;
 			}
-			return super.keyPressed(event);
+			return true;
 		}
 		OpenTabState active = session.activeTab();
 		if (active != null && codeEditorWidget.keyPressed(event, font, active)) {
 			return true;
 		}
-		return super.keyPressed(event);
+		if (event.isEscape() && shouldCloseOnEsc()) {
+			return super.keyPressed(event);
+		}
+		return true;
+	}
+
+	@Override
+	public boolean keyReleased(KeyEvent event) {
+		return true;
 	}
 
 	@Override

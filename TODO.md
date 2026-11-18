@@ -78,7 +78,7 @@ odtwarzającym błąd przed poprawką.
 ### P0: błędy do naprawienia najpierw
 - [ ] Najechanie kursorem na plik w explorerze chowa drzewo tego pliku.
 - [x] Kursor pisania pojawia się także w edytorze, gdy wpisujesz tekst w explorerze. Ma być widoczny tylko w aktywnym polu.
-- [ ] Skróty gry (np. F3) działają w GUI. Mają być wyłączone, gdy otwarte jest IDE.
+- [x] Skróty gry (np. F3) działają w GUI. Mają być wyłączone, gdy otwarte jest IDE.
 - [ ] Po utworzeniu datapacka widok przełącza się automatycznie na File Explorer.
 - [ ] Pole tworzenia nowego pliku: różowe pole jest za duże i nie widać w nim znaku `_`.
 - [ ] Rebinding: ESC przypisuje pusty klawisz zamiast anulować.

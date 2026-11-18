@@ -732,6 +732,35 @@ class QuillIdeScreenTextInputTest {
 		assertFalse(screen.codeEditorWidget().shouldDrawCaret(screen.isCodeEditorFocused()));
 	}
 
+	@Test
+	void gameShortcutsLikeF3AreConsumedWhileIdeScreenIsOpen() {
+		StubEditorBackend backend = new StubEditorBackend();
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		// Welcome view (no open tabs): F3 press & release, movement/inventory keys must all be consumed
+		KeyEvent f3Event = new KeyEvent(InputConstants.KEY_F3, 0, 0);
+		assertTrue(screen.keyPressed(f3Event), "Welcome screen must consume F3 press so debug overlay cannot toggle.");
+		assertTrue(screen.keyReleased(f3Event), "Welcome screen must consume F3 release so KeyboardHandler does not toggle F3.");
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_E, 'e', 0)));
+		assertTrue(screen.keyReleased(new KeyEvent(InputConstants.KEY_E, 'e', 0)));
+
+		// Settings view: F3 press & release must also be consumed
+		screen.openSettings();
+		assertTrue(screen.keyPressed(f3Event), "Settings view must consume F3 press.");
+		assertTrue(screen.keyReleased(f3Event), "Settings view must consume F3 release.");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0));
+		assertFalse(screen.isSettingsOpen());
+
+		// Active code tab view: unhandled function keys like F3 / F5 must still be consumed
+		session.openOrFocusDocument(new FileDocument("pack/data/demo/function/a.mcfunction", "say hi", "sha1", 0L));
+		screen.tick();
+		assertTrue(screen.keyPressed(f3Event), "Code editor view must consume F3 press.");
+		assertTrue(screen.keyReleased(f3Event), "Code editor view must consume F3 release.");
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

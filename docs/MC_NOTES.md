@@ -142,6 +142,25 @@ KeyMappingHelper.registerKeyMapping(new KeyMapping(
   3. Enable any newly discovered datapack IDs (`file/<packName>`) in the selected collection passed to `server.reloadResources(selectedIds)` (returns `CompletableFuture<Void>`).
   4. Must be invoked on the main `MinecraftServer` thread (`server.execute(...)`).
 
+### 4.6 Multiplayer Networking APIs (Fabric API `0.166.2+26.3`)
+
+Verified via `javap` against `fabric-networking-api-v1` and Minecraft `26.3`:
+- **Payload Type Registration**: `PayloadTypeRegistry` renamed the legacy `playC2S()` / `playS2C()` methods to:
+  - `PayloadTypeRegistry.serverboundPlay().register(type, codec)` (C2S)
+  - `PayloadTypeRegistry.clientboundPlay().register(type, codec)` (S2C)
+- **Buffer Compatibility**: `RegistryFriendlyByteBuf` extends `FriendlyByteBuf`, so `StreamCodec<FriendlyByteBuf, T>` created via `CustomPacketPayload.codec(writer, reader)` works with both `PayloadTypeRegistry` and headless JUnit tests using `new FriendlyByteBuf(Unpooled.buffer())`.
+- **Hard Payload Size Limits**:
+  - `ServerboundCustomPayloadPacket.MAX_PAYLOAD_SIZE == 32767` bytes (C2S). Payloads above 32 KB **must** be chunked (`24 KB` per frame in Quill).
+  - `ClientboundCustomPayloadPacket.MAX_PAYLOAD_SIZE == 1048576` bytes (S2C).
+- **Capability Negotiation & Receivers**:
+  - Client checks whether the remote server supports Quill before opening the multiplayer IDE via `ClientPlayNetworking.canSend(C2SFramePayload.TYPE)`.
+  - Server checks whether a recipient client supports broadcasts via `ServerPlayNetworking.canSend(player, TreeChangedPayload.TYPE)`.
+  - `ServerPlayNetworking.registerGlobalReceiver(...)` dispatches payload handling onto `MinecraftServer.execute(...)`.
+- **Player Identity & Connection State**:
+  - `ServerPlayer.nameAndId()` returns `net.minecraft.server.players.NameAndId` (carrying `id()` UUID and `name()`).
+  - `ServerPlayer.hasDisconnected()` checks whether a player disconnected before an async RPC response is sent back.
+  - Operator level >= 2 permission check uses `player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)`.
+
 ---
 
 ## 5. Local testing

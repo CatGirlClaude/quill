@@ -193,3 +193,24 @@ Choosing Option A means we do not get browser DOM/CSS or pre-built tree/code wid
   - Preserves exact VS Code Dark+ styling and multi-line/modal ergonomics without mixing vanilla `EditBox` widgets into custom scissor-clipped panels.
   - Prevents global keybindings (e.g., `options.keyFriends`) from intercepting characters via `Screen.isInputCaptured()`.
   - Enables headless JUnit verification (`QuillIdeScreenTextInputTest`) through `TextInputBridge` without initializing LWJGL/SDL3 windows.
+
+---
+
+## ADR-008: Layered 24 KB Chunked RPC Protocol, Optimistic Concurrency, and Dedicated Server ACL (`quill-acl.json`)
+
+- **Date**: 2026-11-18
+- **Status**: Accepted
+- **Context**:
+  Phase 3 multiplayer editing requires sending up to `512 KB` `.mcfunction`/JSON files and `5,000`-node file trees across Minecraft `26.3` networking while resisting malformed packets, memory exhaustion, concurrent edit overwrites, and unauthorized edits on dedicated servers. Bytecode verification showed that `ServerboundCustomPayloadPacket.MAX_PAYLOAD_SIZE` is `32,767` bytes (far below `MAX_FILE_SIZE_BYTES = 524,288`), while `ClientboundCustomPayloadPacket.MAX_PAYLOAD_SIZE` is `1,048,576` bytes.
+- **Decision**:
+  1. **Unified 24 KB Chunked Framing (`quill:c2s_frame`, `quill:s2c_frame`) + Broadcast (`quill:s2c_tree_changed`)**:
+     - Rather than registering 20+ separate `CustomPacketPayload` types (each still hitting the `32,767`-byte C2S cap for large files), serialize versioned (`v1`) sealed `QuillRpcRequest` / `QuillRpcResponse` messages via `QuillProtocolCodec` and frame them in `24 KB` chunks through `ChunkedTransferAssembler`.
+     - Do **not** apply client-controlled gzip/deflate compression on C2S frames, avoiding decompression bomb risks on the server thread while keeping framing simple and strictly bounded (`MAX_MESSAGE_BYTES = 1 MB`, `MAX_CONCURRENT_TRANSFERS_PER_PLAYER = 4`, `MAX_PENDING_TRANSFER_BYTES_PER_PLAYER = 2 MB`, `30s` eviction timeout).
+  2. **Optimistic Concurrency via SHA-256 Revision Hashes**:
+     - Extend `EditorBackend.writeFile(...)` with `expectedBaseSha256` (keeping the 3-arg `default` method for backward compatibility). `ServerEditorBackend` synchronizes writes per `datapacks/` root and throws `RevisionConflictException` on mismatch, which the client surfaces in a 3-button modal (**Overwrite** / **Reload** / **Cancel**).
+  3. **Dedicated File-Backed ACL (`config/quill-acl.json`) + Rate Limiting**:
+     - Auto-create `config/quill-acl.json` on `SERVER_STARTING` and hot-reload on file mtime change so server admins can grant non-OP builders access or deny specific OP accounts without restarting the server (`explicit deny > explicit allow > OP level >= 2`).
+     - Enforce a per-player token bucket (`120` req/min default, burst `40`) and global reload cooldown (`500 ms` default) in `ServerRateLimiter`.
+- **Rationale**:
+  - Guarantees every C2S and S2C packet stays comfortably within Minecraft `26.3`'s hard custom payload limits and proxy caps without requiring mixins or custom Netty handlers.
+  - Preserves ADR-004's single `EditorBackend` boundary and enables full two-client-to-server wire-format loopback integration tests (`MultiplayerLoopbackIntegrationTest`) in headless JUnit without launching a live server.

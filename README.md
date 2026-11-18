@@ -4,14 +4,14 @@
 
 Inspired by Minecraft Education Edition's Code Builder and modeled after **Visual Studio Code**, Quill provides a modern dark-themed workspace directly inside Minecraft without pausing gameplay.
 
-## Features (MVP Scope)
+## Features
 
 - **VS Code-Style Non-Pausing UI**: Activity bar, collapsible file explorer sidebar, multi-tab code editor, and status bar with reload diagnostics.
 - **World & Datapack File Explorer**: Browse, open, create, rename, and delete files and directories inside the world's `datapacks/` folder (`data/<namespace>/function/...`, `pack.mcmeta`, function tags).
 - **Quick Actions**: Scaffold a new datapack (with a valid Minecraft 26.3 `pack.mcmeta`), create a new namespace, or create a new `.mcfunction` file in one click.
 - **Extensible Presets (`data/minecraft`)**: Built-in templates loaded from mod resources, starting with `#minecraft:load` and `#minecraft:tick` function tag presets.
 - **Live Save & Reload**: Save open `.mcfunction` files and immediately trigger a server datapack reload with visible execution status and parse error feedback.
-- **Multiplayer-Ready Architecture**: All file operations flow through an abstract Editor Backend interface (`EditorBackend`), cleanly separating the client UI (`src/client`) from world filesystem and reload logic (`src/main`).
+- **Multiplayer Networking & Server Security**: Chunked C2S/S2C Fabric networking (`quill:c2s_frame` / `quill:s2c_frame` / `quill:s2c_tree_changed`), SHA-256 optimistic concurrency with conflict resolution modal, live sync across connected editors, dedicated server ACL (`config/quill-acl.json`), path sandboxing, and rate limiting.
 
 ## Tech Stack
 
@@ -46,7 +46,7 @@ To keep a single source of truth, detailed documentation is split across focused
 
 - [AGENTS.md](AGENTS.md) — Developer & AI agent quick reference (commands, conventions, workflow rules, and when to read each doc).
 - [TODO.md](TODO.md) — Single source of truth for project tasks, progress, proposals, and inbox ideas.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Module boundaries (`main` vs `client`), `EditorBackend` contract, multiplayer protocol plan, and server security guards.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Module boundaries (`main` vs `client`), `EditorBackend` contract, multiplayer protocol, and server security guards.
 - [docs/DECISIONS.md](docs/DECISIONS.md) — Architecture Decision Records (MC/Fabric versions, mappings, UI technology trade-off analysis).
 - [docs/MC_NOTES.md](docs/MC_NOTES.md) — Minecraft 26.3 & Fabric technical notes (datapack singular folder names, `pack.mcmeta` `min_format`/`max_format`, unobfuscated Loom setup, GUI rendering changes).
 - [plans/001-mvp.md](plans/001-mvp.md) — Vertical-slice implementation plan for the MVP.

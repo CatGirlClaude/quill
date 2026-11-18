@@ -35,11 +35,11 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] **Step 6 — Multi-Tab `.mcfunction` Editor, Save & Live Reload (`src/client` & `src/main`)**: Multi-line text editor with line numbers, dirty-state tabs, `Ctrl+S` save, automatic datapack reload, and reload result/error feedback in the status bar / diagnostics bar.
 - [x] **Bugfix — MC `26.3` SDL3 Text Input Capture (`QuillIdeScreen`)**: Activate `TextInputManager.startTextInput(this)` / `stopTextInput(this)` and override `isInputCaptured()` on `QuillIdeScreen` whenever a text-field `ModalPromptOverlay` or code tab is active so printable `CharacterEvent` typing works in MC `26.3`'s SDL3 backend (verified by `QuillIdeScreenTextInputTest`).
 
-## Phase 3: Multiplayer Networking (Planned — Post-MVP)
+## Phase 3: Multiplayer Networking (Completed)
 
-- [ ] Implement `CustomPacketPayload` C2S/S2C protocol (`RemoteEditorBackend` on client, `ServerNetworkEditorHandler` on server).
-- [ ] Enforce server-side permission checks (operator permission level >= 2 or dedicated Quill ACL), path traversal guards, rate limits, and payload size caps.
-- [ ] Support chunked file transfers and optimistic concurrency (`sha256` revision hashes).
+- [x] Implement `CustomPacketPayload` C2S/S2C protocol (`RemoteEditorBackend` on client, `ServerNetworkEditorHandler` on server).
+- [x] Enforce server-side permission checks (operator permission level >= 2 or dedicated Quill ACL), path traversal guards, rate limits, and payload size caps.
+- [x] Support chunked file transfers and optimistic concurrency (`sha256` revision hashes).
 
 ## Proposals (Propozycje)
 

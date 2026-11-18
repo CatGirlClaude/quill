@@ -25,6 +25,61 @@
       "defaultVariables": {
         "namespace": "demo"
       }
+    },
+    {
+      "id": "registry:recipe_shaped",
+      "displayName": "Shaped Recipe (recipe/)",
+      "description": "Creates a Minecraft 26.3 crafting_shaped JSON recipe under data/<namespace>/recipe/.",
+      "targetRelativePathPattern": "data/${namespace}/recipe/${name}.json",
+      "template": "templates/recipe_shaped.json.tmpl",
+      "defaultVariables": {
+        "namespace": "demo",
+        "name": "custom_shovel"
+      }
+    },
+    {
+      "id": "registry:recipe_shapeless",
+      "displayName": "Shapeless Recipe (recipe/)",
+      "description": "Creates a Minecraft 26.3 crafting_shapeless JSON recipe under data/<namespace>/recipe/.",
+      "targetRelativePathPattern": "data/${namespace}/recipe/${name}.json",
+      "template": "templates/recipe_shapeless.json.tmpl",
+      "defaultVariables": {
+        "namespace": "demo",
+        "name": "quick_torch"
+      }
+    },
+    {
+      "id": "registry:loot_table",
+      "displayName": "Loot Table (loot_table/)",
+      "description": "Creates a Minecraft 26.3 loot table JSON under data/<namespace>/loot_table/.",
+      "targetRelativePathPattern": "data/${namespace}/loot_table/${name}.json",
+      "template": "templates/loot_table.json.tmpl",
+      "defaultVariables": {
+        "namespace": "demo",
+        "name": "chests/bonus"
+      }
+    },
+    {
+      "id": "registry:advancement",
+      "displayName": "Advancement (advancement/)",
+      "description": "Creates a Minecraft 26.3 advancement JSON under data/<namespace>/advancement/.",
+      "targetRelativePathPattern": "data/${namespace}/advancement/${name}.json",
+      "template": "templates/advancement.json.tmpl",
+      "defaultVariables": {
+        "namespace": "demo",
+        "name": "welcome"
+      }
+    },
+    {
+      "id": "registry:predicate",
+      "displayName": "Predicate (predicate/)",
+      "description": "Creates a Minecraft 26.3 entity predicate JSON under data/<namespace>/predicate/.",
+      "targetRelativePathPattern": "data/${namespace}/predicate/${name}.json",
+      "template": "templates/predicate.json.tmpl",
+      "defaultVariables": {
+        "namespace": "demo",
+        "name": "is_sneaking"
+      }
     }
   ]
 }

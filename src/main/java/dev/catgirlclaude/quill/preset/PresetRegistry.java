@@ -38,9 +38,14 @@ public final class PresetRegistry {
 			PresetDescriptor descriptor,
 			String tagRelativePath,
 			String tagTemplate,
-			String functionTemplate,
+			String primaryTemplate,
 			String functionIdPattern
 	) {
+		boolean hasTagMerge() {
+			return tagRelativePath != null && !tagRelativePath.isBlank()
+					&& tagTemplate != null && !tagTemplate.isBlank()
+					&& functionIdPattern != null && !functionIdPattern.isBlank();
+		}
 	}
 
 	private final Map<String, PresetEntry> presetsById;
@@ -64,10 +69,12 @@ public final class PresetRegistry {
 			String displayName = obj.get("displayName").getAsString();
 			String description = obj.get("description").getAsString();
 			String targetPattern = obj.get("targetRelativePathPattern").getAsString();
-			String tagRelativePath = obj.get("tagRelativePath").getAsString();
-			String tagTemplate = obj.get("tagTemplate").getAsString();
-			String functionTemplate = obj.get("functionTemplate").getAsString();
-			String functionIdPattern = obj.get("functionIdPattern").getAsString();
+			String tagRelativePath = optionalString(obj, "tagRelativePath");
+			String tagTemplate = optionalString(obj, "tagTemplate");
+			String primaryTemplate = obj.has("template")
+					? obj.get("template").getAsString()
+					: obj.get("functionTemplate").getAsString();
+			String functionIdPattern = optionalString(obj, "functionIdPattern");
 
 			Map<String, String> defaults = new LinkedHashMap<>();
 			if (obj.has("defaultVariables") && obj.get("defaultVariables").isJsonObject()) {
@@ -83,9 +90,13 @@ public final class PresetRegistry {
 					targetPattern,
 					defaults
 			);
-			loaded.put(id, new PresetEntry(descriptor, tagRelativePath, tagTemplate, functionTemplate, functionIdPattern));
+			loaded.put(id, new PresetEntry(descriptor, tagRelativePath, tagTemplate, primaryTemplate, functionIdPattern));
 		}
 		return new PresetRegistry(Collections.unmodifiableMap(loaded));
+	}
+
+	private static String optionalString(JsonObject obj, String field) {
+		return obj.has(field) && !obj.get(field).isJsonNull() ? obj.get(field).getAsString() : null;
 	}
 
 	public List<PresetDescriptor> listPresets() {
@@ -111,32 +122,38 @@ public final class PresetRegistry {
 		if (providedVariables != null) {
 			vars.putAll(providedVariables);
 		}
-		String cleanNamespace = DatapackScaffolder.validateNamespace(vars.get("namespace"));
-		vars.put("namespace", cleanNamespace);
+		if (vars.containsKey("namespace")) {
+			String cleanNamespace = DatapackScaffolder.validateNamespace(vars.get("namespace"));
+			vars.put("namespace", cleanNamespace);
+		}
+		if (vars.containsKey("name")) {
+			String cleanName = DatapackScaffolder.validateResourcePath(vars.get("name"));
+			vars.put("name", cleanName);
+		}
 
-		String functionRelWithinPack = substitute(entry.descriptor().targetRelativePathPattern(), vars);
-		String fullFunctionRelPath = cleanPackName + "/" + functionRelWithinPack;
-		Path functionTarget = sandbox.resolveWritableFile(fullFunctionRelPath);
-
-		String tagRelWithinPack = substitute(entry.tagRelativePath(), vars);
-		String fullTagRelPath = cleanPackName + "/" + tagRelWithinPack;
-		Path tagTarget = sandbox.resolveWritableFile(fullTagRelPath);
-
-		String functionId = substitute(entry.functionIdPattern(), vars);
+		String targetRelWithinPack = substitute(entry.descriptor().targetRelativePathPattern(), vars);
+		String fullTargetRelPath = cleanPackName + "/" + targetRelWithinPack;
+		Path primaryTarget = sandbox.resolveWritableFile(fullTargetRelPath);
 
 		try {
-			if (!Files.exists(functionTarget, LinkOption.NOFOLLOW_LINKS)) {
-				String functionTemplateText = readResourceText(RESOURCE_BASE + entry.functionTemplate());
-				sandbox.atomicWriteUtf8(functionTarget, substitute(functionTemplateText, vars));
+			if (!Files.exists(primaryTarget, LinkOption.NOFOLLOW_LINKS)) {
+				String templateText = readResourceText(RESOURCE_BASE + entry.primaryTemplate());
+				sandbox.atomicWriteUtf8(primaryTarget, substitute(templateText, vars));
 			}
 
-			String updatedTagJson = mergeOrCreateFunctionTag(tagTarget, entry.tagTemplate(), functionId, vars);
-			sandbox.atomicWriteUtf8(tagTarget, updatedTagJson);
+			if (entry.hasTagMerge()) {
+				String tagRelWithinPack = substitute(entry.tagRelativePath(), vars);
+				String fullTagRelPath = cleanPackName + "/" + tagRelWithinPack;
+				Path tagTarget = sandbox.resolveWritableFile(fullTagRelPath);
+				String functionId = substitute(entry.functionIdPattern(), vars);
+				String updatedTagJson = mergeOrCreateFunctionTag(tagTarget, entry.tagTemplate(), functionId, vars);
+				sandbox.atomicWriteUtf8(tagTarget, updatedTagJson);
+			}
 		} catch (IOException e) {
 			throw new UncheckedIOException("Failed to apply preset '" + presetId + "' to pack '" + cleanPackName + "'", e);
 		}
 
-		return ServerEditorBackend.readDocumentSync(sandbox, fullFunctionRelPath);
+		return ServerEditorBackend.readDocumentSync(sandbox, fullTargetRelPath);
 	}
 
 	private static String mergeOrCreateFunctionTag(

@@ -136,6 +136,60 @@ public final class DatapackScaffolder {
 		return trimmed;
 	}
 
+	/**
+	 * Validates a relative resource path (e.g., {@code chests/bonus} or {@code custom_shovel})
+	 * used by registry JSON presets, stripping any trailing {@code .json} suffix.
+	 */
+	public static String validateResourcePath(String rawPath) {
+		if (rawPath == null || rawPath.isBlank()) {
+			throw new EditorSecurityException("Resource path must not be empty.");
+		}
+		String trimmed = rawPath.trim();
+		if (trimmed.endsWith(".json")) {
+			trimmed = trimmed.substring(0, trimmed.length() - ".json".length());
+		}
+		if (trimmed.isEmpty() || trimmed.startsWith("/") || trimmed.endsWith("/")
+				|| trimmed.contains("//") || trimmed.contains("..") || !Identifier.isValidPath(trimmed)) {
+			throw new EditorSecurityException("Invalid resource path '" + rawPath + "'. Allowed characters: [a-z0-9/._-].");
+		}
+		return trimmed;
+	}
+
+	/**
+	 * Extracts the Minecraft function ID ({@code <namespace>:<path>}) from a datapack-relative path
+	 * like {@code my_pack/data/demo/function/sub/hello.mcfunction}, or returns {@code null} if not a valid function path.
+	 */
+	public static String inferFunctionId(String relativePath) {
+		if (relativePath == null || relativePath.isBlank()) {
+			return null;
+		}
+		String normalized = relativePath.replace('\\', '/');
+		if (!normalized.endsWith(".mcfunction")) {
+			return null;
+		}
+		String[] parts = normalized.split("/");
+		// Expected: <pack>/data/<namespace>/function/<subpath...>.mcfunction
+		if (parts.length < 5 || !"data".equals(parts[1]) || !"function".equals(parts[3])) {
+			return null;
+		}
+		String namespace = parts[2];
+		if (!Identifier.isValidNamespace(namespace)) {
+			return null;
+		}
+		StringBuilder fnPath = new StringBuilder();
+		for (int i = 4; i < parts.length; i++) {
+			if (i > 4) {
+				fnPath.append('/');
+			}
+			fnPath.append(parts[i]);
+		}
+		String withoutExt = fnPath.substring(0, fnPath.length() - ".mcfunction".length());
+		if (withoutExt.isEmpty() || !Identifier.isValidPath(withoutExt)) {
+			return null;
+		}
+		return namespace + ":" + withoutExt;
+	}
+
 	static String requireExistingPack(PathSandbox sandbox, String packName) {
 		String cleanPackName = validatePackName(packName);
 		Path packDir = sandbox.resolveExistingEntryForModify(cleanPackName);

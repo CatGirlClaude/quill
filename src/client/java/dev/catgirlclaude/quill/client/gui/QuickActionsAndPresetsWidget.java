@@ -65,16 +65,27 @@ public final class QuickActionsAndPresetsWidget {
 				this::promptNewFunction, mouseX, mouseY);
 
 		y += 8;
-		QuillDraw.text(graphics, font, "PRESETS (data/minecraft)", btnX, y, QuillTheme.TEXT_MUTED);
+		QuillDraw.text(graphics, font, "FUNCTION TAGS (data/minecraft)", btnX, y, QuillTheme.TEXT_MUTED);
 		y += 13;
 
 		List<PresetDescriptor> presets = session.presets();
 		if (presets.isEmpty()) {
 			QuillDraw.text(graphics, font, "Loading presets...", btnX, y, QuillTheme.TEXT_MUTED);
 		} else {
-			for (PresetDescriptor preset : presets) {
+			List<PresetDescriptor> tagPresets = presets.stream().filter(p -> !p.id().startsWith("registry:")).toList();
+			List<PresetDescriptor> registryPresets = presets.stream().filter(p -> p.id().startsWith("registry:")).toList();
+			for (PresetDescriptor preset : tagPresets) {
 				y = addActionCard(graphics, font, btnX, y, btnW, 28, "* " + preset.id(), preset.displayName(), true,
 						() -> promptApplyPreset(preset), mouseX, mouseY);
+			}
+			if (!registryPresets.isEmpty()) {
+				y += 8;
+				QuillDraw.text(graphics, font, "REGISTRY TEMPLATES (JSON)", btnX, y, QuillTheme.TEXT_MUTED);
+				y += 13;
+				for (PresetDescriptor preset : registryPresets) {
+					y = addActionCard(graphics, font, btnX, y, btnW, 28, "{} " + preset.displayName(), preset.targetRelativePathPattern(), true,
+							() -> promptApplyPreset(preset), mouseX, mouseY);
+				}
 			}
 		}
 		QuillDraw.endClip(graphics);
@@ -107,8 +118,9 @@ public final class QuickActionsAndPresetsWidget {
 			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, title, rect.width() - 10),
 					rect.x() + 5, ty, QuillTheme.TEXT_BRIGHT);
 		} else {
+			int titleColor = title.startsWith("{}") ? QuillTheme.TEXT_JSON : QuillTheme.TEXT_FUNCTION;
 			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, title, rect.width() - 10),
-					rect.x() + 5, rect.y() + 4, QuillTheme.TEXT_FUNCTION);
+					rect.x() + 5, rect.y() + 4, titleColor);
 			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, subtitle, rect.width() - 10),
 					rect.x() + 5, rect.y() + 15, QuillTheme.TEXT_MUTED);
 		}
@@ -248,32 +260,56 @@ public final class QuickActionsAndPresetsWidget {
 		if (defaultNs.isEmpty()) {
 			defaultNs = preset.defaultVariables().getOrDefault("namespace", "demo");
 		}
+		List<ModalPromptOverlay.FieldSpec> fields = new ArrayList<>();
+		fields.add(new ModalPromptOverlay.FieldSpec("pack", "Target Datapack", defaultPack, "my_pack", val -> {
+			try {
+				DatapackScaffolder.validatePackName(val);
+				return null;
+			} catch (EditorSecurityException e) {
+				return e.getMessage();
+			}
+		}));
+
+		for (Map.Entry<String, String> var : preset.defaultVariables().entrySet()) {
+			String key = var.getKey();
+			if ("namespace".equals(key)) {
+				fields.add(new ModalPromptOverlay.FieldSpec("namespace", "Target Namespace ([a-z0-9_.-])", defaultNs, "demo", val -> {
+					try {
+						DatapackScaffolder.validateNamespace(val);
+						return null;
+					} catch (EditorSecurityException e) {
+						return e.getMessage();
+					}
+				}));
+			} else if ("name".equals(key)) {
+				fields.add(new ModalPromptOverlay.FieldSpec("name", "Resource Path ([a-z0-9/._-])", var.getValue(), var.getValue(), val -> {
+					try {
+						DatapackScaffolder.validateResourcePath(val);
+						return null;
+					} catch (EditorSecurityException e) {
+						return e.getMessage();
+					}
+				}));
+			} else {
+				fields.add(new ModalPromptOverlay.FieldSpec(key, key, var.getValue(), var.getValue(), null));
+			}
+		}
+
 		modalOpener.accept(new ModalPromptOverlay(
-				"Apply Preset: " + preset.id(),
+				"Apply Preset: " + preset.displayName(),
 				preset.description(),
 				"Apply",
 				false,
-				List.of(
-						new ModalPromptOverlay.FieldSpec("pack", "Target Datapack", defaultPack, "my_pack", val -> {
-							try {
-								DatapackScaffolder.validatePackName(val);
-								return null;
-							} catch (EditorSecurityException e) {
-								return e.getMessage();
-							}
-						}),
-						new ModalPromptOverlay.FieldSpec("namespace", "Target Namespace", defaultNs, "demo", val -> {
-							try {
-								DatapackScaffolder.validateNamespace(val);
-								return null;
-							} catch (EditorSecurityException e) {
-								return e.getMessage();
-							}
-						})
-				),
+				fields,
 				values -> {
 					modalCloser.run();
-					session.applyPreset(values.get("pack"), preset.id(), Map.of("namespace", values.get("namespace")));
+					java.util.Map<String, String> vars = new java.util.LinkedHashMap<>();
+					for (String varKey : preset.defaultVariables().keySet()) {
+						if (values.containsKey(varKey)) {
+							vars.put(varKey, values.get(varKey));
+						}
+					}
+					session.applyPreset(values.get("pack"), preset.id(), vars);
 				},
 				modalCloser
 		));

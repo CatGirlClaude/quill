@@ -22,8 +22,8 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Multi-line code editor widget with dynamic VS Code syntax highlighting, customizable font
- * and text size scaling, live Brigadier command autocomplete &amp; hover signatures,
+ * Multi-line code editor widget with dynamic VS Code syntax highlighting, customizable font,
+ * live Brigadier command autocomplete &amp; hover signatures,
  * bracket-pair matching, mouse click/double-click/triple-click/gutter/drag selection,
  * {@code Shift+Arrows}, {@code Ctrl+Shift+Arrows}, {@code Ctrl+Backspace/Delete},
  * {@code Tab}/{@code Shift+Tab} indent/unindent, clipboard, undo/redo, and 2D scrolling.
@@ -92,7 +92,7 @@ public final class CodeEditorWidget {
 	}
 
 	private static float textScale() {
-		return QuillClientConfig.current().editorTextScale();
+		return 1.0f;
 	}
 
 	private static int scaledLineHeight(Font font, float scale) {

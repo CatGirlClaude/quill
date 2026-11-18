@@ -399,15 +399,49 @@ public class QuillIdeScreen extends Screen {
 		}
 	}
 
+	private static float uiScale() {
+		return QuillClientConfig.current().uiScale();
+	}
+
+	private int virtualWidth() {
+		if (width <= 0) {
+			return 0;
+		}
+		return Math.max(1, Math.round(width / uiScale()));
+	}
+
+	private int virtualHeight() {
+		if (height <= 0) {
+			return 0;
+		}
+		return Math.max(1, Math.round(height / uiScale()));
+	}
+
+	private static MouseButtonEvent unscaleMouseEvent(MouseButtonEvent event) {
+		float scale = uiScale();
+		if (Math.abs(scale - 1.0f) <= 0.001f) {
+			return event;
+		}
+		return new MouseButtonEvent(event.x() / scale, event.y() / scale, event.buttonInfo());
+	}
+
 	private IdeLayout computeCurrentLayout() {
+		return computeCurrentLayout(virtualWidth(), virtualHeight(), uiScale());
+	}
+
+	private IdeLayout computeCurrentLayout(int vw, int vh, float scale) {
 		QuillClientConfig cfg = QuillClientConfig.current();
 		IdeLayout.WindowBounds custom = cfg.hasCustomWindowBounds()
-				? new IdeLayout.WindowBounds(cfg.windowX(), cfg.windowY(), cfg.windowWidth(), cfg.windowHeight())
+				? new IdeLayout.WindowBounds(
+						Math.round(cfg.windowX() / scale),
+						Math.round(cfg.windowY() / scale),
+						Math.round(cfg.windowWidth() / scale),
+						Math.round(cfg.windowHeight() / scale))
 				: null;
 		boolean showBreadcrumbs = !settingsOpen && session.activeTab() != null;
 		return IdeLayout.compute(
-				width,
-				height,
+				vw,
+				vh,
 				session.isMaximized(),
 				session.isSidebarCollapsed(),
 				session.isBottomPanelOpen(),
@@ -425,90 +459,107 @@ public class QuillIdeScreen extends Screen {
 		syncTextInputState();
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
 
-		IdeLayout layout = computeCurrentLayout();
-		lastLayout = layout;
-		lastSidebarRect = layout.sidebar();
-		sidebarSplitterRect = layout.sidebar().width() > 0
-				? new IdeLayout.Rect(layout.sidebar().right() - 3, layout.sidebar().y(), 5, layout.sidebar().height())
-				: new IdeLayout.Rect(0, 0, 0, 0);
-		bottomSplitterRect = layout.diagnosticsBanner().height() > 0
-				? new IdeLayout.Rect(layout.window().x(), layout.diagnosticsBanner().y() - 2, layout.window().width(), 5)
-				: new IdeLayout.Rect(0, 0, 0, 0);
+		float scale = uiScale();
+		int vw = virtualWidth();
+		int vh = virtualHeight();
+		int vmX = mouseX < 0 ? -1 : (int) Math.floor(mouseX / scale);
+		int vmY = mouseY < 0 ? -1 : (int) Math.floor(mouseY / scale);
+		boolean scaled = Math.abs(scale - 1.0f) > 0.001f;
 
-		boolean overlayOpen = activeModal != null || activeQuickPick != null;
-		int uiMouseX = overlayOpen ? -1 : mouseX;
-		int uiMouseY = overlayOpen ? -1 : mouseY;
-
-		hoveredActivityTooltip = null;
-
-		// Outer floating drop shadow + crisp frame
-		if (!session.isMaximized()) {
-			QuillDraw.fill(graphics, layout.window().x() + 3, layout.window().y() + 3,
-					layout.window().width(), layout.window().height(), 0x55000000);
+		if (scaled) {
+			graphics.pose().pushMatrix();
+			graphics.pose().scale(scale, scale);
 		}
-		QuillDraw.fill(graphics, layout.window().x(), layout.window().y(), layout.window().width(), layout.window().height(), QuillTheme.BG_EDITOR);
-		QuillDraw.outline(graphics, layout.window().x(), layout.window().y(), layout.window().width(), layout.window().height(),
-				dragMode != DragMode.NONE ? QuillTheme.ACCENT_BLUE : QuillTheme.BORDER_SUBTLE);
+		try {
+			IdeLayout layout = computeCurrentLayout(vw, vh, scale);
+			lastLayout = layout;
+			lastSidebarRect = layout.sidebar();
+			sidebarSplitterRect = layout.sidebar().width() > 0
+					? new IdeLayout.Rect(layout.sidebar().right() - 3, layout.sidebar().y(), 5, layout.sidebar().height())
+					: new IdeLayout.Rect(0, 0, 0, 0);
+			bottomSplitterRect = layout.diagnosticsBanner().height() > 0
+					? new IdeLayout.Rect(layout.window().x(), layout.diagnosticsBanner().y() - 2, layout.window().width(), 5)
+					: new IdeLayout.Rect(0, 0, 0, 0);
 
-		renderTitleBar(graphics, layout.titleBar(), uiMouseX, uiMouseY);
-		renderActivityBar(graphics, layout.activityBar(), uiMouseX, uiMouseY);
-		if (layout.sidebar().width() > 0) {
-			renderSidebar(graphics, layout.sidebar(), uiMouseX, uiMouseY);
-		}
-		renderTabBar(graphics, layout.tabBar(), uiMouseX, uiMouseY);
-		if (layout.breadcrumbs().height() > 0) {
-			renderBreadcrumbs(graphics, layout.breadcrumbs(), uiMouseX, uiMouseY);
-		} else {
-			breadcrumbSegments.clear();
-		}
-		renderEditorArea(graphics, layout.editor(), uiMouseX, uiMouseY);
-		if (layout.diagnosticsBanner().height() > 0) {
-			bottomPanelWidget.render(graphics, font, layout.diagnosticsBanner(), uiMouseX, uiMouseY);
-		} else {
-			bottomPanelWidget.clearBounds();
-		}
-		renderStatusBar(graphics, layout.statusBar(), uiMouseX, uiMouseY);
+			boolean overlayOpen = activeModal != null || activeQuickPick != null;
+			int uiMouseX = overlayOpen ? -1 : vmX;
+			int uiMouseY = overlayOpen ? -1 : vmY;
 
-		// Splitter hover / active highlights and resize cursors
-		if (!overlayOpen) {
-			boolean hoverSidebarSplit = dragMode == DragMode.RESIZE_SIDEBAR
-					|| (dragMode == DragMode.NONE && sidebarSplitterRect.contains(mouseX, mouseY));
-			boolean hoverBottomSplit = dragMode == DragMode.RESIZE_BOTTOM_PANEL
-					|| (dragMode == DragMode.NONE && bottomSplitterRect.contains(mouseX, mouseY));
-			if (hoverSidebarSplit && layout.sidebar().width() > 0) {
-				QuillDraw.fill(graphics, layout.sidebar().right() - 1, layout.sidebar().y(), 2, layout.sidebar().height(), QuillTheme.ACCENT_BLUE);
-				QuillDraw.requestCursor(graphics, CursorTypes.RESIZE_EW);
-			} else if (hoverBottomSplit && layout.diagnosticsBanner().height() > 0) {
-				QuillDraw.fill(graphics, layout.window().x(), layout.diagnosticsBanner().y(), layout.window().width(), 2, QuillTheme.ACCENT_BLUE);
-				QuillDraw.requestCursor(graphics, CursorTypes.RESIZE_NS);
-			} else if (dragMode == DragMode.MOVE_WINDOW) {
-				QuillDraw.requestCursor(graphics, CursorTypes.RESIZE_ALL);
-			} else if (dragMode == DragMode.RESIZE_WINDOW) {
-				QuillDraw.requestCursor(graphics, cursorForResizeEdge(activeResizeEdge));
-			} else if (!session.isMaximized() && !isTitleBarInteractiveHit(mouseX, mouseY)) {
-				IdeLayout.ResizeEdge hoverEdge = IdeLayout.hitTestResizeEdge(layout.window(), mouseX, mouseY, IdeLayout.RESIZE_BORDER);
-				if (hoverEdge != IdeLayout.ResizeEdge.NONE) {
-					QuillDraw.requestCursor(graphics, cursorForResizeEdge(hoverEdge));
+			hoveredActivityTooltip = null;
+
+			// Outer floating drop shadow + crisp frame
+			if (!session.isMaximized()) {
+				QuillDraw.fill(graphics, layout.window().x() + 3, layout.window().y() + 3,
+						layout.window().width(), layout.window().height(), 0x55000000);
+			}
+			QuillDraw.fill(graphics, layout.window().x(), layout.window().y(), layout.window().width(), layout.window().height(), QuillTheme.BG_EDITOR);
+			QuillDraw.outline(graphics, layout.window().x(), layout.window().y(), layout.window().width(), layout.window().height(),
+					dragMode != DragMode.NONE ? QuillTheme.ACCENT_BLUE : QuillTheme.BORDER_SUBTLE);
+
+			renderTitleBar(graphics, layout.titleBar(), uiMouseX, uiMouseY);
+			renderActivityBar(graphics, layout.activityBar(), uiMouseX, uiMouseY);
+			if (layout.sidebar().width() > 0) {
+				renderSidebar(graphics, layout.sidebar(), uiMouseX, uiMouseY);
+			}
+			renderTabBar(graphics, layout.tabBar(), uiMouseX, uiMouseY);
+			if (layout.breadcrumbs().height() > 0) {
+				renderBreadcrumbs(graphics, layout.breadcrumbs(), uiMouseX, uiMouseY);
+			} else {
+				breadcrumbSegments.clear();
+			}
+			renderEditorArea(graphics, layout.editor(), uiMouseX, uiMouseY);
+			if (layout.diagnosticsBanner().height() > 0) {
+				bottomPanelWidget.render(graphics, font, layout.diagnosticsBanner(), uiMouseX, uiMouseY);
+			} else {
+				bottomPanelWidget.clearBounds();
+			}
+			renderStatusBar(graphics, layout.statusBar(), uiMouseX, uiMouseY);
+
+			// Splitter hover / active highlights and resize cursors
+			if (!overlayOpen) {
+				boolean hoverSidebarSplit = dragMode == DragMode.RESIZE_SIDEBAR
+						|| (dragMode == DragMode.NONE && sidebarSplitterRect.contains(vmX, vmY));
+				boolean hoverBottomSplit = dragMode == DragMode.RESIZE_BOTTOM_PANEL
+						|| (dragMode == DragMode.NONE && bottomSplitterRect.contains(vmX, vmY));
+				if (hoverSidebarSplit && layout.sidebar().width() > 0) {
+					QuillDraw.fill(graphics, layout.sidebar().right() - 1, layout.sidebar().y(), 2, layout.sidebar().height(), QuillTheme.ACCENT_BLUE);
+					QuillDraw.requestCursor(graphics, CursorTypes.RESIZE_EW);
+				} else if (hoverBottomSplit && layout.diagnosticsBanner().height() > 0) {
+					QuillDraw.fill(graphics, layout.window().x(), layout.diagnosticsBanner().y(), layout.window().width(), 2, QuillTheme.ACCENT_BLUE);
+					QuillDraw.requestCursor(graphics, CursorTypes.RESIZE_NS);
+				} else if (dragMode == DragMode.MOVE_WINDOW) {
+					QuillDraw.requestCursor(graphics, CursorTypes.RESIZE_ALL);
+				} else if (dragMode == DragMode.RESIZE_WINDOW) {
+					QuillDraw.requestCursor(graphics, cursorForResizeEdge(activeResizeEdge));
+				} else if (!session.isMaximized() && !isTitleBarInteractiveHit(vmX, vmY)) {
+					IdeLayout.ResizeEdge hoverEdge = IdeLayout.hitTestResizeEdge(layout.window(), vmX, vmY, IdeLayout.RESIZE_BORDER);
+					if (hoverEdge != IdeLayout.ResizeEdge.NONE) {
+						QuillDraw.requestCursor(graphics, cursorForResizeEdge(hoverEdge));
+					}
 				}
 			}
-		}
 
-		// Floating Activity Bar tooltip on top of sidebar/editor
-		if (!overlayOpen && hoveredActivityTooltip != null) {
-			int tw = QuillDraw.textWidth(font, hoveredActivityTooltip) + 10;
-			int th = 16;
-			int tx = Math.min(width - tw - 4, hoveredActivityTooltipX);
-			int ty = Math.max(4, Math.min(height - th - 4, hoveredActivityTooltipY));
-			QuillDraw.fill(graphics, tx, ty, tw, th, QuillTheme.BG_POPUP);
-			QuillDraw.outline(graphics, tx, ty, tw, th, QuillTheme.BORDER_SUBTLE);
-			QuillDraw.text(graphics, font, hoveredActivityTooltip, tx + 5, ty + (th - font.lineHeight) / 2, QuillTheme.TEXT_BRIGHT);
-		}
+			// Floating Activity Bar tooltip on top of sidebar/editor
+			if (!overlayOpen && hoveredActivityTooltip != null) {
+				int tw = QuillDraw.textWidth(font, hoveredActivityTooltip) + 10;
+				int th = 16;
+				int tx = Math.min(vw - tw - 4, hoveredActivityTooltipX);
+				int ty = Math.max(4, Math.min(vh - th - 4, hoveredActivityTooltipY));
+				QuillDraw.fill(graphics, tx, ty, tw, th, QuillTheme.BG_POPUP);
+				QuillDraw.outline(graphics, tx, ty, tw, th, QuillTheme.BORDER_SUBTLE);
+				QuillDraw.text(graphics, font, hoveredActivityTooltip, tx + 5, ty + (th - font.lineHeight) / 2, QuillTheme.TEXT_BRIGHT);
+			}
 
-		if (activeQuickPick != null) {
-			activeQuickPick.render(graphics, font, width, height, mouseX, mouseY);
-		}
-		if (activeModal != null) {
-			activeModal.render(graphics, font, width, height, mouseX, mouseY);
+			if (activeQuickPick != null) {
+				activeQuickPick.render(graphics, font, vw, vh, vmX, vmY);
+			}
+			if (activeModal != null) {
+				activeModal.render(graphics, font, vw, vh, vmX, vmY);
+			}
+		} finally {
+			if (scaled) {
+				graphics.pose().popMatrix();
+			}
 		}
 	}
 
@@ -872,6 +923,8 @@ public class QuillIdeScreen extends Screen {
 					QuillClientConfig.ShortcutAction.SAVE,
 					QuillClientConfig.ShortcutAction.TOGGLE_SIDEBAR,
 					QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL,
+					QuillClientConfig.ShortcutAction.ZOOM_IN,
+					QuillClientConfig.ShortcutAction.ZOOM_OUT,
 					QuillClientConfig.ShortcutAction.OPEN_SETTINGS
 			};
 			for (QuillClientConfig.ShortcutAction action : shown) {
@@ -975,17 +1028,20 @@ public class QuillIdeScreen extends Screen {
 
 		// Right-side VS Code metadata
 		OpenTabState active = settingsOpen ? null : session.activeTab();
+		String zoomPrefix = Math.abs(cfg.uiScale() - 1.0f) > 0.001f
+				? Math.round(cfg.uiScale() * 100) + "%  |  "
+				: "";
 		String rightInfo;
 		if (active != null) {
 			String selInfo = active.buffer().hasSelection()
 					? " (" + active.buffer().selectedCharCount() + " selected)"
 					: "";
-			rightInfo = "Ln " + active.buffer().oneBasedLine() + ", Col " + active.buffer().oneBasedColumn() + selInfo
+			rightInfo = zoomPrefix + "Ln " + active.buffer().oneBasedLine() + ", Col " + active.buffer().oneBasedColumn() + selInfo
 					+ "  |  Spaces: 4  |  UTF-8  |  LF  |  " + languageLabel(active.fileName());
 		} else if (settingsOpen) {
-			rightInfo = "Settings  |  UTF-8";
+			rightInfo = zoomPrefix + "Settings  |  UTF-8";
 		} else {
-			rightInfo = (session.isReloadPendingOnClose() ? "Reload on close  |  " : "") + "UTF-8";
+			rightInfo = zoomPrefix + (session.isReloadPendingOnClose() ? "Reload on close  |  " : "") + "UTF-8";
 		}
 		int rightW = QuillDraw.textWidth(font, rightInfo);
 		int rightX = bar.right() - rightW - 8;
@@ -1148,6 +1204,18 @@ public class QuillIdeScreen extends Screen {
 					QuillClientConfig.saveCurrent();
 					onResetWindowBounds();
 				}));
+		items.add(new QuickPickOverlay.PickItem(
+				"zoom_in", "View: Zoom In", "Increase overall IDE UI & font scale",
+				cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_IN).displayLabel(),
+				"View: Zoom In scale font size larger", () -> applyZoomChange(QuillClientConfig.current().zoomIn())));
+		items.add(new QuickPickOverlay.PickItem(
+				"zoom_out", "View: Zoom Out", "Decrease overall IDE UI & font scale",
+				cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_OUT).displayLabel(),
+				"View: Zoom Out scale font size smaller", () -> applyZoomChange(QuillClientConfig.current().zoomOut())));
+		items.add(new QuickPickOverlay.PickItem(
+				"zoom_reset", "View: Reset Zoom", "Reset overall IDE UI & font scale to 100%",
+				cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_RESET).displayLabel(),
+				"View: Reset Zoom 100% default scale font size", () -> applyZoomChange(QuillClientConfig.current().resetZoom())));
 
 		for (PresetDescriptor preset : session.presets()) {
 			items.add(new QuickPickOverlay.PickItem(
@@ -1202,20 +1270,21 @@ public class QuillIdeScreen extends Screen {
 
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+		MouseButtonEvent ev = unscaleMouseEvent(event);
 		if (activeModal != null) {
-			boolean handled = activeModal.mouseClicked(event);
+			boolean handled = activeModal.mouseClicked(ev);
 			syncTextInputState();
 			return handled;
 		}
 		if (activeQuickPick != null) {
-			boolean handled = activeQuickPick.mouseClicked(event);
+			boolean handled = activeQuickPick.mouseClicked(ev);
 			syncTextInputState();
 			return handled;
 		}
-		double mx = event.x();
-		double my = event.y();
+		double mx = ev.x();
+		double my = ev.y();
 
-		if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+		if (ev.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 			// 1. Outer floating frame resize edges/corners
 			if (!session.isMaximized() && !isTitleBarInteractiveHit(mx, my)) {
 				IdeLayout.ResizeEdge edge = IdeLayout.hitTestResizeEdge(lastLayout.window(), mx, my, IdeLayout.RESIZE_BORDER);
@@ -1249,14 +1318,14 @@ public class QuillIdeScreen extends Screen {
 			explorerTree.cancelInlineInput();
 			syncTextInputState();
 		}
-		if (tabBarWidget.mouseClicked(event)) {
+		if (tabBarWidget.mouseClicked(ev)) {
 			syncTextInputState();
 			return true;
 		}
-		if (bottomPanelWidget.mouseClicked(event)) {
+		if (bottomPanelWidget.mouseClicked(ev)) {
 			return true;
 		}
-		if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+		if (ev.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 			if (closeBtnRect.contains(mx, my)) {
 				onClose();
 				return true;
@@ -1280,12 +1349,20 @@ public class QuillIdeScreen extends Screen {
 				}
 				if (session.isMaximized()) {
 					session.toggleMaximized();
-					IdeLayout restored = computeCurrentLayout();
+					float scale = uiScale();
+					int vw = virtualWidth();
+					int vh = virtualHeight();
+					IdeLayout restored = computeCurrentLayout(vw, vh, scale);
 					int rw = restored.window().width();
 					int rh = restored.window().height();
-					int nx = Math.max(0, Math.min(Math.max(0, width - rw), (int) mx - rw / 2));
-					int ny = Math.max(0, Math.min(Math.max(0, height - rh), (int) my - QuillTheme.TITLE_BAR_HEIGHT / 2));
-					QuillClientConfig.current().setCustomWindowBounds(nx, ny, rw, rh);
+					int nx = Math.max(0, Math.min(Math.max(0, vw - rw), (int) mx - rw / 2));
+					int ny = Math.max(0, Math.min(Math.max(0, vh - rh), (int) my - QuillTheme.TITLE_BAR_HEIGHT / 2));
+					QuillClientConfig.current().setCustomWindowBounds(
+							Math.round(nx * scale),
+							Math.round(ny * scale),
+							Math.round(rw * scale),
+							Math.round(rh * scale)
+					);
 					dragStartBounds = new IdeLayout.WindowBounds(nx, ny, rw, rh);
 				} else {
 					IdeLayout.Rect w = lastLayout.window();
@@ -1342,10 +1419,10 @@ public class QuillIdeScreen extends Screen {
 			}
 			if (lastSidebarRect.contains(mx, my)) {
 				boolean handled = switch (session.sidebarView()) {
-					case EXPLORER -> explorerTree.mouseClicked(event);
-					case SEARCH -> searchSidebar.mouseClicked(event);
-					case INSPECTOR -> inspectorSidebar.mouseClicked(event);
-					case PRESETS -> quickActions.mouseClicked(event);
+					case EXPLORER -> explorerTree.mouseClicked(ev);
+					case SEARCH -> searchSidebar.mouseClicked(ev);
+					case INSPECTOR -> inspectorSidebar.mouseClicked(ev);
+					case PRESETS -> quickActions.mouseClicked(ev);
 				};
 				syncActiveTabSelection();
 				syncTextInputState();
@@ -1365,7 +1442,7 @@ public class QuillIdeScreen extends Screen {
 					return true;
 				}
 			}
-			if (settingsOpen && settingsPanel.mouseClicked(event)) {
+			if (settingsOpen && settingsPanel.mouseClicked(ev)) {
 				syncTextInputState();
 				return true;
 			}
@@ -1382,7 +1459,7 @@ public class QuillIdeScreen extends Screen {
 				return true;
 			}
 			OpenTabState active = settingsOpen ? null : session.activeTab();
-			if (active != null && codeEditorWidget.mouseClicked(event, font, active)) {
+			if (active != null && codeEditorWidget.mouseClicked(ev, font, active)) {
 				return true;
 			}
 			if (statusRemoteBadgeRect.contains(mx, my)) {
@@ -1423,24 +1500,38 @@ public class QuillIdeScreen extends Screen {
 
 	@Override
 	public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+		MouseButtonEvent ev = unscaleMouseEvent(event);
 		if (activeModal != null) {
-			return activeModal.mouseDragged(event);
+			return activeModal.mouseDragged(ev);
 		}
 		if (activeQuickPick != null) {
-			return activeQuickPick.mouseDragged(event);
+			return activeQuickPick.mouseDragged(ev);
 		}
-		if (dragMode != DragMode.NONE && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-			int dx = (int) Math.round(event.x() - dragStartMouseX);
-			int dy = (int) Math.round(event.y() - dragStartMouseY);
+		if (dragMode != DragMode.NONE && ev.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+			int dx = (int) Math.round(ev.x() - dragStartMouseX);
+			int dy = (int) Math.round(ev.y() - dragStartMouseY);
 			QuillClientConfig cfg = QuillClientConfig.current();
+			float scale = uiScale();
+			int vw = virtualWidth();
+			int vh = virtualHeight();
 			switch (dragMode) {
 				case MOVE_WINDOW -> {
-					IdeLayout.WindowBounds next = IdeLayout.applyMove(dragStartBounds, dx, dy, width, height);
-					cfg.setCustomWindowBounds(next.x(), next.y(), next.width(), next.height());
+					IdeLayout.WindowBounds next = IdeLayout.applyMove(dragStartBounds, dx, dy, vw, vh);
+					cfg.setCustomWindowBounds(
+							Math.round(next.x() * scale),
+							Math.round(next.y() * scale),
+							Math.round(next.width() * scale),
+							Math.round(next.height() * scale)
+					);
 				}
 				case RESIZE_WINDOW -> {
-					IdeLayout.WindowBounds next = IdeLayout.applyResize(dragStartBounds, activeResizeEdge, dx, dy, width, height);
-					cfg.setCustomWindowBounds(next.x(), next.y(), next.width(), next.height());
+					IdeLayout.WindowBounds next = IdeLayout.applyResize(dragStartBounds, activeResizeEdge, dx, dy, vw, vh);
+					cfg.setCustomWindowBounds(
+							Math.round(next.x() * scale),
+							Math.round(next.y() * scale),
+							Math.round(next.width() * scale),
+							Math.round(next.height() * scale)
+					);
 				}
 				case RESIZE_SIDEBAR -> cfg.setSidebarWidth(dragStartSplitterSize + dx);
 				case RESIZE_BOTTOM_PANEL -> cfg.setBottomPanelHeight(dragStartSplitterSize - dy);
@@ -1449,17 +1540,17 @@ public class QuillIdeScreen extends Screen {
 			}
 			return true;
 		}
-		if (isExplorerInlineInputActive() && explorerTree.mouseDragged(event)) {
+		if (isExplorerInlineInputActive() && explorerTree.mouseDragged(ev)) {
 			return true;
 		}
-		if (isSearchInputFocused() && searchSidebar.mouseDragged(event)) {
+		if (isSearchInputFocused() && searchSidebar.mouseDragged(ev)) {
 			return true;
 		}
-		if (settingsOpen && settingsPanel.mouseDragged(event)) {
+		if (settingsOpen && settingsPanel.mouseDragged(ev)) {
 			return true;
 		}
 		OpenTabState active = settingsOpen ? null : session.activeTab();
-		if (active != null && codeEditorWidget.mouseDragged(event, font, active)) {
+		if (active != null && codeEditorWidget.mouseDragged(ev, font, active)) {
 			return true;
 		}
 		return super.mouseDragged(event, dragX, dragY);
@@ -1467,22 +1558,23 @@ public class QuillIdeScreen extends Screen {
 
 	@Override
 	public boolean mouseReleased(MouseButtonEvent event) {
+		MouseButtonEvent ev = unscaleMouseEvent(event);
 		if (dragMode != DragMode.NONE) {
 			dragMode = DragMode.NONE;
 			activeResizeEdge = IdeLayout.ResizeEdge.NONE;
 			QuillClientConfig.saveCurrent();
 			return true;
 		}
-		codeEditorWidget.mouseReleased(event);
-		searchSidebar.mouseReleased(event);
-		explorerTree.mouseReleased(event);
-		settingsPanel.mouseReleased(event);
+		codeEditorWidget.mouseReleased(ev);
+		searchSidebar.mouseReleased(ev);
+		explorerTree.mouseReleased(ev);
+		settingsPanel.mouseReleased(ev);
 		if (activeModal != null) {
-			activeModal.mouseReleased(event);
+			activeModal.mouseReleased(ev);
 			return true;
 		}
 		if (activeQuickPick != null) {
-			activeQuickPick.mouseReleased(event);
+			activeQuickPick.mouseReleased(ev);
 			return true;
 		}
 		return super.mouseReleased(event);
@@ -1490,37 +1582,62 @@ public class QuillIdeScreen extends Screen {
 
 	@Override
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+		float scale = uiScale();
+		double vmX = mouseX / scale;
+		double vmY = mouseY / scale;
 		if (activeModal != null) {
 			return true;
 		}
 		if (activeQuickPick != null) {
 			return activeQuickPick.mouseScrolled(scrollY);
 		}
-		if (bottomPanelWidget.mouseScrolled(mouseX, mouseY, scrollY)) {
+		if (bottomPanelWidget.mouseScrolled(vmX, vmY, scrollY)) {
 			return true;
 		}
-		if (tabBarWidget.mouseScrolled(mouseX, mouseY, scrollY)) {
+		if (tabBarWidget.mouseScrolled(vmX, vmY, scrollY)) {
 			return true;
 		}
-		if (lastSidebarRect.contains(mouseX, mouseY)) {
+		if (lastSidebarRect.contains(vmX, vmY)) {
 			boolean handled = switch (session.sidebarView()) {
-				case EXPLORER -> explorerTree.mouseScrolled(mouseX, mouseY, scrollY);
-				case SEARCH -> searchSidebar.mouseScrolled(mouseX, mouseY, scrollY);
-				case INSPECTOR -> inspectorSidebar.mouseScrolled(mouseX, mouseY, scrollY);
-				case PRESETS -> quickActions.mouseScrolled(mouseX, mouseY, scrollY);
+				case EXPLORER -> explorerTree.mouseScrolled(vmX, vmY, scrollY);
+				case SEARCH -> searchSidebar.mouseScrolled(vmX, vmY, scrollY);
+				case INSPECTOR -> inspectorSidebar.mouseScrolled(vmX, vmY, scrollY);
+				case PRESETS -> quickActions.mouseScrolled(vmX, vmY, scrollY);
 			};
 			if (handled) {
 				return true;
 			}
 		}
-		if (settingsOpen && settingsPanel.mouseScrolled(mouseX, mouseY, scrollY)) {
+		if (settingsOpen && settingsPanel.mouseScrolled(vmX, vmY, scrollY)) {
 			return true;
 		}
 		OpenTabState active = settingsOpen ? null : session.activeTab();
-		if (active != null && codeEditorWidget.mouseScrolled(mouseX, mouseY, scrollX, scrollY, font, active)) {
+		if (active != null && codeEditorWidget.mouseScrolled(vmX, vmY, scrollX, scrollY, font, active)) {
 			return true;
 		}
 		return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+	}
+
+	private void applyZoomChange(boolean changed) {
+		QuillClientConfig cfg = QuillClientConfig.current();
+		if (changed) {
+			QuillClientConfig.saveCurrent();
+		}
+		session.setStatus("UI Zoom: " + Math.round(cfg.uiScale() * 100) + "% (" + cfg.textSize() + " px)", false);
+	}
+
+	private static boolean matchesZoomIn(KeyEvent event, QuillClientConfig cfg) {
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_IN).matches(event)) {
+			return true;
+		}
+		if (!cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_IN)
+				.equals(QuillClientConfig.ShortcutAction.ZOOM_IN.defaultShortcut())) {
+			return false;
+		}
+		return event.hasControlDownWithQuirk() && !event.hasAltDown()
+				&& (event.shortcutKey() == '+'
+				|| event.key() == InputConstants.KEY_ADD
+				|| (event.hasShiftDown() && (event.shortcutKey() == '=' || event.key() == InputConstants.KEY_EQUALS)));
 	}
 
 	@Override
@@ -1549,6 +1666,18 @@ public class QuillIdeScreen extends Screen {
 
 		// Configurable IDE keyboard shortcuts
 		QuillClientConfig cfg = QuillClientConfig.current();
+		if (matchesZoomIn(event, cfg)) {
+			applyZoomChange(cfg.zoomIn());
+			return true;
+		}
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_OUT).matches(event)) {
+			applyZoomChange(cfg.zoomOut());
+			return true;
+		}
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_RESET).matches(event)) {
+			applyZoomChange(cfg.resetZoom());
+			return true;
+		}
 		if (event.key() == InputConstants.KEY_F1 && !event.hasControlDownWithQuirk() && !event.hasAltDown()
 				|| cfg.shortcut(QuillClientConfig.ShortcutAction.COMMAND_PALETTE).matches(event)) {
 			openQuickPick(QuickPickOverlay.Mode.COMMANDS);

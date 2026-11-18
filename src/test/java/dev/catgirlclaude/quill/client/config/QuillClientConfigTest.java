@@ -26,8 +26,9 @@ class QuillClientConfigTest {
 	void defaultsAndWarningConditionWorkAsExpected() {
 		QuillClientConfig cfg = QuillClientConfig.createDefault();
 		assertEquals(QuillColorPalette.DARK_PLUS.id(), cfg.themeId());
-		assertEquals(QuillClientConfig.FontChoice.MINECRAFT_DEFAULT, cfg.fontChoice());
+		assertEquals(QuillClientConfig.FontChoice.SANS_SERIF, cfg.fontChoice());
 		assertEquals(QuillClientConfig.DEFAULT_TEXT_SIZE, cfg.textSize());
+		assertEquals(1.0f, cfg.uiScale(), 0.0001f);
 		assertFalse(cfg.pauseGameWhileOpen());
 		assertEquals(QuillClientConfig.AutosaveMode.OFF, cfg.autosaveMode());
 		assertEquals(QuillClientConfig.ReloadTriggerMode.ON_SAVE, cfg.reloadTriggerMode());
@@ -36,6 +37,16 @@ class QuillClientConfigTest {
 		assertEquals("load", cfg.defaultLoadFunctionName());
 		assertEquals("tick", cfg.defaultTickFunctionName());
 		assertFalse(cfg.hasCustomWindowBounds());
+
+		assertTrue(cfg.zoomIn());
+		assertEquals(QuillClientConfig.DEFAULT_TEXT_SIZE + 1, cfg.textSize());
+		assertTrue(cfg.uiScale() > 1.0f);
+		assertTrue(cfg.zoomOut());
+		assertEquals(QuillClientConfig.DEFAULT_TEXT_SIZE, cfg.textSize());
+		assertTrue(cfg.zoomOut());
+		assertEquals(QuillClientConfig.DEFAULT_TEXT_SIZE - 1, cfg.textSize());
+		assertTrue(cfg.resetZoom());
+		assertEquals(1.0f, cfg.uiScale(), 0.0001f);
 
 		cfg.setAutosaveMode(QuillClientConfig.AutosaveMode.ON_KEYPRESS);
 		assertTrue(cfg.hasInstantAutosaveReloadWarning(),
@@ -50,7 +61,7 @@ class QuillClientConfigTest {
 		Path file = tempDir.resolve("quill-client.json");
 		QuillClientConfig cfg = QuillClientConfig.createDefault();
 		cfg.setThemeId(QuillColorPalette.DRACULA.id());
-		cfg.setFontChoice(QuillClientConfig.FontChoice.SANS_SERIF);
+		cfg.setFontChoice(QuillClientConfig.FontChoice.MONOSPACE);
 		cfg.setTextSize(12);
 		cfg.setPauseGameWhileOpen(true);
 		cfg.setAutosaveMode(QuillClientConfig.AutosaveMode.ON_GUI_CLOSE);
@@ -68,7 +79,7 @@ class QuillClientConfigTest {
 
 		QuillClientConfig loaded = QuillClientConfig.load(file);
 		assertEquals(QuillColorPalette.DRACULA.id(), loaded.themeId());
-		assertEquals(QuillClientConfig.FontChoice.SANS_SERIF, loaded.fontChoice());
+		assertEquals(QuillClientConfig.FontChoice.MONOSPACE, loaded.fontChoice());
 		assertEquals(12, loaded.textSize());
 		assertTrue(loaded.pauseGameWhileOpen());
 		assertEquals(QuillClientConfig.AutosaveMode.ON_GUI_CLOSE, loaded.autosaveMode());
@@ -131,6 +142,21 @@ class QuillClientConfigTest {
 		assertFalse(save.matches(new KeyEvent(InputConstants.KEY_S, 's', InputConstants.MOD_CONTROL | InputConstants.MOD_SHIFT)));
 		assertFalse(save.matches(new KeyEvent(InputConstants.KEY_S, 's', 0)));
 
+		KeyShortcut zoomOut = KeyShortcut.parse("Ctrl+-", null);
+		assertEquals("Ctrl+-", zoomOut.displayLabel());
+		assertTrue(zoomOut.matches(new KeyEvent(InputConstants.KEY_MINUS, '-', InputConstants.MOD_CONTROL)));
+		assertTrue(zoomOut.matches(new KeyEvent(86, 0, InputConstants.MOD_CONTROL)));
+
+		KeyShortcut zoomIn = KeyShortcut.parse("Ctrl+=", null);
+		assertEquals("Ctrl+=", zoomIn.displayLabel());
+		assertTrue(zoomIn.matches(new KeyEvent(InputConstants.KEY_EQUALS, '=', InputConstants.MOD_CONTROL)));
+		assertTrue(zoomIn.matches(new KeyEvent(InputConstants.KEY_ADD, 0, InputConstants.MOD_CONTROL)));
+
+		KeyShortcut zoomReset = KeyShortcut.parse("Ctrl+0", null);
+		assertEquals("Ctrl+0", zoomReset.displayLabel());
+		assertTrue(zoomReset.matches(new KeyEvent(InputConstants.KEY_0, '0', InputConstants.MOD_CONTROL)));
+		assertTrue(zoomReset.matches(new KeyEvent(InputConstants.KEY_NUMPAD0, 0, InputConstants.MOD_CONTROL)));
+
 		KeyShortcut f5 = KeyShortcut.parse("Shift+F5", null);
 		assertEquals("Shift+F5", f5.displayLabel());
 		assertTrue(f5.matches(new KeyEvent(InputConstants.KEY_F5, 0, InputConstants.MOD_SHIFT)));
@@ -141,6 +167,10 @@ class QuillClientConfigTest {
 
 		KeyShortcut captured = KeyShortcut.fromKeyEvent(new KeyEvent(InputConstants.KEY_K, 'k', InputConstants.MOD_CONTROL | InputConstants.MOD_ALT));
 		assertEquals("Ctrl+Alt+K", captured.displayLabel());
+
+		assertEquals("Ctrl+-", KeyShortcut.fromKeyEvent(new KeyEvent(86, 0, InputConstants.MOD_CONTROL)).displayLabel());
+		assertEquals("Ctrl+=", KeyShortcut.fromKeyEvent(new KeyEvent(InputConstants.KEY_ADD, 0, InputConstants.MOD_CONTROL)).displayLabel());
+		assertEquals("Ctrl+0", KeyShortcut.fromKeyEvent(new KeyEvent(InputConstants.KEY_NUMPAD0, 0, InputConstants.MOD_CONTROL)).displayLabel());
 
 		assertNull(KeyShortcut.fromKeyEvent(new KeyEvent(InputConstants.KEY_LCONTROL, 0, InputConstants.MOD_CONTROL)));
 		assertNull(KeyShortcut.fromKeyEvent(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0)));

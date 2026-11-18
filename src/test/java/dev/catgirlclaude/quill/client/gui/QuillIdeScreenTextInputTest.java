@@ -645,6 +645,51 @@ class QuillIdeScreenTextInputTest {
 		assertEquals("my_pack/data/quest/function/boot/start.mcfunction", session.activeTab().relativePath());
 	}
 
+	@Test
+	void wholeGuiZoomShortcutsAndCommandPaletteScaleEntireIde() {
+		StubEditorBackend backend = new StubEditorBackend();
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		int ctrl = net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER;
+		QuillClientConfig cfg = QuillClientConfig.current();
+		assertEquals(QuillClientConfig.DEFAULT_TEXT_SIZE, cfg.textSize());
+		assertEquals(1.0f, cfg.uiScale(), 0.0001f);
+
+		// Ctrl+- zooms out the whole GUI even from Welcome / Editor views
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_MINUS, '-', ctrl)));
+		assertEquals(8, cfg.textSize());
+		assertEquals(8f / 9f, cfg.uiScale(), 0.0001f);
+
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_MINUS, '-', ctrl)));
+		assertEquals(QuillClientConfig.MIN_TEXT_SIZE, cfg.textSize());
+
+		// Clamped at MIN_TEXT_SIZE
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_MINUS, '-', ctrl)));
+		assertEquals(QuillClientConfig.MIN_TEXT_SIZE, cfg.textSize());
+
+		// Ctrl+= and Ctrl+Shift+= (Ctrl++) zoom in
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_EQUALS, '=', ctrl)));
+		assertEquals(8, cfg.textSize());
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_EQUALS, '+', ctrl | 1)));
+		assertEquals(9, cfg.textSize());
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_ADD, 0, ctrl)));
+		assertEquals(10, cfg.textSize());
+
+		// Ctrl+0 resets zoom to 100%
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_0, '0', ctrl)));
+		assertEquals(QuillClientConfig.DEFAULT_TEXT_SIZE, cfg.textSize());
+		assertEquals(1.0f, cfg.uiScale(), 0.0001f);
+
+		// Command Palette "View: Zoom In" triggers whole-GUI zoom
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_F1, 0, 0));
+		simulateSdlTextInput(screen, bridge, "zoom in");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+		assertEquals(QuillClientConfig.DEFAULT_TEXT_SIZE + 1, cfg.textSize());
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

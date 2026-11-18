@@ -63,14 +63,14 @@ public final class QuillClientConfig {
 
 		public static FontChoice byId(String id) {
 			if (id == null) {
-				return MINECRAFT_DEFAULT;
+				return SANS_SERIF;
 			}
 			for (FontChoice fc : values()) {
 				if (fc.id.equalsIgnoreCase(id)) {
 					return fc;
 				}
 			}
-			return MINECRAFT_DEFAULT;
+			return SANS_SERIF;
 		}
 	}
 
@@ -152,7 +152,10 @@ public final class QuillClientConfig {
 		OPEN_SETTINGS("open_settings", "Open Settings", KeyShortcut.ofChar(true, false, false, ',')),
 		TRIGGER_AUTOCOMPLETE("trigger_autocomplete", "Trigger Autocomplete", KeyShortcut.ofSpace(true, false, false)),
 		RUN_FUNCTION("run_function", "Run Current Function", KeyShortcut.ofChar(true, true, false, 'r')),
-		RELOAD_DATAPACKS("reload_datapacks", "Reload Datapacks", KeyShortcut.ofChar(true, false, false, 'r'));
+		RELOAD_DATAPACKS("reload_datapacks", "Reload Datapacks", KeyShortcut.ofChar(true, false, false, 'r')),
+		ZOOM_IN("zoom_in", "Zoom In UI", KeyShortcut.ofChar(true, false, false, '=')),
+		ZOOM_OUT("zoom_out", "Zoom Out UI", KeyShortcut.ofChar(true, false, false, '-')),
+		ZOOM_RESET("zoom_reset", "Reset UI Zoom", KeyShortcut.ofChar(true, false, false, '0'));
 
 		private final String id;
 		private final String label;
@@ -182,7 +185,7 @@ public final class QuillClientConfig {
 	private static volatile Path boundPath = null;
 
 	private String themeId = QuillColorPalette.DARK_PLUS.id();
-	private FontChoice fontChoice = FontChoice.MINECRAFT_DEFAULT;
+	private FontChoice fontChoice = FontChoice.SANS_SERIF;
 	private int textSize = DEFAULT_TEXT_SIZE;
 	private boolean pauseGameWhileOpen = false;
 	private AutosaveMode autosaveMode = AutosaveMode.OFF;
@@ -396,7 +399,7 @@ public final class QuillClientConfig {
 	}
 
 	public void setFontChoice(FontChoice fontChoice) {
-		this.fontChoice = fontChoice == null ? FontChoice.MINECRAFT_DEFAULT : fontChoice;
+		this.fontChoice = fontChoice == null ? FontChoice.SANS_SERIF : fontChoice;
 	}
 
 	public int textSize() {
@@ -407,8 +410,30 @@ public final class QuillClientConfig {
 		this.textSize = Math.max(MIN_TEXT_SIZE, Math.min(MAX_TEXT_SIZE, textSize));
 	}
 
-	public float editorTextScale() {
+	public float uiScale() {
 		return textSize / (float) DEFAULT_TEXT_SIZE;
+	}
+
+	public float editorTextScale() {
+		return uiScale();
+	}
+
+	public boolean zoomIn() {
+		int prev = textSize;
+		setTextSize(textSize + 1);
+		return textSize != prev;
+	}
+
+	public boolean zoomOut() {
+		int prev = textSize;
+		setTextSize(textSize - 1);
+		return textSize != prev;
+	}
+
+	public boolean resetZoom() {
+		int prev = textSize;
+		setTextSize(DEFAULT_TEXT_SIZE);
+		return textSize != prev;
 	}
 
 	public boolean pauseGameWhileOpen() {

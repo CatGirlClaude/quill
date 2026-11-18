@@ -207,7 +207,7 @@ public final class SettingsPanelWidget {
 		QuillClientConfig.FontChoice[] fonts = QuillClientConfig.FontChoice.values();
 		int fontCols = contentW >= 420 ? 2 : 1;
 		int fontCardW = (contentW - gap * (fontCols - 1)) / fontCols;
-		int fontCardH = 30;
+		int fontCardH = 31;
 		for (int i = 0; i < fonts.length; i++) {
 			QuillClientConfig.FontChoice fc = fonts[i];
 			int col = i % fontCols;
@@ -230,35 +230,43 @@ public final class SettingsPanelWidget {
 			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, (selected ? "* " : "") + fc.displayName(), fontCardW - 10),
 					fx + 6, fy + 4, selected ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY);
 			QuillDraw.textWithFont(graphics, font, "execute as @a run say Hi", fc,
-					fx + 6, fy + 16, QuillTheme.TEXT_MUTED, 0.9f);
+					fx + 6, fy + 17, QuillTheme.TEXT_MUTED, 1.0f);
 		}
 		int fontRows = (fonts.length + fontCols - 1) / fontCols;
 		y += fontRows * (fontCardH + gap) + 8;
 
-		// Text size stepper
-		QuillDraw.text(graphics, font, "Editor Text Size", x, y + 4, QuillTheme.TEXT_PRIMARY);
+		// Whole-GUI & font scale stepper
+		QuillDraw.text(graphics, font, "UI & Font Scale (Zoom)", x, y + 4, QuillTheme.TEXT_PRIMARY);
 		int ctrlX = x + Math.min(160, contentW / 2);
 		IdeLayout.Rect minusRect = new IdeLayout.Rect(ctrlX, y, 22, 18);
-		String sizeText = cfg.textSize() + " px (" + Math.round(cfg.editorTextScale() * 100) + "%)";
-		int sizeLabelW = Math.max(66, QuillDraw.textWidth(font, sizeText) + 12);
+		String sizeText = Math.round(cfg.uiScale() * 100) + "% (" + cfg.textSize() + " px)";
+		int sizeLabelW = Math.max(76, QuillDraw.textWidth(font, sizeText) + 12);
 		IdeLayout.Rect plusRect = new IdeLayout.Rect(minusRect.right() + sizeLabelW + 4, y, 22, 18);
 		IdeLayout.Rect resetSizeRect = new IdeLayout.Rect(plusRect.right() + 8, y, QuillDraw.textWidth(font, "Reset") + 10, 18);
 
 		hoveredClickable |= renderButton(graphics, font, minusRect, "-", false, false, mouseX, mouseY, area, () -> {
-			cfg.setTextSize(cfg.textSize() - 1);
+			cfg.zoomOut();
 			QuillClientConfig.saveCurrent();
 		});
 		QuillDraw.text(graphics, font, sizeText,
 				minusRect.right() + (sizeLabelW - QuillDraw.textWidth(font, sizeText)) / 2 + 2,
 				y + (18 - font.lineHeight) / 2, QuillTheme.TEXT_BRIGHT);
 		hoveredClickable |= renderButton(graphics, font, plusRect, "+", false, false, mouseX, mouseY, area, () -> {
-			cfg.setTextSize(cfg.textSize() + 1);
+			cfg.zoomIn();
 			QuillClientConfig.saveCurrent();
 		});
 		hoveredClickable |= renderButton(graphics, font, resetSizeRect, "Reset", false, false, mouseX, mouseY, area, () -> {
-			cfg.setTextSize(QuillClientConfig.DEFAULT_TEXT_SIZE);
+			cfg.resetZoom();
 			QuillClientConfig.saveCurrent();
 		});
+		String zoomHint = cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_OUT).displayLabel()
+				+ " / " + cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_IN).displayLabel()
+				+ " / " + cfg.shortcut(QuillClientConfig.ShortcutAction.ZOOM_RESET).displayLabel();
+		int hintX = resetSizeRect.right() + 10;
+		if (hintX + 40 < x + contentW) {
+			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, zoomHint, x + contentW - hintX),
+					hintX, y + 4, QuillTheme.TEXT_MUTED);
+		}
 		y += 28;
 
 		// ========== SECTION 2: BEHAVIOR, PAUSE, AUTOSAVE & RELOAD ==========

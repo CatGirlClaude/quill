@@ -3,7 +3,9 @@
 	"package": "dev.catgirlclaude.quill.client.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
-		"QuillClientMixin"
+		"QuillClientMixin",
+		"FontTextureMixin",
+		"GlyphRenderStateMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

@@ -10,6 +10,7 @@ import java.util.Locale;
  * (e.g., {@code 's'}, {@code ','}, {@code Space}), and function keys ({@code F1}–{@code F12}).
  */
 public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode, int scanCode) {
+	private static final int KEY_KP_SUBTRACT = 86;
 
 	public static KeyShortcut ofChar(boolean ctrl, boolean shift, boolean alt, char ch) {
 		return new KeyShortcut(ctrl, shift, alt, Character.toLowerCase(ch), 0);
@@ -61,6 +62,18 @@ public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode,
 			if (keyCode == ',' && event.key() == InputConstants.KEY_COMMA) {
 				return true;
 			}
+			if (keyCode == '-' && (event.key() == InputConstants.KEY_MINUS || event.key() == KEY_KP_SUBTRACT)) {
+				return true;
+			}
+			if (keyCode == '=' && (evCode == '+'
+					|| event.key() == InputConstants.KEY_EQUALS
+					|| event.key() == InputConstants.KEY_ADD
+					|| event.key() == InputConstants.KEY_NUMPADEQUALS)) {
+				return true;
+			}
+			if (keyCode == '0' && (event.key() == InputConstants.KEY_0 || event.key() == InputConstants.KEY_NUMPAD0)) {
+				return true;
+			}
 		}
 		if (scanCode > 0 && event.key() == scanCode) {
 			return true;
@@ -103,6 +116,17 @@ public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode,
 		if (event.key() == InputConstants.KEY_COMMA) {
 			return ofChar(c, s, a, ',');
 		}
+		if (event.key() == InputConstants.KEY_MINUS || event.key() == KEY_KP_SUBTRACT) {
+			return ofChar(c, s, a, '-');
+		}
+		if (event.key() == InputConstants.KEY_EQUALS
+				|| event.key() == InputConstants.KEY_ADD
+				|| event.key() == InputConstants.KEY_NUMPADEQUALS) {
+			return ofChar(c, s, a, '=');
+		}
+		if (event.key() == InputConstants.KEY_0 || event.key() == InputConstants.KEY_NUMPAD0) {
+			return ofChar(c, s, a, '0');
+		}
 		return null;
 	}
 
@@ -129,7 +153,9 @@ public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode,
 		if (raw == null || raw.isBlank()) {
 			return fallback;
 		}
-		String[] parts = raw.trim().split("\\+");
+		String trimmed = raw.trim();
+		boolean trailingPlus = trimmed.equals("+") || trimmed.endsWith("++");
+		String[] parts = trimmed.split("\\+");
 		boolean c = false;
 		boolean s = false;
 		boolean a = false;
@@ -146,6 +172,9 @@ public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode,
 				case "ALT", "OPT" -> a = true;
 				default -> keyToken = token;
 			}
+		}
+		if (trailingPlus && keyToken == null) {
+			keyToken = "+";
 		}
 		if (keyToken == null || keyToken.isEmpty()) {
 			return fallback;
@@ -166,6 +195,15 @@ public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode,
 		}
 		if ("COMMA".equals(upper)) {
 			return ofChar(c, s, a, ',');
+		}
+		if ("MINUS".equals(upper)) {
+			return ofChar(c, s, a, '-');
+		}
+		if ("EQUALS".equals(upper) || "EQUAL".equals(upper)) {
+			return ofChar(c, s, a, '=');
+		}
+		if ("PLUS".equals(upper)) {
+			return ofChar(c, s, a, '+');
 		}
 		if (keyToken.length() == 1) {
 			char ch = keyToken.charAt(0);

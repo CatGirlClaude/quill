@@ -76,4 +76,37 @@ class ServerEditorBackendSyncTest {
 		ServerEditorBackend.deleteEntrySync(sandbox, "demo_pack");
 		assertFalse(Files.exists(datapacksRoot.resolve("demo_pack")));
 	}
+
+	@Test
+	void enforcesOptimisticConcurrencyViaExpectedBaseSha256() {
+		PathSandbox sandbox = new PathSandbox(datapacksRoot);
+		String rel = "pack/data/demo/function/test.mcfunction";
+		FileDocument v1 = ServerEditorBackend.writeDocumentSync(sandbox, rel, "say v1\n");
+
+		// Matching revision succeeds
+		FileDocument v2 = ServerEditorBackend.writeDocumentSync(sandbox, rel, "say v2\n", v1.sha256());
+		assertEquals(PathSandbox.sha256Hex("say v2\n"), v2.sha256());
+
+		// Stale revision throws RevisionConflictException with both hashes
+		dev.catgirlclaude.quill.api.RevisionConflictException conflict = assertThrows(
+				dev.catgirlclaude.quill.api.RevisionConflictException.class,
+				() -> ServerEditorBackend.writeDocumentSync(sandbox, rel, "say stale\n", v1.sha256())
+		);
+		assertEquals(rel, conflict.relativePath());
+		assertEquals(v1.sha256(), conflict.expectedSha256());
+		assertEquals(v2.sha256(), conflict.actualSha256());
+		assertEquals("say v2\n", ServerEditorBackend.readDocumentSync(sandbox, rel).content());
+
+		// Null expected revision force-overwrites
+		FileDocument v3 = ServerEditorBackend.writeDocumentSync(sandbox, rel, "say forced\n", null);
+		assertEquals("say forced\n", v3.content());
+
+		// Externally deleted file with non-empty expected revision throws conflict with empty actualSha256
+		ServerEditorBackend.deleteEntrySync(sandbox, rel);
+		dev.catgirlclaude.quill.api.RevisionConflictException deletedConflict = assertThrows(
+				dev.catgirlclaude.quill.api.RevisionConflictException.class,
+				() -> ServerEditorBackend.writeDocumentSync(sandbox, rel, "say recreate\n", v3.sha256())
+		);
+		assertEquals("", deletedConflict.actualSha256());
+	}
 }

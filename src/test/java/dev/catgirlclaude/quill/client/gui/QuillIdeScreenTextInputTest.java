@@ -58,7 +58,12 @@ class QuillIdeScreenTextInputTest {
 		}
 
 		@Override
-		public CompletableFuture<SaveResult> writeFile(String relativePath, String content, boolean reloadAfterSave) {
+		public CompletableFuture<SaveResult> writeFile(
+				String relativePath,
+				String content,
+				String expectedBaseSha256,
+				boolean reloadAfterSave
+		) {
 			return CompletableFuture.completedFuture(new SaveResult(new FileDocument(relativePath, content, "hash", 0L), null));
 		}
 

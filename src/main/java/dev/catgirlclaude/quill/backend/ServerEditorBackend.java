@@ -6,6 +6,7 @@ import dev.catgirlclaude.quill.api.FileDocument;
 import dev.catgirlclaude.quill.api.FileTreeNode;
 import dev.catgirlclaude.quill.api.PresetDescriptor;
 import dev.catgirlclaude.quill.api.ReloadReport;
+import dev.catgirlclaude.quill.api.RevisionConflictException;
 import dev.catgirlclaude.quill.api.SaveResult;
 import dev.catgirlclaude.quill.preset.DatapackScaffolder;
 import dev.catgirlclaude.quill.preset.PresetRegistry;
@@ -14,6 +15,7 @@ import dev.catgirlclaude.quill.security.EditorLimits;
 import dev.catgirlclaude.quill.security.EditorPermissionChecker;
 import dev.catgirlclaude.quill.security.EditorSecurityException;
 import dev.catgirlclaude.quill.security.PathSandbox;
+import dev.catgirlclaude.quill.security.QuillAccessControl;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.storage.LevelResource;
@@ -30,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -39,19 +42,26 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class ServerEditorBackend implements EditorBackend {
 	private static final Executor IO_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
+	private static final ConcurrentHashMap<Path, Object> WRITE_LOCKS = new ConcurrentHashMap<>();
 
 	private final MinecraftServer server;
 	private final ServerPlayer actingPlayer;
+	private final QuillAccessControl accessControl;
 	private final PathSandbox sandbox;
 	private final PresetRegistry presetRegistry;
 
 	public ServerEditorBackend(MinecraftServer server) {
-		this(server, null);
+		this(server, null, null);
 	}
 
 	public ServerEditorBackend(MinecraftServer server, ServerPlayer actingPlayer) {
+		this(server, actingPlayer, null);
+	}
+
+	public ServerEditorBackend(MinecraftServer server, ServerPlayer actingPlayer, QuillAccessControl accessControl) {
 		this.server = Objects.requireNonNull(server, "server");
 		this.actingPlayer = actingPlayer;
+		this.accessControl = accessControl;
 		Path datapacksRoot = server.getWorldPath(LevelResource.DATAPACK_DIR);
 		this.sandbox = new PathSandbox(datapacksRoot);
 		this.presetRegistry = PresetRegistry.loadDefault();
@@ -82,10 +92,15 @@ public class ServerEditorBackend implements EditorBackend {
 	}
 
 	@Override
-	public CompletableFuture<SaveResult> writeFile(String relativePath, String content, boolean reloadAfterSave) {
+	public CompletableFuture<SaveResult> writeFile(
+			String relativePath,
+			String content,
+			String expectedBaseSha256,
+			boolean reloadAfterSave
+	) {
 		return CompletableFuture.supplyAsync(() -> {
 			requireAuthorized();
-			return writeDocumentSync(sandbox, relativePath, content);
+			return writeDocumentSync(sandbox, relativePath, content, expectedBaseSha256);
 		}, IO_EXECUTOR).thenCompose(document -> {
 			if (!reloadAfterSave) {
 				return CompletableFuture.completedFuture(new SaveResult(document, null));
@@ -169,7 +184,11 @@ public class ServerEditorBackend implements EditorBackend {
 	}
 
 	protected void requireAuthorized() {
-		EditorPermissionChecker.requireCanEdit(server, actingPlayer);
+		if (accessControl != null) {
+			EditorPermissionChecker.requireCanEdit(server, actingPlayer, accessControl);
+		} else {
+			EditorPermissionChecker.requireCanEdit(server, actingPlayer);
+		}
 	}
 
 	public static FileTreeNode scanTree(PathSandbox sandbox) {
@@ -247,15 +266,37 @@ public class ServerEditorBackend implements EditorBackend {
 	}
 
 	public static FileDocument writeDocumentSync(PathSandbox sandbox, String relativePath, String content) {
-		Path target = sandbox.resolveWritableFile(relativePath);
-		String normalized = sandbox.relativize(target);
-		try {
-			sandbox.atomicWriteUtf8(target, content);
-			byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
-			long lastModified = Files.getLastModifiedTime(target, LinkOption.NOFOLLOW_LINKS).toMillis();
-			return new FileDocument(normalized, content, PathSandbox.sha256Hex(bytes), lastModified);
-		} catch (IOException e) {
-			throw new UncheckedIOException("Failed to write file: " + normalized, e);
+		return writeDocumentSync(sandbox, relativePath, content, null);
+	}
+
+	public static FileDocument writeDocumentSync(
+			PathSandbox sandbox,
+			String relativePath,
+			String content,
+			String expectedBaseSha256
+	) {
+		Object lock = WRITE_LOCKS.computeIfAbsent(sandbox.root(), ignored -> new Object());
+		synchronized (lock) {
+			Path target = sandbox.resolveWritableFile(relativePath);
+			String normalized = sandbox.relativize(target);
+			try {
+				if (expectedBaseSha256 != null && !expectedBaseSha256.isBlank()) {
+					if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+						throw new RevisionConflictException(normalized, expectedBaseSha256, "");
+					}
+					byte[] existingBytes = Files.readAllBytes(target);
+					String actualSha256 = PathSandbox.sha256Hex(existingBytes);
+					if (!actualSha256.equals(expectedBaseSha256)) {
+						throw new RevisionConflictException(normalized, expectedBaseSha256, actualSha256);
+					}
+				}
+				sandbox.atomicWriteUtf8(target, content);
+				byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+				long lastModified = Files.getLastModifiedTime(target, LinkOption.NOFOLLOW_LINKS).toMillis();
+				return new FileDocument(normalized, content, PathSandbox.sha256Hex(bytes), lastModified);
+			} catch (IOException e) {
+				throw new UncheckedIOException("Failed to write file: " + normalized, e);
+			}
 		}
 	}
 

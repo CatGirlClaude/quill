@@ -13,7 +13,21 @@ public interface EditorBackend {
 
 	CompletableFuture<FileDocument> readFile(String relativePath);
 
-	CompletableFuture<SaveResult> writeFile(String relativePath, String content, boolean reloadAfterSave);
+	default CompletableFuture<SaveResult> writeFile(String relativePath, String content, boolean reloadAfterSave) {
+		return writeFile(relativePath, content, null, reloadAfterSave);
+	}
+
+	/**
+	 * Writes UTF-8 content to {@code relativePath}. When {@code expectedBaseSha256} is non-null
+	 * and non-empty, the backend enforces optimistic concurrency and fails with
+	 * {@link RevisionConflictException} if the current server revision differs.
+	 */
+	CompletableFuture<SaveResult> writeFile(
+			String relativePath,
+			String content,
+			String expectedBaseSha256,
+			boolean reloadAfterSave
+	);
 
 	CompletableFuture<Void> createEntry(String relativePath, EntryKind kind);
 

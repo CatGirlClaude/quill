@@ -184,6 +184,35 @@ class CodeEditorWidgetTest {
 		assertEquals(lines.getFirst().length(), rows.getLast().endCol());
 	}
 
+	@Test
+	void ctrlClickDispatchesNavigationHandlerWithoutModifyingSelection() {
+		CodeEditorWidget widget = new CodeEditorWidget();
+		OpenTabState tab = new OpenTabState(new FileDocument(
+				"pack/data/demo/function/nav.mcfunction",
+				"scoreboard players add @s coins 1",
+				"sha",
+				0L
+		));
+		widget.setViewportBoundsForTest(
+				new IdeLayout.Rect(0, 0, 400, 120),
+				new IdeLayout.Rect(0, 0, 32, 115),
+				new IdeLayout.Rect(32, 0, 363, 115)
+		);
+		AtomicReference<CodeEditorWidget.CtrlClickRequest> requestRef = new AtomicReference<>();
+		widget.setCtrlClickHandler(req -> {
+			requestRef.set(req);
+			return true;
+		});
+
+		int ctrl = net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER;
+		MouseButtonEvent ctrlClick = new MouseButtonEvent(
+				50, 6, new MouseButtonInfo(InputConstants.MOUSE_BUTTON_LEFT, ctrl));
+		assertTrue(widget.mouseClicked(ctrlClick, null, tab));
+		assertTrue(requestRef.get() != null, "Ctrl+Click over code viewport must dispatch ctrlClickHandler.");
+		assertEquals(0, requestRef.get().position().line());
+		assertFalse(tab.buffer().hasSelection(), "Handled Ctrl+Click must not create a text selection.");
+	}
+
 	private static ContextMenuOverlay.ActionItem findItem(List<ContextMenuOverlay.MenuEntry> entries, String label) {
 		return entries.stream()
 				.filter(ContextMenuOverlay.ActionItem.class::isInstance)

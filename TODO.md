@@ -122,7 +122,7 @@ odtwarzającym błąd przed poprawką.
 - [x] Ctrl+F: wyszukiwanie w aktywnym pliku, wzorem VS Code.
 - [x] Shift + kółko myszy: przewijanie poziome.
 - [x] Zawijanie tekstu w edytorze: Alt+Z.
-- [ ] Ctrl+klik na tekst przenosi do definicji (osobny punkt, wymaga źródeł danych):
+- [x] Ctrl+klik na tekst przenosi do definicji (osobny punkt, wymaga źródeł danych):
   - scoreboard, tag, storage itd.: lista wszystkich miejsc użycia,
   - zwykła komenda: link do dokumentacji.
 

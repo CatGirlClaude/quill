@@ -1,12 +1,16 @@
 package dev.catgirlclaude.quill.client.gui;
 
+import com.mojang.blaze3d.Blaze3D;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.cursor.CursorType;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
+import com.mojang.brigadier.tree.CommandNode;
 import dev.catgirlclaude.quill.api.PresetDescriptor;
 import dev.catgirlclaude.quill.api.ReloadReport;
 import dev.catgirlclaude.quill.client.config.QuillClientConfig;
+import dev.catgirlclaude.quill.client.editor.DatapackInspector;
 import dev.catgirlclaude.quill.client.editor.WorkspaceFileCache;
+import dev.catgirlclaude.quill.client.editor.WorkspaceNavigation;
 import dev.catgirlclaude.quill.client.session.ClientEditorSession;
 import dev.catgirlclaude.quill.client.session.OpenTabState;
 import net.minecraft.client.Minecraft;
@@ -18,9 +22,16 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
+import java.net.URI;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Visual Studio Code-inspired Datapack IDE screen rendered over the Minecraft world.
@@ -124,6 +135,7 @@ public class QuillIdeScreen extends Screen {
 	private String hoveredActivityTooltip = null;
 	private int hoveredActivityTooltipX = 0;
 	private int hoveredActivityTooltipY = 0;
+	private Consumer<String> uriOpener = QuillIdeScreen::openUriInBrowser;
 
 	public QuillIdeScreen(ClientEditorSession session) {
 		this(Minecraft.getInstance(), Minecraft.getInstance().font, session, TextInputBridge.forMinecraft(Minecraft.getInstance()));
@@ -143,9 +155,11 @@ public class QuillIdeScreen extends Screen {
 		this.codeEditorWidget = new CodeEditorWidget();
 		this.codeEditorWidget.setOnBufferEdited(session::notifyTabBufferEdited);
 		this.codeEditorWidget.setContextMenuHooks(this::openContextMenu, this::closeContextMenu);
+		this.codeEditorWidget.setCtrlClickHandler(this::handleCtrlClick);
 		this.secondaryCodeEditorWidget = new CodeEditorWidget();
 		this.secondaryCodeEditorWidget.setOnBufferEdited(session::notifyTabBufferEdited);
 		this.secondaryCodeEditorWidget.setContextMenuHooks(this::openContextMenu, this::closeContextMenu);
+		this.secondaryCodeEditorWidget.setCtrlClickHandler(this::handleCtrlClick);
 		this.settingsPanel = new SettingsPanelWidget(this::closeSettings, this::onResetWindowBounds);
 		this.bottomPanelWidget = new BottomPanelWidget(session);
 		this.notificationBanner = new QuillNotificationBanner(session);
@@ -156,6 +170,129 @@ public class QuillIdeScreen extends Screen {
 				this::closeSettings,
 				this::closeSettings
 		);
+	}
+
+	void setUriOpenerForTest(Consumer<String> uriOpener) {
+		this.uriOpener = Objects.requireNonNull(uriOpener, "uriOpener");
+	}
+
+	private static void openUriInBrowser(String url) {
+		if (url != null && !url.isBlank()) {
+			Blaze3D.openUri(URI.create(url));
+		}
+	}
+
+	private Set<String> collectRegisteredRootCommands() {
+		if (minecraft == null || minecraft.getConnection() == null || minecraft.getConnection().getCommands() == null) {
+			return Set.of();
+		}
+		Set<String> names = new LinkedHashSet<>();
+		for (CommandNode<?> child : minecraft.getConnection().getCommands().getRoot().getChildren()) {
+			String name = child.getName();
+			if (name != null && !name.isEmpty()) {
+				names.add(name.toLowerCase(Locale.ROOT));
+			}
+		}
+		return Set.copyOf(names);
+	}
+
+	private boolean handleCtrlClick(CodeEditorWidget.CtrlClickRequest req) {
+		if (req == null || req.tab() == null || req.position() == null) {
+			return false;
+		}
+		OpenTabState tab = req.tab();
+		int lineIdx = req.position().line();
+		if (lineIdx < 0 || lineIdx >= tab.buffer().lineCount()) {
+			return false;
+		}
+		String lineText = tab.buffer().line(lineIdx);
+		WorkspaceNavigation.NavigationTarget target = WorkspaceNavigation.resolveTargetAtCursor(
+				tab.relativePath(), lineText, req.position().column(), collectRegisteredRootCommands());
+		if (target == null) {
+			return false;
+		}
+		switch (target.kind()) {
+			case COMMAND_DOC -> {
+				uriOpener.accept(target.url());
+				session.setStatus("Opened docs: " + target.url(), false);
+				return true;
+			}
+			case FUNCTION_ID -> {
+				String fnPath = WorkspaceNavigation.resolveFunctionFilePath(target.identifier(), session.listAllFilePaths());
+				if (fnPath != null) {
+					closeSettings();
+					session.openFile(fnPath);
+					session.setStatus("Jumped to function " + target.identifier(), false);
+				} else {
+					openSearchWithQuery(target.identifier());
+				}
+				return true;
+			}
+			case SCOREBOARD_OBJECTIVE, ENTITY_TAG, STORAGE_ID, MACRO_PARAMETER -> {
+				workspaceFileCache.loadFiles(session, p -> p.toLowerCase(Locale.ROOT).endsWith(".mcfunction"))
+						.whenComplete((snapshots, error) -> {
+							Runnable apply = () -> {
+								if (error != null || snapshots == null) {
+									session.setStatus("Failed to find usages for " + target.identifier(), true);
+									return;
+								}
+								Map<String, String> files = new LinkedHashMap<>();
+								for (WorkspaceFileCache.WorkspaceFileSnapshot snap : snapshots) {
+									files.put(snap.relativePath(), snap.content());
+								}
+								List<DatapackInspector.Occurrence> usages = WorkspaceNavigation.findAllUsages(
+										target.kind(), target.identifier(), files);
+								if (usages.isEmpty()) {
+									session.setStatus("No usages found for " + target.identifier(), false);
+									return;
+								}
+								List<QuickPickOverlay.PickItem> items = new ArrayList<>(usages.size());
+								for (int i = 0; i < usages.size(); i++) {
+									DatapackInspector.Occurrence occ = usages.get(i);
+									String rel = occ.relativePath();
+									int slash = rel.lastIndexOf('/');
+									String fileName = slash >= 0 ? rel.substring(slash + 1) : rel;
+									items.add(new QuickPickOverlay.PickItem(
+											rel + ":" + occ.oneBasedLine() + ":" + occ.startCol() + ":" + i,
+											fileName + ":" + occ.oneBasedLine(),
+											occ.context(),
+											rel,
+											fileName + " " + rel + " " + occ.context() + " " + occ.oneBasedLine(),
+											() -> openTabAtOccurrence(occ)
+									));
+								}
+								this.codeEditorWidget.dismissAutocomplete();
+								this.secondaryCodeEditorWidget.dismissAutocomplete();
+								this.searchSidebar.unfocus();
+								this.explorerTree.cancelInlineInput();
+								this.settingsPanel.unfocus();
+								this.activeContextMenu = null;
+								this.activeQuickPick = QuickPickOverlay.forReferences(
+										target.kind().displayLabel() + ": " + target.identifier() + " (" + items.size() + ")",
+										"Filter usages...",
+										items,
+										this::closeQuickPick
+								);
+								syncTextInputState();
+							};
+							if (minecraft != null && !minecraft.isSameThread()) {
+								minecraft.execute(apply);
+							} else {
+								apply.run();
+							}
+						});
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private void openTabAtOccurrence(DatapackInspector.Occurrence occ) {
+		if (occ == null) {
+			return;
+		}
+		closeSettings();
+		session.openFileAndSelect(occ.relativePath(), occ.oneBasedLine(), occ.startCol(), occ.endCol());
 	}
 
 	private void renameEntryFromTab(String relativePath) {

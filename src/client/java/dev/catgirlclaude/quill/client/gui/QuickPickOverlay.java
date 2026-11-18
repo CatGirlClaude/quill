@@ -29,7 +29,8 @@ import java.util.function.Supplier;
 public final class QuickPickOverlay {
 	public enum Mode {
 		COMMANDS,
-		FILES
+		FILES,
+		REFERENCES
 	}
 
 	public record PickItem(
@@ -49,6 +50,9 @@ public final class QuickPickOverlay {
 	private static final int HEADER_HEIGHT = 38;
 	private static final int MAX_VISIBLE_ROWS = 10;
 
+	private final boolean fixedReferencesMode;
+	private final String customHeaderTitle;
+	private final String customPlaceholder;
 	private final Supplier<List<PickItem>> commandSupplier;
 	private final Supplier<List<PickItem>> fileSupplier;
 	private final Runnable onClose;
@@ -70,24 +74,52 @@ public final class QuickPickOverlay {
 			Supplier<List<PickItem>> fileSupplier,
 			Runnable onClose
 	) {
+		this(initialMode == Mode.REFERENCES, null, null, initialMode, commandSupplier, fileSupplier, onClose);
+	}
+
+	private QuickPickOverlay(
+			boolean fixedReferencesMode,
+			String customHeaderTitle,
+			String customPlaceholder,
+			Mode initialMode,
+			Supplier<List<PickItem>> commandSupplier,
+			Supplier<List<PickItem>> fileSupplier,
+			Runnable onClose
+	) {
+		this.fixedReferencesMode = fixedReferencesMode;
+		this.customHeaderTitle = customHeaderTitle;
+		this.customPlaceholder = customPlaceholder;
 		this.commandSupplier = Objects.requireNonNull(commandSupplier, "commandSupplier");
 		this.fileSupplier = Objects.requireNonNull(fileSupplier, "fileSupplier");
 		this.onClose = Objects.requireNonNull(onClose, "onClose");
 		this.revealProgress = QuillClientConfig.current().animationsEnabled() ? 0.0f : 1.0f;
-		if (initialMode == Mode.COMMANDS) {
+		if (!fixedReferencesMode && initialMode == Mode.COMMANDS) {
 			input.setText(">");
 		}
 		rebuildFiltered();
 	}
 
+	public static QuickPickOverlay forReferences(
+			String headerTitle,
+			String placeholder,
+			List<PickItem> items,
+			Runnable onClose
+	) {
+		List<PickItem> copy = items == null ? List.of() : List.copyOf(items);
+		return new QuickPickOverlay(true, headerTitle, placeholder, Mode.REFERENCES, () -> copy, () -> copy, onClose);
+	}
+
 	public Mode activeMode() {
+		if (fixedReferencesMode) {
+			return Mode.REFERENCES;
+		}
 		String raw = input.text();
 		return !raw.isEmpty() && raw.charAt(0) == '>' ? Mode.COMMANDS : Mode.FILES;
 	}
 
 	public String queryText() {
 		String raw = input.text();
-		return raw.startsWith(">") ? raw.substring(1).trim() : raw.trim();
+		return (!fixedReferencesMode && raw.startsWith(">")) ? raw.substring(1).trim() : raw.trim();
 	}
 
 	static IdeLayout.Rect computeDropdownBounds(
@@ -164,14 +196,21 @@ public final class QuickPickOverlay {
 
 		// Mode badge + hint
 		Mode mode = activeMode();
-		String title = mode == Mode.COMMANDS
-				? "Command Palette"
-				: "Quick Open File  (type '>' for commands)";
+		String title = switch (mode) {
+			case COMMANDS -> "Command Palette";
+			case FILES -> "Quick Open File  (type '>' for commands)";
+			case REFERENCES -> customHeaderTitle != null ? customHeaderTitle : "References";
+		};
 		QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, title, panelW - 16), px + 8, py + 4, QuillTheme.TEXT_MUTED);
 
 		// Input box with full selection
 		inputRect = new IdeLayout.Rect(px + 8, py + 16, panelW - 16, 17);
-		input.render(graphics, font, inputRect, mode == Mode.COMMANDS ? "Type command name..." : "Search files by name...", true);
+		String placeholder = switch (mode) {
+			case COMMANDS -> "Type command name...";
+			case FILES -> "Search files by name...";
+			case REFERENCES -> customPlaceholder != null ? customPlaceholder : "Filter references...";
+		};
+		input.render(graphics, font, inputRect, placeholder, true);
 		if (inputRect.contains(mouseX, mouseY)) {
 			QuillDraw.requestCursor(graphics, CursorTypes.IBEAM);
 		}
@@ -188,7 +227,11 @@ public final class QuickPickOverlay {
 
 		QuillDraw.beginClip(graphics, listRect);
 		if (filtered.isEmpty()) {
-			String emptyMsg = mode == Mode.COMMANDS ? "No matching commands." : "No matching files in datapacks/.";
+			String emptyMsg = switch (mode) {
+				case COMMANDS -> "No matching commands.";
+				case FILES -> "No matching files in datapacks/.";
+				case REFERENCES -> "No matching references.";
+			};
 			QuillDraw.text(graphics, font, emptyMsg, listRect.x() + 8, listRect.y() + 4, QuillTheme.TEXT_MUTED);
 		} else {
 			int maxVisible = Math.max(1, listRect.height() / ROW_HEIGHT);

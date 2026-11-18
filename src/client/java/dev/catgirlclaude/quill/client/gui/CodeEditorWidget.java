@@ -8,6 +8,7 @@ import dev.catgirlclaude.quill.client.editor.BrigadierAssistService;
 import dev.catgirlclaude.quill.client.editor.SingleLineTextInput;
 import dev.catgirlclaude.quill.client.editor.SyntaxHighlighter;
 import dev.catgirlclaude.quill.client.editor.TextDocumentBuffer;
+import dev.catgirlclaude.quill.client.editor.WorkspaceNavigation;
 import dev.catgirlclaude.quill.client.session.OpenTabState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -21,7 +22,9 @@ import net.minecraft.client.multiplayer.ClientSuggestionProvider;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.ToIntFunction;
 
@@ -47,6 +50,9 @@ public final class CodeEditorWidget {
 	private static final long MULTI_CLICK_WINDOW_MS = 400L;
 
 	public record FindMatch(int line, int startCol, int endCol) {
+	}
+
+	public record CtrlClickRequest(OpenTabState tab, TextDocumentBuffer.Position position) {
 	}
 
 	public static final class WordWrapLayout {
@@ -152,6 +158,7 @@ public final class CodeEditorWidget {
 
 	private Consumer<OpenTabState> onBufferEdited = tab -> {
 	};
+	private Predicate<CtrlClickRequest> ctrlClickHandler = req -> false;
 	private Consumer<ContextMenuOverlay> contextMenuOpener = menu -> {
 	};
 	private Runnable contextMenuDismisser = () -> {
@@ -185,6 +192,10 @@ public final class CodeEditorWidget {
 	public void setOnBufferEdited(Consumer<OpenTabState> onBufferEdited) {
 		this.onBufferEdited = onBufferEdited != null ? onBufferEdited : tab -> {
 		};
+	}
+
+	public void setCtrlClickHandler(Predicate<CtrlClickRequest> ctrlClickHandler) {
+		this.ctrlClickHandler = ctrlClickHandler != null ? ctrlClickHandler : req -> false;
 	}
 
 	public void setContextMenuHooks(Consumer<ContextMenuOverlay> contextMenuOpener, Runnable contextMenuDismisser) {
@@ -393,8 +404,24 @@ public final class CodeEditorWidget {
 
 		boolean hoveringPopup = isAutocompleteOpen() && lastPopupRect.contains(mouseX, mouseY);
 		boolean hoveringFind = findBarOpen && findBarRect.contains(mouseX, mouseY);
+		WorkspaceNavigation.NavigationTarget hoverNavTarget = null;
+		int hoverNavLine = -1;
 		if (lastCodeViewport.contains(mouseX, mouseY) && !hoveringPopup && !hoveringFind) {
-			QuillDraw.requestCursor(graphics, CursorTypes.IBEAM);
+			if (isControlDownSafe()) {
+				TextDocumentBuffer.Position hoverPos = hitTest(font, tab, mouseX, mouseY);
+				if (hoverPos.line() >= 0 && hoverPos.line() < buffer.lineCount()) {
+					hoverNavTarget = WorkspaceNavigation.resolveTargetAtCursor(
+							tab.relativePath(),
+							buffer.line(hoverPos.line()),
+							hoverPos.column(),
+							Set.of()
+					);
+					if (hoverNavTarget != null) {
+						hoverNavLine = hoverPos.line();
+					}
+				}
+			}
+			QuillDraw.requestCursor(graphics, hoverNavTarget != null ? CursorTypes.POINTING_HAND : CursorTypes.IBEAM);
 		} else if (lastGutterRect.contains(mouseX, mouseY) && !hoveringPopup && !hoveringFind) {
 			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 		}
@@ -502,6 +529,16 @@ public final class CodeEditorWidget {
 					String part = fullLine.substring(ovStart, ovEnd);
 					int segX = drawX + (ovStart == segStart ? 0 : QuillDraw.textWidth(font, fullLine.substring(segStart, ovStart), scale));
 					QuillDraw.textScaled(graphics, font, part, segX, rowY, span.color(), scale);
+				}
+			}
+
+			if (hoverNavTarget != null && i == hoverNavLine) {
+				int ovStart = Math.max(segStart, hoverNavTarget.startCol());
+				int ovEnd = Math.min(segEnd, hoverNavTarget.endCol());
+				if (ovEnd > ovStart) {
+					int ux1 = drawX + QuillDraw.textWidth(font, fullLine.substring(segStart, ovStart), scale);
+					int ux2 = drawX + QuillDraw.textWidth(font, fullLine.substring(segStart, ovEnd), scale);
+					QuillDraw.hLine(graphics, ux1, Math.max(2, ux2 - ux1), rowY + Math.round(font.lineHeight * scale), QuillTheme.ACCENT_BLUE);
 				}
 			}
 
@@ -1006,6 +1043,12 @@ public final class CodeEditorWidget {
 			return false;
 		}
 		TextDocumentBuffer.Position pos = hitTest(font, tab, event.x(), event.y());
+		if (event.hasControlDownWithQuirk() && !event.hasAltDown() && !event.hasShiftDown()
+				&& ctrlClickHandler.test(new CtrlClickRequest(tab, pos))) {
+			dragMode = DragMode.NONE;
+			touchCaret();
+			return true;
+		}
 		long now = System.currentTimeMillis();
 		boolean shift = event.hasShiftDown();
 		if (!shift && lastClickPos != null && now - lastClickMs <= MULTI_CLICK_WINDOW_MS
@@ -1608,5 +1651,10 @@ public final class CodeEditorWidget {
 	private static boolean isShiftDownSafe() {
 		Minecraft mc = Minecraft.getInstance();
 		return mc != null && mc.hasShiftDown();
+	}
+
+	private static boolean isControlDownSafe() {
+		Minecraft mc = Minecraft.getInstance();
+		return mc != null && mc.hasControlDown();
 	}
 }

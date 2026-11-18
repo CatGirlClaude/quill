@@ -290,4 +290,22 @@ Choosing Option A means we do not get browser DOM/CSS or pre-built tree/code wid
   - Prevents destructive surprises (file deletion via `Ctrl+Z` while editing code, or reddish status bars mistaken for syntax errors).
   - Keeps visual comparisons honest in Settings and ensures unsupported file clicks give clear non-intrusive feedback without vanishing before the user can read them.
 
+---
+
+## ADR-012: `Ctrl+Click` Go-to-Definition and Command Documentation Links (`WorkspaceNavigation`)
+
+- **Date**: 2026-11-18
+- **Status**: Accepted
+- **Context**:
+  Datapack authors frequently cross-reference scoreboard objectives, entity tags, command storage IDs, macro parameters, functions, and vanilla command syntax across `.mcfunction` files. Meanwhile, there is no offline bundled command manual in Minecraft `26.3`.
+- **Decision**:
+  1. **Symbol Resolution (`WorkspaceNavigation`)**:
+     - Reuse `DatapackInspector` for scoreboard objectives, storage namespaces (`namespace:path`), and `$(macro)` parameters, and add pure-Java token/selector scanning for entity tags (`tag <targets> add|remove <name>` and `@e[tag=[!]<name>]`) and `function` / `schedule function` targets.
+     - Clicking a `function` resource ID resolves `/data/<ns>/function/<path>.mcfunction` (or `#tag` -> `/data/<ns>/tags/function/<path>.json`) and opens the target file immediately; clicking a scoreboard objective, tag, storage ID, or macro opens a `QuickPickOverlay` in `Mode.REFERENCES` listing every workspace occurrence (`file:line` + context) with jump-and-select navigation.
+  2. **Command Documentation URL Source & Validation**:
+     - When `Ctrl+Click` lands on a command keyword (leading verb or subcommand after `execute ... run` / `return run`), `WorkspaceNavigation` normalizes prefixes (`/` / `$` / `minecraft:`), maps common vanilla aliases (`tp` -> `teleport`, `msg`/`w` -> `tell`, `xp` -> `experience`, `?` -> `help`), validates the command against the **live client Brigadier root command tree** (`Minecraft.getInstance().getConnection().getCommands().getRoot().getChildren()`, falling back to the built-in vanilla command set when offline/in unit tests), and opens `https://minecraft.wiki/w/Commands/<canonical>` via `Blaze3D.openUri(URI)`.
+- **Rationale**:
+  - Requires zero changes to RPC wire protocol `v1` and works offline/unit-tested in pure Java while leveraging live Brigadier command registration in-game.
+  - Uses canonical Minecraft Wiki command URLs rather than hardcoding fragile external links per subcommand or bundling large static HTML docs inside the mod JAR.
+
 

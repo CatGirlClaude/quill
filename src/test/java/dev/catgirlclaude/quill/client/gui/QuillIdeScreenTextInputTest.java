@@ -1092,6 +1092,79 @@ class QuillIdeScreenTextInputTest {
 		assertTrue(bridge.isActiveFor(screen), "Dismissing context menu restores SDL text input.");
 	}
 
+	@Test
+	void ctrlClickNavigatesScoreboardReferencesAndCommandDocsInScreen() {
+		java.util.Map<String, String> files = new java.util.LinkedHashMap<>();
+		files.put("pack/data/demo/function/main.mcfunction",
+				"scoreboard players add @s coins 1\nexecute as @a run say hi\nfunction demo:shop");
+		files.put("pack/data/demo/function/shop.mcfunction",
+				"scoreboard players remove @s coins 5");
+
+		StubEditorBackend backend = new StubEditorBackend() {
+			@Override
+			public CompletableFuture<FileTreeNode> listTree() {
+				FileTreeNode mainFn = new FileTreeNode("main.mcfunction", "pack/data/demo/function/main.mcfunction", EntryKind.FILE, List.of());
+				FileTreeNode shopFn = new FileTreeNode("shop.mcfunction", "pack/data/demo/function/shop.mcfunction", EntryKind.FILE, List.of());
+				FileTreeNode fnDir = new FileTreeNode("function", "pack/data/demo/function", EntryKind.DIRECTORY, List.of(mainFn, shopFn));
+				FileTreeNode pack = new FileTreeNode("pack", "pack", EntryKind.DATAPACK, List.of(fnDir));
+				return CompletableFuture.completedFuture(new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of(pack)));
+			}
+
+			@Override
+			public CompletableFuture<FileDocument> readFile(String relativePath) {
+				String content = files.getOrDefault(relativePath, "");
+				return CompletableFuture.completedFuture(new FileDocument(relativePath, content, "sha", 0L));
+			}
+		};
+
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.refreshTree();
+		session.openFile("pack/data/demo/function/main.mcfunction");
+
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		java.util.concurrent.atomic.AtomicReference<String> openedUri = new java.util.concurrent.atomic.AtomicReference<>();
+		screen.setUriOpenerForTest(openedUri::set);
+		screen.init();
+
+		IdeLayout.Rect editorRect = new IdeLayout.Rect(100, 50, 400, 200);
+		IdeLayout.Rect gutterRect = new IdeLayout.Rect(100, 50, 32, 195);
+		IdeLayout.Rect codeViewport = new IdeLayout.Rect(132, 50, 363, 195);
+		screen.codeEditorWidget().setViewportBoundsForTest(editorRect, gutterRect, codeViewport);
+
+		int ctrl = net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER;
+
+		// 1. Ctrl+Click on `coins` (line 0, col 27 -> x = 132 + 2 + 27*6 = 296, y = 55) opens REFERENCES QuickPick
+		assertTrue(screen.mouseClicked(
+				new net.minecraft.client.input.MouseButtonEvent(296, 55, new net.minecraft.client.input.MouseButtonInfo(InputConstants.MOUSE_BUTTON_LEFT, ctrl)),
+				false
+		));
+		assertTrue(screen.activeQuickPick() != null);
+		assertEquals(QuickPickOverlay.Mode.REFERENCES, screen.activeQuickPick().activeMode());
+
+		// Select second occurrence (`shop.mcfunction:1`) via Down + Enter and verify tab & selection jump
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_DOWN, 0, 0));
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+		assertEquals(null, screen.activeQuickPick());
+		assertEquals("pack/data/demo/function/shop.mcfunction", session.activeTab().relativePath());
+		assertEquals("coins", session.activeTab().buffer().getSelectedText());
+
+		// 2. Switch back to main.mcfunction and Ctrl+Click on `say` (line 1, col 19 -> x = 132 + 2 + 19*6 = 248, y = 66)
+		session.openFile("pack/data/demo/function/main.mcfunction");
+		assertTrue(screen.mouseClicked(
+				new net.minecraft.client.input.MouseButtonEvent(248, 66, new net.minecraft.client.input.MouseButtonInfo(InputConstants.MOUSE_BUTTON_LEFT, ctrl)),
+				false
+		));
+		assertEquals("https://minecraft.wiki/w/Commands/say", openedUri.get());
+
+		// 3. Ctrl+Click on `demo:shop` in `function demo:shop` (line 2, col 12 -> x = 132 + 2 + 12*6 = 206, y = 77)
+		assertTrue(screen.mouseClicked(
+				new net.minecraft.client.input.MouseButtonEvent(206, 77, new net.minecraft.client.input.MouseButtonInfo(InputConstants.MOUSE_BUTTON_LEFT, ctrl)),
+				false
+		));
+		assertEquals("pack/data/demo/function/shop.mcfunction", session.activeTab().relativePath());
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

@@ -4,11 +4,15 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
 import dev.catgirlclaude.quill.api.EntryKind;
 import dev.catgirlclaude.quill.api.FileTreeNode;
+import dev.catgirlclaude.quill.client.editor.SingleLineTextInput;
 import dev.catgirlclaude.quill.client.session.ClientEditorSession;
 import dev.catgirlclaude.quill.security.EditorSecurityException;
 import dev.catgirlclaude.quill.security.PathSandbox;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 
 import java.util.ArrayList;
@@ -16,13 +20,65 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Interactive datapack tree widget for browsing, creating, renaming, and deleting files and folders.
+ * Interactive VS Code-style datapack tree widget for browsing, inline creating (folders &amp; files),
+ * inline renaming, and deleting files and folders directly inside the explorer tree.
  */
 public final class FileExplorerTreeWidget {
-	private static final int ROW_HEIGHT = 14;
+	private static final int ROW_HEIGHT = 15;
 	private static final int TOOLBAR_HEIGHT = 18;
 
-	private record VisibleRow(FileTreeNode node, int depth) {
+	public enum InlineEditKind {
+		NEW_FOLDER,
+		NEW_FILE,
+		RENAME
+	}
+
+	private sealed interface VisibleRow permits NodeRow, InlineInputRow {
+		int depth();
+	}
+
+	private record NodeRow(FileTreeNode node, int depth) implements VisibleRow {
+	}
+
+	private record InlineInputRow(InlineEditState edit, int depth) implements VisibleRow {
+	}
+
+	private static final class InlineEditState {
+		final InlineEditKind kind;
+		final String parentPath;
+		final String targetExistingPath;
+		final String originalName;
+		final boolean targetIsFile;
+		final EntryKind createKind;
+		final SingleLineTextInput input;
+		String validationError = null;
+		IdeLayout.Rect boxRect = new IdeLayout.Rect(0, 0, 0, 0);
+
+		InlineEditState(
+				InlineEditKind kind,
+				String parentPath,
+				String targetExistingPath,
+				String originalName,
+				boolean targetIsFile,
+				EntryKind createKind,
+				String initialText
+		) {
+			this.kind = kind;
+			this.parentPath = parentPath == null ? "" : parentPath;
+			this.targetExistingPath = targetExistingPath;
+			this.originalName = originalName;
+			this.targetIsFile = targetIsFile;
+			this.createKind = createKind;
+			this.input = new SingleLineTextInput(initialText);
+		}
+
+		String placeholder() {
+			return switch (kind) {
+				case NEW_FOLDER -> parentPath.isEmpty() ? "datapack_name" : "folder_name";
+				case NEW_FILE -> "hello.mcfunction";
+				case RENAME -> originalName != null ? originalName : "new_name";
+			};
+		}
 	}
 
 	private record ToolbarAction(String label, String tooltip, Runnable action, IdeLayout.Rect rect) {
@@ -37,6 +93,9 @@ public final class FileExplorerTreeWidget {
 	private IdeLayout.Rect listRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private int scrollPixels = 0;
 
+	private InlineEditState inlineEdit = null;
+	private boolean pendingScrollToInline = false;
+
 	public FileExplorerTreeWidget(
 			ClientEditorSession session,
 			Consumer<ModalPromptOverlay> modalOpener,
@@ -45,6 +104,97 @@ public final class FileExplorerTreeWidget {
 		this.session = session;
 		this.modalOpener = modalOpener;
 		this.modalCloser = modalCloser;
+	}
+
+	public boolean hasActiveInlineInput() {
+		return inlineEdit != null;
+	}
+
+	public InlineEditKind activeInlineEditKind() {
+		return inlineEdit != null ? inlineEdit.kind : null;
+	}
+
+	public String activeInlineValidationError() {
+		return inlineEdit != null ? inlineEdit.validationError : null;
+	}
+
+	public void cancelInlineInput() {
+		if (inlineEdit != null) {
+			inlineEdit.input.mouseReleased();
+			inlineEdit = null;
+		}
+		pendingScrollToInline = false;
+	}
+
+	public void beginInlineCreateFolder() {
+		String baseDir = resolveTargetDirectory();
+		EntryKind kind = baseDir.isEmpty() ? EntryKind.DATAPACK : EntryKind.DIRECTORY;
+		if (!baseDir.isEmpty()) {
+			session.expandAncestors(baseDir + "/dummy");
+			session.expandedPaths().add(baseDir);
+		}
+		inlineEdit = new InlineEditState(
+				InlineEditKind.NEW_FOLDER,
+				baseDir,
+				null,
+				null,
+				false,
+				kind,
+				""
+		);
+		pendingScrollToInline = true;
+	}
+
+	public void beginInlineCreateFile() {
+		String baseDir = resolveTargetDirectory();
+		if (baseDir.isEmpty()) {
+			session.setStatus("Select a datapack or folder first.", true);
+			return;
+		}
+		session.expandAncestors(baseDir + "/dummy");
+		session.expandedPaths().add(baseDir);
+		inlineEdit = new InlineEditState(
+				InlineEditKind.NEW_FILE,
+				baseDir,
+				null,
+				null,
+				true,
+				EntryKind.FILE,
+				"new_fn.mcfunction"
+		);
+		// Select stem ("new_fn") just like VS Code so user can immediately type name while keeping extension
+		inlineEdit.input.selectRange(0, "new_fn".length());
+		pendingScrollToInline = true;
+	}
+
+	public void beginInlineRename() {
+		String selected = session.selectedTreePath();
+		if (selected == null || selected.isEmpty()) {
+			session.setStatus("Select a file or folder to rename.", true);
+			return;
+		}
+		int lastSlash = selected.lastIndexOf('/');
+		String parent = lastSlash >= 0 ? selected.substring(0, lastSlash) : "";
+		String currentName = lastSlash >= 0 ? selected.substring(lastSlash + 1) : selected;
+		FileTreeNode node = findNode(session.rootTree(), selected);
+		boolean isFile = node != null && node.kind() == EntryKind.FILE;
+
+		inlineEdit = new InlineEditState(
+				InlineEditKind.RENAME,
+				parent,
+				selected,
+				currentName,
+				isFile,
+				isFile ? EntryKind.FILE : EntryKind.DIRECTORY,
+				currentName
+		);
+		int dot = isFile ? currentName.lastIndexOf('.') : -1;
+		if (dot > 0) {
+			inlineEdit.input.selectRange(0, dot);
+		} else {
+			inlineEdit.input.selectAll();
+		}
+		pendingScrollToInline = true;
 	}
 
 	public void render(GuiGraphicsExtractor graphics, Font font, IdeLayout.Rect area, int mouseX, int mouseY) {
@@ -64,7 +214,7 @@ public final class FileExplorerTreeWidget {
 			boolean hover = btn.rect().contains(mouseX, mouseY);
 			QuillDraw.fill(graphics, btn.rect().x(), btn.rect().y(), btn.rect().width(), btn.rect().height(),
 					hover ? QuillTheme.BG_BUTTON : QuillTheme.BG_BUTTON_SECONDARY);
-			int tx = btn.rect().x() + (btn.rect().width() - font.width(btn.label())) / 2;
+			int tx = btn.rect().x() + (btn.rect().width() - QuillDraw.textWidth(font, btn.label())) / 2;
 			int ty = btn.rect().y() + (btn.rect().height() - font.lineHeight) / 2;
 			QuillDraw.text(graphics, font, btn.label(), tx, ty, QuillTheme.TEXT_BRIGHT);
 			if (hover) {
@@ -76,61 +226,105 @@ public final class FileExplorerTreeWidget {
 		int listY = toolbarY + TOOLBAR_HEIGHT;
 		listRect = new IdeLayout.Rect(area.x(), listY, area.width() - 1, Math.max(0, area.bottom() - listY));
 
-		int totalHeight = visibleRows.size() * ROW_HEIGHT;
+		if (pendingScrollToInline && inlineEdit != null) {
+			pendingScrollToInline = false;
+			scrollInlineRowIntoView();
+		}
+
+		int totalHeight = visibleRows.size() * ROW_HEIGHT + (inlineEdit != null && inlineEdit.validationError != null ? 18 : 0);
 		int maxScroll = Math.max(0, totalHeight - listRect.height());
 		scrollPixels = Math.max(0, Math.min(maxScroll, scrollPixels));
+
+		IdeLayout.Rect inlineErrorAnchor = null;
 
 		QuillDraw.beginClip(graphics, listRect);
 		if (visibleRows.isEmpty()) {
 			QuillDraw.text(graphics, font, "No datapacks yet.", listRect.x() + 8, listRect.y() + 8, QuillTheme.TEXT_MUTED);
-			QuillDraw.text(graphics, font, "Use Presets [P] to create one.", listRect.x() + 8, listRect.y() + 22, QuillTheme.TEXT_MUTED);
+			QuillDraw.text(graphics, font, "Click +Dir or open Presets.", listRect.x() + 8, listRect.y() + 22, QuillTheme.TEXT_MUTED);
 		} else {
 			int firstRow = scrollPixels / ROW_HEIGHT;
 			int lastRow = Math.min(visibleRows.size() - 1, (scrollPixels + listRect.height()) / ROW_HEIGHT);
 			for (int i = firstRow; i <= lastRow; i++) {
 				VisibleRow row = visibleRows.get(i);
 				int ry = listRect.y() + i * ROW_HEIGHT - scrollPixels;
-				boolean selected = row.node().relativePath().equals(session.selectedTreePath());
-				boolean hovered = listRect.contains(mouseX, mouseY) && mouseY >= ry && mouseY < ry + ROW_HEIGHT;
 
-				if (selected) {
-					QuillDraw.fill(graphics, listRect.x(), ry, listRect.width(), ROW_HEIGHT, QuillTheme.ROW_SELECTED);
-				} else if (hovered) {
-					QuillDraw.fill(graphics, listRect.x(), ry, listRect.width(), ROW_HEIGHT, QuillTheme.BG_HOVER);
-				}
-				if (hovered) {
-					QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
-				}
-
+				// Indentation guides
 				int indentX = listRect.x() + 6 + row.depth() * 10;
 				for (int g = 0; g < row.depth(); g++) {
 					int gx = listRect.x() + 8 + g * 10;
 					QuillDraw.vLine(graphics, gx, ry, ROW_HEIGHT, QuillTheme.BORDER_SUBTLE);
 				}
 
-				int textY = ry + (ROW_HEIGHT - font.lineHeight) / 2;
-				String prefix;
-				int textColor;
-				if (row.node().kind() == EntryKind.FILE) {
-					prefix = "  ";
-					textColor = colorForFile(row.node().name(), selected);
-				} else {
-					boolean expanded = session.isExpanded(row.node().relativePath());
-					prefix = expanded ? "v " : "> ";
-					textColor = row.node().kind() == EntryKind.DATAPACK ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_FOLDER;
-				}
+				if (row instanceof InlineInputRow inlineRow) {
+					InlineEditState edit = inlineRow.edit();
+					QuillDraw.fill(graphics, listRect.x(), ry, listRect.width(), ROW_HEIGHT, QuillTheme.ROW_SELECTED);
+					String icon = edit.targetIsFile ? "+ " : "> ";
+					int iconColor = edit.targetIsFile ? QuillTheme.TEXT_FUNCTION : QuillTheme.TEXT_FOLDER;
+					int textY = ry + (ROW_HEIGHT - font.lineHeight) / 2;
+					QuillDraw.text(graphics, font, icon, indentX, textY, iconColor);
 
-				String label = prefix + row.node().name();
-				int maxW = Math.max(0, listRect.right() - indentX - 8);
-				QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, label, maxW), indentX, textY, textColor);
+					int boxX = indentX + QuillDraw.textWidth(font, icon);
+					int boxW = Math.max(36, listRect.right() - boxX - 6);
+					edit.boxRect = new IdeLayout.Rect(boxX, ry + 1, boxW, ROW_HEIGHT - 2);
+					edit.input.render(graphics, font, edit.boxRect, edit.placeholder(), true);
+					if (edit.validationError != null) {
+						QuillDraw.outline(graphics, edit.boxRect.x(), edit.boxRect.y(), edit.boxRect.width(), edit.boxRect.height(), QuillTheme.BG_STATUS_ERROR);
+						inlineErrorAnchor = edit.boxRect;
+					}
+					if (edit.boxRect.contains(mouseX, mouseY)) {
+						QuillDraw.requestCursor(graphics, CursorTypes.IBEAM);
+					}
+				} else if (row instanceof NodeRow nodeRow) {
+					FileTreeNode node = nodeRow.node();
+					boolean selected = node.relativePath().equals(session.selectedTreePath());
+					boolean hovered = listRect.contains(mouseX, mouseY) && mouseY >= ry && mouseY < ry + ROW_HEIGHT;
+
+					if (selected) {
+						QuillDraw.fill(graphics, listRect.x(), ry, listRect.width(), ROW_HEIGHT, QuillTheme.ROW_SELECTED);
+					} else if (hovered) {
+						QuillDraw.fill(graphics, listRect.x(), ry, listRect.width(), ROW_HEIGHT, QuillTheme.BG_HOVER);
+					}
+					if (hovered) {
+						QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
+					}
+
+					int textY = ry + (ROW_HEIGHT - font.lineHeight) / 2;
+					if (node.kind() == EntryKind.FILE) {
+						String badge = fileBadge(node.name());
+						int badgeColor = colorForFile(node.name(), false);
+						QuillDraw.text(graphics, font, badge, indentX + 1, textY, badgeColor);
+						int nameX = indentX + QuillDraw.textWidth(font, badge) + 4;
+						int maxW = Math.max(0, listRect.right() - nameX - 6);
+						QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, node.name(), maxW),
+								nameX, textY, colorForFile(node.name(), selected));
+					} else {
+						boolean expanded = session.isExpanded(node.relativePath());
+						String prefix = expanded ? "v " : "> ";
+						int textColor = node.kind() == EntryKind.DATAPACK ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_FOLDER;
+						int maxW = Math.max(0, listRect.right() - indentX - 6);
+						QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, prefix + node.name(), maxW),
+								indentX, textY, textColor);
+					}
+				}
 			}
 		}
 		QuillDraw.endClip(graphics);
 
+		// Render inline validation banner directly below the active inline input row (VS Code style)
+		if (inlineEdit != null && inlineEdit.validationError != null && inlineErrorAnchor != null) {
+			int errX = Math.max(listRect.x() + 2, inlineErrorAnchor.x());
+			int errW = Math.max(40, listRect.right() - errX - 4);
+			int errY = Math.min(listRect.bottom() - 16, inlineErrorAnchor.bottom() + 1);
+			QuillDraw.fill(graphics, errX, errY, errW, 15, 0xFF5A1D1D);
+			QuillDraw.outline(graphics, errX, errY, errW, 15, QuillTheme.BG_STATUS_ERROR);
+			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, inlineEdit.validationError, errW - 6),
+					errX + 3, errY + (15 - font.lineHeight) / 2, QuillTheme.TEXT_BRIGHT);
+		}
+
 		// Vertical scrollbar
 		if (maxScroll > 0 && listRect.height() > 8) {
 			int trackX = listRect.right() - 4;
-			int thumbH = Math.max(12, (int) ((long) listRect.height() * listRect.height() / totalHeight));
+			int thumbH = Math.max(12, (int) ((long) listRect.height() * listRect.height() / Math.max(1, totalHeight)));
 			int thumbY = listRect.y() + (int) ((long) scrollPixels * (listRect.height() - thumbH) / maxScroll);
 			QuillDraw.fill(graphics, trackX, thumbY, 3, thumbH, QuillTheme.TEXT_MUTED);
 		}
@@ -143,6 +337,14 @@ public final class FileExplorerTreeWidget {
 		double mx = event.x();
 		double my = event.y();
 
+		if (inlineEdit != null) {
+			if (inlineEdit.boxRect.contains(mx, my)) {
+				inlineEdit.input.mouseClicked(mx, safeFont(), event.hasShiftDown());
+				return true;
+			}
+			cancelInlineInput();
+		}
+
 		for (ToolbarAction action : toolbarActions) {
 			if (action.rect().contains(mx, my)) {
 				action.action().run();
@@ -154,17 +356,69 @@ public final class FileExplorerTreeWidget {
 			int idx = ((int) my - listRect.y() + scrollPixels) / ROW_HEIGHT;
 			if (idx >= 0 && idx < visibleRows.size()) {
 				VisibleRow row = visibleRows.get(idx);
-				FileTreeNode node = row.node();
-				session.setSelectedTreePath(node.relativePath());
-				if (node.kind() == EntryKind.FILE) {
-					session.openFile(node.relativePath());
-				} else {
-					session.toggleExpanded(node.relativePath());
+				if (row instanceof NodeRow nodeRow) {
+					FileTreeNode node = nodeRow.node();
+					session.setSelectedTreePath(node.relativePath());
+					if (node.kind() == EntryKind.FILE) {
+						session.openFile(node.relativePath());
+					} else {
+						session.toggleExpanded(node.relativePath());
+					}
+					return true;
 				}
-				return true;
 			}
 		}
 		return false;
+	}
+
+	public boolean mouseDragged(MouseButtonEvent event) {
+		if (inlineEdit != null && event.button() == InputConstants.MOUSE_BUTTON_LEFT && inlineEdit.input.isDragging()) {
+			return inlineEdit.input.mouseDragged(event.x(), safeFont());
+		}
+		return false;
+	}
+
+	public void mouseReleased(MouseButtonEvent event) {
+		if (inlineEdit != null) {
+			inlineEdit.input.mouseReleased();
+		}
+	}
+
+	public boolean keyPressed(KeyEvent event) {
+		if (inlineEdit == null) {
+			if (event.key() == InputConstants.KEY_F2
+					&& !event.hasControlDownWithQuirk()
+					&& !event.hasShiftDown()
+					&& !event.hasAltDown()
+					&& !session.selectedTreePath().isEmpty()) {
+				beginInlineRename();
+				return true;
+			}
+			return false;
+		}
+		if (event.isEscape()) {
+			cancelInlineInput();
+			return true;
+		}
+		if (event.isConfirmation()) {
+			commitInlineEdit();
+			return true;
+		}
+		SingleLineTextInput.KeyActionResult res = inlineEdit.input.keyPressed(event);
+		if (res.textChanged()) {
+			refreshLiveValidation();
+		}
+		return true;
+	}
+
+	public boolean charTyped(CharacterEvent event) {
+		if (inlineEdit == null) {
+			return false;
+		}
+		if (inlineEdit.input.charTyped(event)) {
+			refreshLiveValidation();
+		}
+		return true;
 	}
 
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
@@ -176,19 +430,102 @@ public final class FileExplorerTreeWidget {
 		return true;
 	}
 
+	private void refreshLiveValidation() {
+		if (inlineEdit == null) {
+			return;
+		}
+		String trimmed = inlineEdit.input.text().trim();
+		if (trimmed.isEmpty()) {
+			inlineEdit.validationError = null;
+			return;
+		}
+		inlineEdit.validationError = validateInlineName(inlineEdit, trimmed);
+	}
+
+	private void commitInlineEdit() {
+		if (inlineEdit == null) {
+			return;
+		}
+		InlineEditState edit = inlineEdit;
+		String val = edit.input.text().trim();
+		String err = validateInlineName(edit, val);
+		if (err != null) {
+			edit.validationError = err;
+			return;
+		}
+
+		inlineEdit = null;
+		if (edit.kind == InlineEditKind.RENAME) {
+			if (val.equals(edit.originalName)) {
+				return;
+			}
+			String target = edit.parentPath.isEmpty() ? val : edit.parentPath + "/" + val;
+			session.renameEntry(edit.targetExistingPath, target);
+		} else {
+			String fullPath = edit.parentPath.isEmpty() ? val : edit.parentPath + "/" + val;
+			session.createEntry(fullPath, edit.createKind);
+		}
+	}
+
+	private static String validateInlineName(InlineEditState edit, String val) {
+		if (val.isEmpty()) {
+			return switch (edit.kind) {
+				case NEW_FOLDER -> "Folder name is required.";
+				case NEW_FILE -> "File name is required.";
+				case RENAME -> "New name is required.";
+			};
+		}
+		if (edit.kind == InlineEditKind.NEW_FILE) {
+			if (!PathSandbox.hasAllowedExtension(val)) {
+				return "Use .mcfunction, .json, .mcmeta, .txt, or .md";
+			}
+			try {
+				PathSandbox.validateSegment(val);
+			} catch (EditorSecurityException e) {
+				return e.getMessage();
+			}
+			return null;
+		}
+		try {
+			PathSandbox.validatePackOrFolderName(val);
+		} catch (EditorSecurityException e) {
+			return e.getMessage();
+		}
+		if (edit.kind == InlineEditKind.RENAME && edit.targetIsFile && !PathSandbox.hasAllowedExtension(val)) {
+			return "Use .mcfunction, .json, .mcmeta, .txt, or .md";
+		}
+		return null;
+	}
+
+	private void scrollInlineRowIntoView() {
+		rebuildVisibleRows();
+		for (int i = 0; i < visibleRows.size(); i++) {
+			if (visibleRows.get(i) instanceof InlineInputRow) {
+				int rowTop = i * ROW_HEIGHT;
+				int rowBottom = rowTop + ROW_HEIGHT + 18;
+				if (rowTop < scrollPixels) {
+					scrollPixels = rowTop;
+				} else if (listRect.height() > 0 && rowBottom > scrollPixels + listRect.height()) {
+					scrollPixels = Math.max(0, rowBottom - listRect.height());
+				}
+				return;
+			}
+		}
+	}
+
 	private void buildToolbarActions(Font font, int startX, int y, int maxWidth) {
 		toolbarActions.clear();
 		String[] labels = {"+File", "+Dir", "Ren", "Del", "Ref"};
 		Runnable[] runners = {
-				this::promptCreateFile,
-				this::promptCreateDir,
-				this::promptRenameSelected,
+				this::beginInlineCreateFile,
+				this::beginInlineCreateFolder,
+				this::beginInlineRename,
 				this::promptDeleteSelected,
 				session::refreshTree
 		};
 		int x = startX;
 		for (int i = 0; i < labels.length; i++) {
-			int w = font.width(labels[i]) + 8;
+			int w = QuillDraw.textWidth(font, labels[i]) + 8;
 			if (x + w > startX + maxWidth) {
 				break;
 			}
@@ -199,120 +536,35 @@ public final class FileExplorerTreeWidget {
 
 	private void rebuildVisibleRows() {
 		visibleRows.clear();
+		if (inlineEdit != null
+				&& (inlineEdit.kind == InlineEditKind.NEW_FOLDER || inlineEdit.kind == InlineEditKind.NEW_FILE)
+				&& inlineEdit.parentPath.isEmpty()) {
+			visibleRows.add(new InlineInputRow(inlineEdit, 0));
+		}
 		for (FileTreeNode child : session.rootTree().children()) {
 			appendVisible(child, 0);
 		}
 	}
 
 	private void appendVisible(FileTreeNode node, int depth) {
-		visibleRows.add(new VisibleRow(node, depth));
+		if (inlineEdit != null
+				&& inlineEdit.kind == InlineEditKind.RENAME
+				&& node.relativePath().equals(inlineEdit.targetExistingPath)) {
+			visibleRows.add(new InlineInputRow(inlineEdit, depth));
+		} else {
+			visibleRows.add(new NodeRow(node, depth));
+		}
+
 		if (node.kind() != EntryKind.FILE && session.isExpanded(node.relativePath())) {
+			if (inlineEdit != null
+					&& (inlineEdit.kind == InlineEditKind.NEW_FOLDER || inlineEdit.kind == InlineEditKind.NEW_FILE)
+					&& node.relativePath().equals(inlineEdit.parentPath)) {
+				visibleRows.add(new InlineInputRow(inlineEdit, depth + 1));
+			}
 			for (FileTreeNode child : node.children()) {
 				appendVisible(child, depth + 1);
 			}
 		}
-	}
-
-	private void promptCreateFile() {
-		String baseDir = resolveTargetDirectory();
-		if (baseDir.isEmpty()) {
-			session.setStatus("Select a datapack or folder first.", true);
-			return;
-		}
-		modalOpener.accept(new ModalPromptOverlay(
-				"New File",
-				"Parent: datapacks/" + baseDir,
-				"Create",
-				false,
-				List.of(new ModalPromptOverlay.FieldSpec("name", "File Name (.mcfunction, .json, .mcmeta)", "new_fn.mcfunction", "hello.mcfunction", val -> {
-					if (val.isEmpty()) {
-						return "File name is required.";
-					}
-					if (!PathSandbox.hasAllowedExtension(val)) {
-						return "Allowed extensions: .mcfunction, .json, .mcmeta, .txt, .md";
-					}
-					try {
-						PathSandbox.validateSegment(val);
-					} catch (EditorSecurityException e) {
-						return e.getMessage();
-					}
-					return null;
-				})),
-				values -> {
-					modalCloser.run();
-					session.createEntry(baseDir + "/" + values.get("name"), EntryKind.FILE);
-				},
-				modalCloser
-		));
-	}
-
-	private void promptCreateDir() {
-		String baseDir = resolveTargetDirectory();
-		String message = baseDir.isEmpty() ? "Create new datapack folder in datapacks/" : "Parent: datapacks/" + baseDir;
-		EntryKind kind = baseDir.isEmpty() ? EntryKind.DATAPACK : EntryKind.DIRECTORY;
-		modalOpener.accept(new ModalPromptOverlay(
-				baseDir.isEmpty() ? "New Datapack Folder" : "New Folder",
-				message,
-				"Create",
-				false,
-				List.of(new ModalPromptOverlay.FieldSpec("name", "Folder Name", "", "my_folder", val -> {
-					if (val.isEmpty()) {
-						return "Folder name is required.";
-					}
-					try {
-						PathSandbox.validatePackOrFolderName(val);
-					} catch (EditorSecurityException e) {
-						return e.getMessage();
-					}
-					return null;
-				})),
-				values -> {
-					modalCloser.run();
-					String fullPath = baseDir.isEmpty() ? values.get("name") : baseDir + "/" + values.get("name");
-					session.createEntry(fullPath, kind);
-				},
-				modalCloser
-		));
-	}
-
-	private void promptRenameSelected() {
-		String selected = session.selectedTreePath();
-		if (selected == null || selected.isEmpty()) {
-			session.setStatus("Select a file or folder to rename.", true);
-			return;
-		}
-		int lastSlash = selected.lastIndexOf('/');
-		String parent = lastSlash >= 0 ? selected.substring(0, lastSlash) : "";
-		String currentName = lastSlash >= 0 ? selected.substring(lastSlash + 1) : selected;
-		FileTreeNode node = findNode(session.rootTree(), selected);
-		boolean isFile = node != null && node.kind() == EntryKind.FILE;
-
-		modalOpener.accept(new ModalPromptOverlay(
-				"Rename Entry",
-				"Current: " + selected,
-				"Rename",
-				false,
-				List.of(new ModalPromptOverlay.FieldSpec("name", "New Name", currentName, currentName, val -> {
-					if (val.isEmpty()) {
-						return "New name is required.";
-					}
-					try {
-						PathSandbox.validatePackOrFolderName(val);
-					} catch (EditorSecurityException e) {
-						return e.getMessage();
-					}
-					if (isFile && !PathSandbox.hasAllowedExtension(val)) {
-						return "Allowed file extensions: .mcfunction, .json, .mcmeta, .txt, .md";
-					}
-					return null;
-				})),
-				values -> {
-					modalCloser.run();
-					String target = parent.isEmpty() ? values.get("name") : parent + "/" + values.get("name");
-					session.renameEntry(selected, target);
-				},
-				modalCloser
-		));
 	}
 
 	private void promptDeleteSelected() {
@@ -365,6 +617,19 @@ public final class FileExplorerTreeWidget {
 		return null;
 	}
 
+	public static String fileBadge(String name) {
+		if (name.endsWith(".mcfunction")) {
+			return "fn";
+		}
+		if (name.endsWith(".json") || name.endsWith(".mcmeta")) {
+			return "{}";
+		}
+		if (name.endsWith(".md")) {
+			return "md";
+		}
+		return "tx";
+	}
+
 	private static int colorForFile(String name, boolean selected) {
 		if (selected) {
 			return QuillTheme.TEXT_BRIGHT;
@@ -376,5 +641,10 @@ public final class FileExplorerTreeWidget {
 			return QuillTheme.TEXT_JSON;
 		}
 		return QuillTheme.TEXT_PRIMARY;
+	}
+
+	private static Font safeFont() {
+		Minecraft mc = Minecraft.getInstance();
+		return mc != null ? mc.font : null;
 	}
 }

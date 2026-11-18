@@ -46,6 +46,11 @@ class QuillIdeScreenTextInputTest {
 	private static class StubEditorBackend implements EditorBackend {
 		String createdPackName;
 		String createdPackDescription;
+		String createdEntryPath;
+		EntryKind createdEntryKind;
+		String renamedSourcePath;
+		String renamedTargetPath;
+		int renameCount;
 
 		@Override
 		public CompletableFuture<FileTreeNode> listTree() {
@@ -69,11 +74,16 @@ class QuillIdeScreenTextInputTest {
 
 		@Override
 		public CompletableFuture<Void> createEntry(String relativePath, EntryKind kind) {
+			this.createdEntryPath = relativePath;
+			this.createdEntryKind = kind;
 			return CompletableFuture.completedFuture(null);
 		}
 
 		@Override
 		public CompletableFuture<Void> renameEntry(String sourceRelativePath, String targetRelativePath) {
+			this.renamedSourcePath = sourceRelativePath;
+			this.renamedTargetPath = targetRelativePath;
+			this.renameCount++;
 			return CompletableFuture.completedFuture(null);
 		}
 
@@ -342,6 +352,125 @@ class QuillIdeScreenTextInputTest {
 		screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0));
 		assertFalse(screen.searchSidebar().hasFocusedTextInput());
 		assertFalse(bridge.isActiveFor(screen));
+	}
+
+	@Test
+	void inlineFolderCreationActivatesSdlTextInputValidatesAndCreatesFolder() {
+		StubEditorBackend backend = new StubEditorBackend() {
+			@Override
+			public CompletableFuture<FileTreeNode> listTree() {
+				FileTreeNode fnDir = new FileTreeNode("function", "my_pack/data/demo/function", EntryKind.DIRECTORY, List.of());
+				FileTreeNode pack = new FileTreeNode("my_pack", "my_pack", EntryKind.DATAPACK, List.of(fnDir));
+				return CompletableFuture.completedFuture(new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of(pack)));
+			}
+		};
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.refreshTree();
+		session.setSelectedTreePath("my_pack/data/demo/function");
+
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+		assertFalse(bridge.isActiveFor(screen));
+
+		screen.explorerTree().beginInlineCreateFolder();
+		screen.tick();
+		assertTrue(screen.explorerTree().hasActiveInlineInput());
+		assertEquals(FileExplorerTreeWidget.InlineEditKind.NEW_FOLDER, screen.explorerTree().activeInlineEditKind());
+		assertTrue(bridge.isActiveFor(screen), "Inline explorer folder input must activate SDL3 text input.");
+
+		// Invalid path traversal name must show inline validation error and remain open
+		simulateSdlTextInput(screen, bridge, "../bad");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+		assertTrue(screen.explorerTree().hasActiveInlineInput());
+		assertTrue(screen.explorerTree().activeInlineValidationError() != null);
+		assertEquals(null, backend.createdEntryPath);
+
+		// Select all, replace with valid folder name, confirm with Enter
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_A, 'a', net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER));
+		simulateSdlTextInput(screen, bridge, "sub_folder");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+
+		assertFalse(screen.explorerTree().hasActiveInlineInput());
+		assertEquals("my_pack/data/demo/function/sub_folder", backend.createdEntryPath);
+		assertEquals(EntryKind.DIRECTORY, backend.createdEntryKind);
+		assertFalse(bridge.isActiveFor(screen), "Closing inline input with no open tabs must stop SDL3 text input.");
+	}
+
+	@Test
+	void inlineFileCreationPreSelectsStemAndCreatesFile() {
+		StubEditorBackend backend = new StubEditorBackend() {
+			@Override
+			public CompletableFuture<FileTreeNode> listTree() {
+				FileTreeNode fnDir = new FileTreeNode("function", "my_pack/data/demo/function", EntryKind.DIRECTORY, List.of());
+				FileTreeNode pack = new FileTreeNode("my_pack", "my_pack", EntryKind.DATAPACK, List.of(fnDir));
+				return CompletableFuture.completedFuture(new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of(pack)));
+			}
+		};
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.refreshTree();
+		session.setSelectedTreePath("my_pack/data/demo/function");
+
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		screen.explorerTree().beginInlineCreateFile();
+		screen.tick();
+		assertTrue(bridge.isActiveFor(screen));
+
+		// Pre-selected stem "new_fn" should be replaced by "greet", keeping ".mcfunction"
+		simulateSdlTextInput(screen, bridge, "greet");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+
+		assertFalse(screen.explorerTree().hasActiveInlineInput());
+		assertEquals("my_pack/data/demo/function/greet.mcfunction", backend.createdEntryPath);
+		assertEquals(EntryKind.FILE, backend.createdEntryKind);
+	}
+
+	@Test
+	void inlineRenameViaF2RenamesEntryAndEscapeCancels() {
+		StubEditorBackend backend = new StubEditorBackend() {
+			@Override
+			public CompletableFuture<FileTreeNode> listTree() {
+				FileTreeNode file = new FileTreeNode("hello.mcfunction", "my_pack/data/demo/function/hello.mcfunction", EntryKind.FILE, List.of());
+				FileTreeNode fnDir = new FileTreeNode("function", "my_pack/data/demo/function", EntryKind.DIRECTORY, List.of(file));
+				FileTreeNode pack = new FileTreeNode("my_pack", "my_pack", EntryKind.DATAPACK, List.of(fnDir));
+				return CompletableFuture.completedFuture(new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of(pack)));
+			}
+		};
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.refreshTree();
+		session.setSelectedTreePath("my_pack/data/demo/function/hello.mcfunction");
+
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		// F2 begins inline rename with stem "hello" pre-selected
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_F2, 0, 0));
+		assertTrue(screen.explorerTree().hasActiveInlineInput());
+		assertEquals(FileExplorerTreeWidget.InlineEditKind.RENAME, screen.explorerTree().activeInlineEditKind());
+		assertTrue(bridge.isActiveFor(screen));
+
+		simulateSdlTextInput(screen, bridge, "world");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+
+		assertFalse(screen.explorerTree().hasActiveInlineInput());
+		assertEquals("my_pack/data/demo/function/hello.mcfunction", backend.renamedSourcePath);
+		assertEquals("my_pack/data/demo/function/world.mcfunction", backend.renamedTargetPath);
+		assertEquals(1, backend.renameCount);
+
+		// F2 again then Escape cancels without renaming
+		session.setSelectedTreePath("my_pack/data/demo/function/hello.mcfunction");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_F2, 0, 0));
+		assertTrue(bridge.isActiveFor(screen));
+		simulateSdlTextInput(screen, bridge, "cancelled");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0));
+
+		assertFalse(screen.explorerTree().hasActiveInlineInput());
+		assertFalse(bridge.isActiveFor(screen));
+		assertEquals(1, backend.renameCount);
 	}
 
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {

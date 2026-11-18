@@ -104,6 +104,10 @@ public class QuillIdeScreen extends Screen {
 		return quickActions;
 	}
 
+	FileExplorerTreeWidget explorerTree() {
+		return explorerTree;
+	}
+
 	SearchSidebarWidget searchSidebar() {
 		return searchSidebar;
 	}
@@ -114,6 +118,7 @@ public class QuillIdeScreen extends Screen {
 
 	protected void openModal(ModalPromptOverlay modal) {
 		this.codeEditorWidget.dismissAutocomplete();
+		this.explorerTree.cancelInlineInput();
 		this.activeQuickPick = null;
 		this.activeModal = modal;
 		syncTextInputState();
@@ -130,6 +135,7 @@ public class QuillIdeScreen extends Screen {
 		}
 		this.codeEditorWidget.dismissAutocomplete();
 		this.searchSidebar.unfocus();
+		this.explorerTree.cancelInlineInput();
 		this.activeQuickPick = new QuickPickOverlay(
 				mode,
 				this::buildCommandPaletteItems,
@@ -150,6 +156,7 @@ public class QuillIdeScreen extends Screen {
 
 	protected void openSearchSidebar() {
 		this.codeEditorWidget.dismissAutocomplete();
+		this.explorerTree.cancelInlineInput();
 		session.setSidebarView(ClientEditorSession.SidebarView.SEARCH);
 		OpenTabState active = session.activeTab();
 		String selected = (active != null && active.buffer().hasSelection()) ? active.buffer().getSelectedText() : null;
@@ -160,6 +167,7 @@ public class QuillIdeScreen extends Screen {
 	protected void openInspectorSidebar(boolean invalidateCache) {
 		this.codeEditorWidget.dismissAutocomplete();
 		this.searchSidebar.unfocus();
+		this.explorerTree.cancelInlineInput();
 		session.setSidebarView(ClientEditorSession.SidebarView.INSPECTOR);
 		inspectorSidebar.refresh(invalidateCache);
 		syncTextInputState();
@@ -171,11 +179,20 @@ public class QuillIdeScreen extends Screen {
 				&& searchSidebar.hasFocusedTextInput();
 	}
 
+	private boolean isExplorerInlineInputActive() {
+		return !session.isSidebarCollapsed()
+				&& session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER
+				&& explorerTree.hasActiveInlineInput();
+	}
+
 	private boolean wantsTextInput() {
 		if (activeModal != null) {
 			return activeModal.hasTextFields();
 		}
 		if (activeQuickPick != null) {
+			return true;
+		}
+		if (isExplorerInlineInputActive()) {
 			return true;
 		}
 		if (isSearchInputFocused()) {
@@ -561,6 +578,27 @@ public class QuillIdeScreen extends Screen {
 				"new_fn", "Datapack: New .mcfunction...", "Create a new function file", "",
 				"Datapack: New .mcfunction function scaffold create", quickActions::promptNewFunction));
 		items.add(new QuickPickOverlay.PickItem(
+				"explorer_new_folder", "Explorer: New Folder", "Create a folder inline inside the File Explorer", "",
+				"Explorer: New Folder directory mkdir inline", () -> {
+					session.setSidebarView(ClientEditorSession.SidebarView.EXPLORER);
+					explorerTree.beginInlineCreateFolder();
+					syncTextInputState();
+				}));
+		items.add(new QuickPickOverlay.PickItem(
+				"explorer_new_file", "Explorer: New File", "Create a file inline inside the File Explorer", "",
+				"Explorer: New File inline", () -> {
+					session.setSidebarView(ClientEditorSession.SidebarView.EXPLORER);
+					explorerTree.beginInlineCreateFile();
+					syncTextInputState();
+				}));
+		items.add(new QuickPickOverlay.PickItem(
+				"explorer_rename", "Explorer: Rename Selected", "Rename selected file or folder inline", "F2",
+				"Explorer: Rename Selected mv inline", () -> {
+					session.setSidebarView(ClientEditorSession.SidebarView.EXPLORER);
+					explorerTree.beginInlineRename();
+					syncTextInputState();
+				}));
+		items.add(new QuickPickOverlay.PickItem(
 				"refresh_tree", "Explorer: Refresh File Tree", "Rescan datapacks/ folder", "",
 				"Explorer: Refresh File Tree rescan", session::refreshTree));
 
@@ -650,6 +688,7 @@ public class QuillIdeScreen extends Screen {
 		}
 		if (!lastSidebarRect.contains(event.x(), event.y())) {
 			searchSidebar.unfocus();
+			explorerTree.cancelInlineInput();
 			syncTextInputState();
 		}
 		if (tabBarWidget.mouseClicked(event)) {
@@ -675,6 +714,7 @@ public class QuillIdeScreen extends Screen {
 			}
 			if (explorerIconRect.contains(mx, my)) {
 				if (!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER) {
+					explorerTree.cancelInlineInput();
 					session.toggleSidebarCollapsed();
 				} else {
 					session.setSidebarView(ClientEditorSession.SidebarView.EXPLORER);
@@ -702,6 +742,8 @@ public class QuillIdeScreen extends Screen {
 				return true;
 			}
 			if (presetsIconRect.contains(mx, my)) {
+				explorerTree.cancelInlineInput();
+				searchSidebar.unfocus();
 				if (!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.PRESETS) {
 					session.toggleSidebarCollapsed();
 				} else {
@@ -770,6 +812,9 @@ public class QuillIdeScreen extends Screen {
 		if (activeQuickPick != null) {
 			return activeQuickPick.mouseDragged(event);
 		}
+		if (isExplorerInlineInputActive() && explorerTree.mouseDragged(event)) {
+			return true;
+		}
 		if (isSearchInputFocused() && searchSidebar.mouseDragged(event)) {
 			return true;
 		}
@@ -784,6 +829,7 @@ public class QuillIdeScreen extends Screen {
 	public boolean mouseReleased(MouseButtonEvent event) {
 		codeEditorWidget.mouseReleased(event);
 		searchSidebar.mouseReleased(event);
+		explorerTree.mouseReleased(event);
 		if (activeModal != null) {
 			activeModal.mouseReleased(event);
 			return true;
@@ -839,6 +885,10 @@ public class QuillIdeScreen extends Screen {
 			syncTextInputState();
 			return handled;
 		}
+		if (isExplorerInlineInputActive() && explorerTree.keyPressed(event)) {
+			syncTextInputState();
+			return true;
+		}
 		if (event.key() == InputConstants.KEY_F1 && !event.hasControlDownWithQuirk() && !event.hasAltDown()) {
 			openQuickPick(QuickPickOverlay.Mode.COMMANDS);
 			return true;
@@ -877,6 +927,13 @@ public class QuillIdeScreen extends Screen {
 			syncTextInputState();
 			return true;
 		}
+		if (!session.isSidebarCollapsed()
+				&& session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER
+				&& event.key() == InputConstants.KEY_F2
+				&& explorerTree.keyPressed(event)) {
+			syncTextInputState();
+			return true;
+		}
 		OpenTabState active = session.activeTab();
 		if (active != null && codeEditorWidget.keyPressed(event, font, active)) {
 			return true;
@@ -891,6 +948,9 @@ public class QuillIdeScreen extends Screen {
 		}
 		if (activeQuickPick != null) {
 			return activeQuickPick.charTyped(event);
+		}
+		if (isExplorerInlineInputActive() && explorerTree.charTyped(event)) {
+			return true;
 		}
 		if (isSearchInputFocused() && searchSidebar.charTyped(event)) {
 			return true;

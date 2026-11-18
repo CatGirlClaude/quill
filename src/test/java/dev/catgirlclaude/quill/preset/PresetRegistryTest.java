@@ -121,4 +121,32 @@ class PresetRegistryTest {
 		assertNull(DatapackScaffolder.inferFunctionId("my_pack/data/demo/recipe/test.json"));
 		assertNull(DatapackScaffolder.inferFunctionId("my_pack/data/demo/functions/legacy.mcfunction"));
 	}
+
+	@Test
+	void appliesCustomFunctionNamesForLoadAndTickPresets() throws IOException {
+		PathSandbox sandbox = new PathSandbox(datapacksRoot);
+		DatapackScaffolder.createDatapack(sandbox, "tpl_pack", "Template Pack");
+		PresetRegistry registry = PresetRegistry.loadDefault();
+
+		FileDocument loadDoc = registry.applyPreset(sandbox, "tpl_pack", "minecraft:load",
+				Map.of("namespace", "rpg", "functionName", "core/init"));
+		assertEquals("tpl_pack/data/rpg/function/core/init.mcfunction", loadDoc.relativePath());
+		assertTrue(loadDoc.content().contains("rpg:core/init"));
+
+		FileDocument tickDoc = registry.applyPreset(sandbox, "tpl_pack", "minecraft:tick",
+				Map.of("namespace", "rpg", "functionName", "loop/main"));
+		assertEquals("tpl_pack/data/rpg/function/loop/main.mcfunction", tickDoc.relativePath());
+		assertTrue(tickDoc.content().contains("rpg:loop/main"));
+
+		JsonObject loadTag = JsonParser.parseString(Files.readString(
+				datapacksRoot.resolve("tpl_pack/data/minecraft/tags/function/load.json"))).getAsJsonObject();
+		assertEquals("rpg:core/init", loadTag.getAsJsonArray("values").get(0).getAsString());
+
+		JsonObject tickTag = JsonParser.parseString(Files.readString(
+				datapacksRoot.resolve("tpl_pack/data/minecraft/tags/function/tick.json"))).getAsJsonObject();
+		assertEquals("rpg:loop/main", tickTag.getAsJsonArray("values").get(0).getAsString());
+
+		assertThrows(EditorSecurityException.class, () ->
+				registry.applyPreset(sandbox, "tpl_pack", "minecraft:load", Map.of("namespace", "rpg", "functionName", "../bad")));
+	}
 }

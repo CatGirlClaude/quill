@@ -4,26 +4,28 @@
       "id": "minecraft:load",
       "displayName": "Load Hook (#minecraft:load)",
       "description": "Runs a function once whenever the world loads or /reload executes.",
-      "targetRelativePathPattern": "data/${namespace}/function/load.mcfunction",
+      "targetRelativePathPattern": "data/${namespace}/function/${functionName}.mcfunction",
       "tagRelativePath": "data/minecraft/tags/function/load.json",
       "tagTemplate": "templates/minecraft_load.json.tmpl",
       "functionTemplate": "templates/namespace_load.mcfunction.tmpl",
-      "functionIdPattern": "${namespace}:load",
+      "functionIdPattern": "${namespace}:${functionName}",
       "defaultVariables": {
-        "namespace": "demo"
+        "namespace": "demo",
+        "functionName": "load"
       }
     },
     {
       "id": "minecraft:tick",
       "displayName": "Tick Loop (#minecraft:tick)",
       "description": "Runs a function every game tick (20 times per second).",
-      "targetRelativePathPattern": "data/${namespace}/function/tick.mcfunction",
+      "targetRelativePathPattern": "data/${namespace}/function/${functionName}.mcfunction",
       "tagRelativePath": "data/minecraft/tags/function/tick.json",
       "tagTemplate": "templates/minecraft_tick.json.tmpl",
       "functionTemplate": "templates/namespace_tick.mcfunction.tmpl",
-      "functionIdPattern": "${namespace}:tick",
+      "functionIdPattern": "${namespace}:${functionName}",
       "defaultVariables": {
-        "namespace": "demo"
+        "namespace": "demo",
+        "functionName": "tick"
       }
     },
     {

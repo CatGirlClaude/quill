@@ -21,7 +21,7 @@ import java.util.function.Function;
  * Reusable modal dialog overlay supporting confirmation prompts and multi-field validated inputs
  * with full text selection via {@link SingleLineTextInput}.
  */
-public final class ModalPromptOverlay {
+public final class ModalPromptOverlay implements IdeModal {
 	public record FieldSpec(
 			String key,
 			String label,

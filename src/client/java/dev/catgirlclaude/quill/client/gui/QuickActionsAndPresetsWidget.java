@@ -25,7 +25,7 @@ public final class QuickActionsAndPresetsWidget {
 	}
 
 	private final ClientEditorSession session;
-	private final Consumer<ModalPromptOverlay> modalOpener;
+	private final Consumer<IdeModal> modalOpener;
 	private final Runnable modalCloser;
 	private final List<ClickableItem> items = new ArrayList<>();
 	private int scrollPixels = 0;
@@ -33,7 +33,7 @@ public final class QuickActionsAndPresetsWidget {
 
 	public QuickActionsAndPresetsWidget(
 			ClientEditorSession session,
-			Consumer<ModalPromptOverlay> modalOpener,
+			Consumer<IdeModal> modalOpener,
 			Runnable modalCloser
 	) {
 		this.session = session;
@@ -155,25 +155,17 @@ public final class QuickActionsAndPresetsWidget {
 	}
 
 	public void promptNewDatapack() {
-		modalOpener.accept(new ModalPromptOverlay(
-				"New Datapack (MC 26.3)",
-				"Creates pack.mcmeta (min_format: 121, max_format: 121) and data/",
-				"Create",
-				false,
-				List.of(
-						new ModalPromptOverlay.FieldSpec("pack", "Datapack Folder Name", "my_pack", "my_pack", val -> {
-							try {
-								DatapackScaffolder.validatePackName(val);
-								return null;
-							} catch (EditorSecurityException e) {
-								return e.getMessage();
-							}
-						}),
-						new ModalPromptOverlay.FieldSpec("desc", "Description", "Created with Quill", "Created with Quill", null)
-				),
-				values -> {
+		modalOpener.accept(new NewDatapackModal(
+				submission -> {
 					modalCloser.run();
-					session.createDatapack(values.get("pack"), values.get("desc"));
+					session.createDatapackWithTemplate(
+							submission.packName(),
+							submission.description(),
+							submission.useTemplate(),
+							submission.namespace(),
+							submission.loadFunctionName(),
+							submission.tickFunctionName()
+					);
 				},
 				modalCloser
 		));
@@ -285,6 +277,15 @@ public final class QuickActionsAndPresetsWidget {
 				fields.add(new ModalPromptOverlay.FieldSpec("name", "Resource Path ([a-z0-9/._-])", var.getValue(), var.getValue(), val -> {
 					try {
 						DatapackScaffolder.validateResourcePath(val);
+						return null;
+					} catch (EditorSecurityException e) {
+						return e.getMessage();
+					}
+				}));
+			} else if ("functionName".equals(key)) {
+				fields.add(new ModalPromptOverlay.FieldSpec("functionName", "Function Name ([a-z0-9/._-])", var.getValue(), var.getValue(), val -> {
+					try {
+						DatapackScaffolder.validateFunctionPath(val);
 						return null;
 					} catch (EditorSecurityException e) {
 						return e.getMessage();

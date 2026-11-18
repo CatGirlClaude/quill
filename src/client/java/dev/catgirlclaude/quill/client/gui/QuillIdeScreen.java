@@ -75,7 +75,7 @@ public class QuillIdeScreen extends Screen {
 	private final SettingsPanelWidget settingsPanel;
 	private final BottomPanelWidget bottomPanelWidget;
 
-	private ModalPromptOverlay activeModal = null;
+	private IdeModal activeModal = null;
 	private QuickPickOverlay activeQuickPick = null;
 	private boolean settingsOpen = false;
 	private OpenTabState lastObservedActiveTab = null;
@@ -166,6 +166,10 @@ public class QuillIdeScreen extends Screen {
 		return settingsPanel;
 	}
 
+	IdeModal activeModal() {
+		return activeModal;
+	}
+
 	public boolean isSettingsOpen() {
 		return settingsOpen;
 	}
@@ -206,7 +210,7 @@ public class QuillIdeScreen extends Screen {
 		activeResizeEdge = IdeLayout.ResizeEdge.NONE;
 	}
 
-	protected void openModal(ModalPromptOverlay modal) {
+	protected void openModal(IdeModal modal) {
 		this.codeEditorWidget.dismissAutocomplete();
 		this.explorerTree.cancelInlineInput();
 		this.settingsPanel.unfocus();

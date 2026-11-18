@@ -855,6 +855,55 @@ public final class ClientEditorSession {
 		})).thenApply(ignored -> null);
 	}
 
+	/**
+	 * Creates a datapack and optionally applies the {@code minecraft:load} and {@code minecraft:tick}
+	 * template presets using the chosen namespace and function names (works identically in SP and MP).
+	 */
+	public CompletableFuture<Void> createDatapackWithTemplate(
+			String packName,
+			String description,
+			boolean useTemplate,
+			String namespace,
+			String loadFunctionName,
+			String tickFunctionName
+	) {
+		if (!useTemplate) {
+			return createDatapack(packName, description);
+		}
+		record TemplateResult(String pack, FileDocument loadDoc) {
+		}
+		busy = true;
+		setStatus("Creating templated datapack " + packName + "...", false);
+		return backend.createDatapack(packName, description)
+				.thenCompose(createdPack -> backend.applyPreset(
+								createdPack,
+								"minecraft:load",
+								Map.of("namespace", namespace, "functionName", loadFunctionName)
+						)
+						.thenCompose(loadDoc -> backend.applyPreset(
+										createdPack,
+										"minecraft:tick",
+										Map.of("namespace", namespace, "functionName", tickFunctionName)
+								)
+								.thenApply(ignoredTick -> new TemplateResult(createdPack, loadDoc))))
+				.whenComplete((result, error) -> runOnClient(() -> {
+					busy = false;
+					if (error != null) {
+						setError("Create datapack template failed: " + unwrapMessage(error));
+						return;
+					}
+					expandedPaths.add(result.pack());
+					expandAncestors(result.loadDoc().relativePath());
+					selectedTreePath = result.loadDoc().relativePath();
+					openOrFocusDocument(result.loadDoc());
+					refreshTree();
+					String msg = "Created datapack " + result.pack() + " (" + namespace + ":" + loadFunctionName + ", " + namespace + ":" + tickFunctionName + ")";
+					setStatus(msg, false);
+					appendOutput(LogLevel.SUCCESS, msg);
+				}))
+				.thenApply(ignored -> null);
+	}
+
 	public CompletableFuture<Void> createNamespace(String packName, String namespace) {
 		busy = true;
 		setStatus("Creating namespace " + namespace + "...", false);

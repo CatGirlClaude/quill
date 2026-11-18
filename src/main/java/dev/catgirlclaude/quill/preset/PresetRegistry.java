@@ -130,6 +130,10 @@ public final class PresetRegistry {
 			String cleanName = DatapackScaffolder.validateResourcePath(vars.get("name"));
 			vars.put("name", cleanName);
 		}
+		if (vars.containsKey("functionName")) {
+			String cleanFnName = DatapackScaffolder.validateFunctionPath(vars.get("functionName"));
+			vars.put("functionName", cleanFnName);
+		}
 
 		String targetRelWithinPack = substitute(entry.descriptor().targetRelativePathPattern(), vars);
 		String fullTargetRelPath = cleanPackName + "/" + targetRelWithinPack;

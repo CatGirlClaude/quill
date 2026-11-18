@@ -50,6 +50,9 @@ class QuillIdeScreenTextInputTest {
 		}
 	}
 
+	private record AppliedPresetCall(String packName, String presetId, Map<String, String> variables) {
+	}
+
 	private static class StubEditorBackend implements EditorBackend {
 		String createdPackName;
 		String createdPackDescription;
@@ -61,6 +64,7 @@ class QuillIdeScreenTextInputTest {
 		int writeCount;
 		boolean lastWriteReload;
 		int reloadCount;
+		final java.util.List<AppliedPresetCall> appliedPresets = new java.util.ArrayList<>();
 
 		@Override
 		public CompletableFuture<FileTreeNode> listTree() {
@@ -128,7 +132,15 @@ class QuillIdeScreenTextInputTest {
 
 		@Override
 		public CompletableFuture<FileDocument> applyPreset(String packName, String presetId, Map<String, String> variables) {
-			return CompletableFuture.completedFuture(new FileDocument(packName + "/pack.mcmeta", "{}", "hash", 0L));
+			this.appliedPresets.add(new AppliedPresetCall(packName, presetId, Map.copyOf(variables)));
+			String ns = variables.getOrDefault("namespace", "demo");
+			String fn = variables.getOrDefault("functionName", "minecraft:tick".equals(presetId) ? "tick" : "load");
+			return CompletableFuture.completedFuture(new FileDocument(
+					packName + "/data/" + ns + "/function/" + fn + ".mcfunction",
+					"# " + ns + ":" + fn + "\n",
+					"hash",
+					0L
+			));
 		}
 
 		@Override
@@ -561,6 +573,76 @@ class QuillIdeScreenTextInputTest {
 		assertFalse(session.isBottomPanelOpen());
 		screen.keyPressed(new KeyEvent(InputConstants.KEY_F6, 0, 0));
 		assertTrue(session.isBottomPanelOpen());
+	}
+
+	@Test
+	void newDatapackModalUseTemplateAppliesConfigDefaultLoadAndTick() {
+		QuillClientConfig cfg = QuillClientConfig.current();
+		cfg.setDefaultTemplateNamespace("rpg");
+		cfg.setDefaultLoadFunctionName("init");
+		cfg.setDefaultTickFunctionName("heartbeat");
+
+		StubEditorBackend backend = new StubEditorBackend();
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		screen.quickActions().promptNewDatapack();
+		assertTrue(screen.activeModal() instanceof NewDatapackModal);
+		NewDatapackModal modal = (NewDatapackModal) screen.activeModal();
+		assertFalse(modal.useTemplate(), "Use template must default to unchecked.");
+		assertTrue(modal.useDefaultLoad(), "Use default load must default to checked.");
+		assertTrue(modal.useDefaultTick(), "Use default tick must default to checked.");
+
+		modal.setUseTemplate(true);
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+
+		assertEquals("my_pack", backend.createdPackName);
+		assertEquals(2, backend.appliedPresets.size());
+		assertEquals("minecraft:load", backend.appliedPresets.get(0).presetId());
+		assertEquals(Map.of("namespace", "rpg", "functionName", "init"), backend.appliedPresets.get(0).variables());
+		assertEquals("minecraft:tick", backend.appliedPresets.get(1).presetId());
+		assertEquals(Map.of("namespace", "rpg", "functionName", "heartbeat"), backend.appliedPresets.get(1).variables());
+		assertEquals("my_pack/data/rpg/function/init.mcfunction", session.activeTab().relativePath());
+	}
+
+	@Test
+	void newDatapackModalMoreDropdownAllowsCustomLoadAndTickFunctionNames() {
+		StubEditorBackend backend = new StubEditorBackend();
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		screen.quickActions().promptNewDatapack();
+		NewDatapackModal modal = (NewDatapackModal) screen.activeModal();
+		modal.setUseTemplate(true);
+		modal.setMoreExpanded(true);
+
+		int ctrl = net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER;
+		modal.focusField(NewDatapackModal.FieldId.NAMESPACE);
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_A, 'a', ctrl));
+		simulateSdlTextInput(screen, bridge, "quest");
+
+		// Typing into Load function automatically unchecks Use default
+		modal.focusField(NewDatapackModal.FieldId.LOAD_FN);
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_A, 'a', ctrl));
+		simulateSdlTextInput(screen, bridge, "boot/start");
+		assertFalse(modal.useDefaultLoad());
+
+		// Typing into Tick function automatically unchecks Use default
+		modal.focusField(NewDatapackModal.FieldId.TICK_FN);
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_A, 'a', ctrl));
+		simulateSdlTextInput(screen, bridge, "loop/update");
+		assertFalse(modal.useDefaultTick());
+
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+
+		assertEquals(2, backend.appliedPresets.size());
+		assertEquals(Map.of("namespace", "quest", "functionName", "boot/start"), backend.appliedPresets.get(0).variables());
+		assertEquals(Map.of("namespace", "quest", "functionName", "loop/update"), backend.appliedPresets.get(1).variables());
+		assertEquals("my_pack/data/quest/function/boot/start.mcfunction", session.activeTab().relativePath());
 	}
 
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {

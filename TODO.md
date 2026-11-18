@@ -62,10 +62,95 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] **Movable & Resizable IDE Window**: Floating window title-bar drag (double-click to maximize/restore), 8-edge/corner resize handles (`IdeLayout.hitTestResizeEdge` + native `CursorTypes.RESIZE_*`), draggable Sidebar and Bottom Panel splitters, and persisted window bounds in `config/quill-client.json`.
 - [x] **Datapack Creation Template Options (`NewDatapackModal`)**: `"Use template"` checkbox revealing a Namespace field and expandable `> More` dropdown for customizing `load` and `tick` function names, each paired with a default-checked `"Use default"` checkbox referencing client config defaults (works in both SP and MP via `PresetRegistry`'s `${functionName}` variable).
 
+
+
 ## Bugfixes & Post-Alpha Polish
 
 - [x] **Whole-GUI & Font Zoom (`Ctrl+-` / `Ctrl+=` / `Ctrl+0`)**: Scale the entire `QuillIdeScreen` (title bar, sidebar, explorer, tabs, breadcrumbs, code editor, bottom panel, settings, modals, quick pick, status bar) uniformly via `QuillClientConfig.uiScale()` while keeping custom floating window bounds anchored in real screen pixels; remove double-scaling from `CodeEditorWidget`; add configurable `ZOOM_IN`/`ZOOM_OUT`/`ZOOM_RESET` shortcuts (`Ctrl+=` / `Ctrl++` / `Ctrl+Numpad+`, `Ctrl+-` / `Ctrl+Numpad-`, `Ctrl+0` / `Ctrl+Numpad0`), Command Palette actions (`View: Zoom In`, `View: Zoom Out`, `View: Reset Zoom`), Settings zoom label/hint, and Status Bar zoom badge.
 - [x] **Crisp Non-Pixelated Font Rendering**: Replace MC `26.3`'s hardcoded `FilterMode.NEAREST` glyph sampling with `FilterMode.LINEAR` for `quill:*` TrueType fonts and scaled IDE text via `GlyphRenderStateMixin`; zero-initialize `quill:*` font atlases via `FontTextureMixin` to eliminate edge artifacts; tune TTF `oversample` (`2.5`) in `sans_serif.json`, `arial.json`, and `monospace.json` for `<2x` downscaling on unmipmapped `256x256` atlases; switch default `FontChoice` from `MINECRAFT_DEFAULT` to `SANS_SERIF` (Roboto).
+
+## Feedback po Fazie 5
+
+Źródło: uwagi użytkowniczki po wersji finalnej Fazy 5. Nie implementować bez
+zgody przy pozycjach oznaczonych "DECYZJA". Pozycje P0 najpierw, z testem
+odtwarzającym błąd przed poprawką.
+
+### P0: błędy do naprawienia najpierw
+- [ ] Najechanie kursorem na plik w explorerze chowa drzewo tego pliku.
+- [ ] Kursor pisania pojawia się także w edytorze, gdy wpisujesz tekst w explorerze. Ma być widoczny tylko w aktywnym polu.
+- [ ] Skróty gry (np. F3) działają w GUI. Mają być wyłączone, gdy otwarte jest IDE.
+- [ ] Po utworzeniu datapacka widok przełącza się automatycznie na File Explorer.
+- [ ] Pole tworzenia nowego pliku: różowe pole jest za duże i nie widać w nim znaku `_`.
+- [ ] Rebinding: ESC przypisuje pusty klawisz zamiast anulować.
+- [ ] Ctrl+Z rozdzielone na dwa stosy: w edytorze cofa zmiany w kodzie, poza edytorem cofa operacje na plikach (usunięcia, zmiany nazw itd.).
+- [ ] Wcięcie przed pierwszą literą w edytorze jest zbyt duże (zajmuje szerokość całej litery).
+- [ ] Kolor czerwony dla niezapisanych zmian w sidebarze wygląda jak błąd. Zmienić na neutralny znacznik `*`.
+- [ ] Search: tekst jest ucinany przez "..." (np. `Triggers /reload on every keystroke`). Rozszerzyć pole albo zawijać tekst.
+
+### P1: wygląd i ogólne UX
+- [ ] Ogólny styl: GUI wygląda zbyt Minecraftowo. Cel: wrażenie prawdziwej aplikacji. Zaproponować system motywu (kolory, odstępy, obramowania) przed poprawkami pojedynczych elementów.
+- [ ] Ikony wyższej jakości (np. lupa): większa rozdzielczość lub wektory (SVG).
+- [ ] Strzałki w explorerze: zamiast tekstowych `>` i `v` (oraz zamiast znaków ▸ ▾) narysować wektorowe ikony chevron w stylu VS Code (Codicons: cienka, lekko pochylona kreska, zwijana w prawo, rozwijana w dół). Rysować je geometrią w kodzie albo jako SVG/tekstura, nie jako znak tekstowy. Rozmiar i grubość mają pasować do wysokości wiersza przy każdym GUI Scale.
+- [ ] Znacznik niezapisanego pliku: kropkę zamienić na `*`.
+- [ ] Plik funkcji: zamienić tekst "fn" na własną ikonę.
+- [ ] Więcej ikon typów plików. Dla typów widocznych, ale nieobsługiwanych, pokazać komunikat na górze ekranu w stylu notyfikacji VS Code.
+- [ ] Nazwy plików i folderów zawsze białe. Kolor pochodzi tylko z prefiksu typu pliku (np. `{}` dla JSON, `function` dla funkcji, `js` dla skryptów).
+- [ ] Podgląd JSON: `{}` z większym odstępem między klamrami, np. `{ }`, ale mniejszym niż zwykła spacja. Pokazać dwie wersje (węższa spacja / osobny glif) i wybrać jedną.
+- [ ] UI jest za duże i zajmuje za dużo ekranu. Zwiększyć zoom out lub naprawić skalowanie. DECYZJA: zwiększyć czy naprawić. Nie może się psuć przy różnym GUI Scale.
+- [ ] Skala czcionki różna od domyślnej psuje layout. Opis z screenshotu: [uzupełnić: które elementy nachodzą lub są ucinane].
+- [ ] Status bar na dole: skompaktować i usunąć zbędne informacje.
+- [ ] Command palette: usunąć skróty już widoczne w innych miejscach (np. "CTRL + P" przy samym pasku).
+- [ ] Command palette rozwija się z góry zamiast otwierać nowe okno nad wszystkim.
+- [ ] Ustawienia: lewy panel zastąpić listą kategorii. Główna lista zostaje, a kliknięcie kategorii przeskakuje do sekcji.
+- [ ] Ustawienia: usunąć znak `*` przy zaznaczonej opcji.
+- [ ] Ustawienia: zawijanie tekstu tam, gdzie opisy nie mieszczą się w linii (np. `Triggers /reload on every keystroke`).
+- [ ] Ustawienia, Font Family: podgląd "Minecraft Uniform" jest mały i ma niski kontrast. Wszystkie podglądy mają ten sam rozmiar i kontrast, żeby porównanie było uczciwe.
+- [ ] Ustawienia, Font Family: zaznaczona opcja (Monospace) ma `*`. Usunąć razem z pozycją o `*` w ustawieniach.
+- [ ] Więcej motywów kolorystycznych.
+- [ ] Animacje w całym UI z globalnym przełącznikiem w ustawieniach.
+
+### P1: explorer plików
+- [ ] Usunąć przyciski pokroju `+file` i `+dir`.
+- [ ] Menu kontekstowe (prawy klik) na pliku i folderze. Minimum: Run function, Open to side, Reveal in file explorer, Find file references, Cut, Copy, Copy path, Delete, Rename.
+- [ ] Skrót F2 zmienia nazwę zaznaczonego pliku.
+- [ ] Skróty Delete oraz Ctrl+C / Ctrl+X / Ctrl+V na zaznaczonym pliku.
+- [ ] Najechanie na plik nie chowa drzewa (patrz P0).
+
+### P1: edytor kodu
+- [ ] Prawy klik w edytorze: cut, copy, paste oraz podstawowa nawigacja.
+- [ ] Prawy klik w edytorze działa także na tekście.
+- [ ] Ctrl+F: wyszukiwanie w aktywnym pliku, wzorem VS Code.
+- [ ] Shift + kółko myszy: przewijanie poziome.
+- [ ] Zawijanie tekstu w edytorze: Alt+Z.
+- [ ] Ctrl+klik na tekst przenosi do definicji (osobny punkt, wymaga źródeł danych):
+  - scoreboard, tag, storage itd.: lista wszystkich miejsc użycia,
+  - zwykła komenda: link do dokumentacji.
+
+### P1: zakładki (tabs)
+- [ ] Prawy klik na zakładce: Pin, Close, Close all but this, Close all oraz standardowe opcje z menu pliku.
+- [ ] Z menu zakładki wykluczyć Cut i Delete. Copy path zostaje.
+
+### P2: wyszukiwanie w folderze
+- [ ] Search w folderze z polami include i exclude.
+- [ ] Oba pola ukryte domyślnie, rozwijane przyciskiem.
+
+### P2: output i konsola
+- [ ] Zaznaczanie i kopiowanie tekstu z output.
+- [ ] Konsola Minecrafta w output: logi na żywo, wpisany tekst wykonywany jako komenda od gracza. DECYZJA: zakres (sama wysyłka i logi, czy od razu podpowiedzi komend).
+
+### P2: konfiguracja
+- [ ] Ctrl+Z i Ctrl+Shift+Z konfigurowalne w ustawieniach.
+
+### P2: komendy klienta
+- [ ] Komenda clientside `/quill` otwiera menu IDE.
+- [ ] Subkomendy z argumentami otwierają konkretne miejsce w IDE, np. `/quill config` otwiera od razu ustawienia. DECYZJA: pełna lista subkomend (start: `/quill`, `/quill config`).
+- [ ] Komendy działają po stronie klienta, bez wysyłania na serwer.
+
+### P3: przyszłość (nie do MVP)
+- [ ] Syntax: obsługa NBT i podświetlanie błędów na bieżąco.
+- [ ] Własne definicje komend, na wzór rozszerzenia Spyglass.
+- [ ] Autouzupełnianie dla plików JSON i `pack.mcmeta`.
+- [ ] Źródła danych między innymi: https://github.com/SpyglassMC/vanilla-mcdoc (sprawdzić licencję przed użyciem).
 
 ## Proposals (Propozycje)
 

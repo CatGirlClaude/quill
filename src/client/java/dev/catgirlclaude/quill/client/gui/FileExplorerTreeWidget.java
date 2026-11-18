@@ -247,17 +247,32 @@ public final class FileExplorerTreeWidget {
 			for (int i = firstRow; i <= lastRow; i++) {
 				VisibleRow row = visibleRows.get(i);
 				int ry = listRect.y() + i * ROW_HEIGHT - scrollPixels;
-
-				// Indentation guides
 				int indentX = listRect.x() + 6 + row.depth() * 10;
-				for (int g = 0; g < row.depth(); g++) {
-					int gx = listRect.x() + 8 + g * 10;
-					QuillDraw.vLine(graphics, gx, ry, ROW_HEIGHT, QuillTheme.BORDER_SUBTLE);
-				}
+				boolean selected = row instanceof NodeRow nr && nr.node().relativePath().equals(session.selectedTreePath());
+				boolean hovered = row instanceof NodeRow && listRect.contains(mouseX, mouseY) && mouseY >= ry && mouseY < ry + ROW_HEIGHT;
+
+				renderRowChrome(
+						new RowChromeTarget() {
+							@Override
+							public void fillBackground(int x, int y, int width, int height, int color) {
+								QuillDraw.fill(graphics, x, y, width, height, color);
+							}
+
+							@Override
+							public void drawIndentGuide(int x, int y, int height, int color) {
+								QuillDraw.vLine(graphics, x, y, height, color);
+							}
+						},
+						listRect,
+						ry,
+						row.depth(),
+						row instanceof InlineInputRow,
+						selected,
+						hovered
+				);
 
 				if (row instanceof InlineInputRow inlineRow) {
 					InlineEditState edit = inlineRow.edit();
-					QuillDraw.fill(graphics, listRect.x(), ry, listRect.width(), ROW_HEIGHT, QuillTheme.ROW_SELECTED);
 					String icon = edit.targetIsFile ? "+ " : "> ";
 					int iconColor = edit.targetIsFile ? QuillTheme.TEXT_FUNCTION : QuillTheme.TEXT_FOLDER;
 					int textY = ry + (ROW_HEIGHT - font.lineHeight) / 2;
@@ -276,14 +291,6 @@ public final class FileExplorerTreeWidget {
 					}
 				} else if (row instanceof NodeRow nodeRow) {
 					FileTreeNode node = nodeRow.node();
-					boolean selected = node.relativePath().equals(session.selectedTreePath());
-					boolean hovered = listRect.contains(mouseX, mouseY) && mouseY >= ry && mouseY < ry + ROW_HEIGHT;
-
-					if (selected) {
-						QuillDraw.fill(graphics, listRect.x(), ry, listRect.width(), ROW_HEIGHT, QuillTheme.ROW_SELECTED);
-					} else if (hovered) {
-						QuillDraw.fill(graphics, listRect.x(), ry, listRect.width(), ROW_HEIGHT, QuillTheme.BG_HOVER);
-					}
 					if (hovered) {
 						QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 					}
@@ -327,6 +334,32 @@ public final class FileExplorerTreeWidget {
 			int thumbH = Math.max(12, (int) ((long) listRect.height() * listRect.height() / Math.max(1, totalHeight)));
 			int thumbY = listRect.y() + (int) ((long) scrollPixels * (listRect.height() - thumbH) / maxScroll);
 			QuillDraw.fill(graphics, trackX, thumbY, 3, thumbH, QuillTheme.TEXT_MUTED);
+		}
+	}
+
+	interface RowChromeTarget {
+		void fillBackground(int x, int y, int width, int height, int color);
+
+		void drawIndentGuide(int x, int y, int height, int color);
+	}
+
+	static void renderRowChrome(
+			RowChromeTarget target,
+			IdeLayout.Rect listRect,
+			int ry,
+			int depth,
+			boolean inlineInput,
+			boolean selected,
+			boolean hovered
+	) {
+		if (inlineInput || selected) {
+			target.fillBackground(listRect.x(), ry, listRect.width(), ROW_HEIGHT, QuillTheme.ROW_SELECTED);
+		} else if (hovered) {
+			target.fillBackground(listRect.x(), ry, listRect.width(), ROW_HEIGHT, QuillTheme.BG_HOVER);
+		}
+		for (int g = 0; g < depth; g++) {
+			int gx = listRect.x() + 8 + g * 10;
+			target.drawIndentGuide(gx, ry, ROW_HEIGHT, QuillTheme.BORDER_SUBTLE);
 		}
 	}
 

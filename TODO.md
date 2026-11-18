@@ -76,7 +76,7 @@ zgody przy pozycjach oznaczonych "DECYZJA". Pozycje P0 najpierw, z testem
 odtwarzającym błąd przed poprawką.
 
 ### P0: błędy do naprawienia najpierw
-- [ ] Najechanie kursorem na plik w explorerze chowa drzewo tego pliku.
+- [x] Najechanie kursorem na plik w explorerze chowa drzewo tego pliku.
 - [x] Kursor pisania pojawia się także w edytorze, gdy wpisujesz tekst w explorerze. Ma być widoczny tylko w aktywnym polu.
 - [x] Skróty gry (np. F3) działają w GUI. Mają być wyłączone, gdy otwarte jest IDE.
 - [ ] Po utworzeniu datapacka widok przełącza się automatycznie na File Explorer.
@@ -114,7 +114,7 @@ odtwarzającym błąd przed poprawką.
 - [ ] Menu kontekstowe (prawy klik) na pliku i folderze. Minimum: Run function, Open to side, Reveal in file explorer, Find file references, Cut, Copy, Copy path, Delete, Rename.
 - [ ] Skrót F2 zmienia nazwę zaznaczonego pliku.
 - [ ] Skróty Delete oraz Ctrl+C / Ctrl+X / Ctrl+V na zaznaczonym pliku.
-- [ ] Najechanie na plik nie chowa drzewa (patrz P0).
+- [x] Najechanie na plik nie chowa drzewa (patrz P0).
 
 ### P1: edytor kodu
 - [ ] Prawy klik w edytorze: cut, copy, paste oraz podstawowa nawigacja.

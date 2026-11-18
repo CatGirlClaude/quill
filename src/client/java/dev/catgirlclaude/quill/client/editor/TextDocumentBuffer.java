@@ -220,6 +220,43 @@ public final class TextDocumentBuffer {
 		insertText(TAB_SPACES);
 	}
 
+	/**
+	 * Replaces the character range {@code [startCol, endCol)} on {@code lineIndex} with {@code replacement}
+	 * as a single undoable operation and places the caret at the end of the inserted text.
+	 */
+	public void replaceRange(int lineIndex, int startCol, int endCol, String replacement) {
+		if (lineIndex < 0 || lineIndex >= lines.size()) {
+			return;
+		}
+		String line = lines.get(lineIndex);
+		int s = Math.max(0, Math.min(line.length(), startCol));
+		int e = Math.max(s, Math.min(line.length(), endCol));
+		String clean = normalizeLineEndings(replacement == null ? "" : replacement);
+		pushUndoSnapshot();
+		selectionAnchor = new Position(lineIndex, s);
+		cursor = new Position(lineIndex, e);
+		deleteSelectionInternal();
+		String currentLine = lines.get(cursor.line());
+		String prefix = currentLine.substring(0, cursor.column());
+		String suffix = currentLine.substring(cursor.column());
+		String[] parts = clean.split("\n", -1);
+		if (parts.length == 1) {
+			lines.set(cursor.line(), prefix + parts[0] + suffix);
+			cursor = new Position(cursor.line(), prefix.length() + parts[0].length());
+		} else {
+			lines.set(cursor.line(), prefix + parts[0]);
+			for (int i = 1; i < parts.length - 1; i++) {
+				lines.add(cursor.line() + i, parts[i]);
+			}
+			int endLine = cursor.line() + parts.length - 1;
+			String lastPart = parts[parts.length - 1];
+			lines.add(endLine, lastPart + suffix);
+			cursor = new Position(endLine, lastPart.length());
+		}
+		selectionAnchor = null;
+		lastActionWasCharInsert = false;
+	}
+
 	public void backspace() {
 		if (hasSelection()) {
 			pushUndoSnapshot();

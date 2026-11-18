@@ -96,6 +96,7 @@ public class QuillIdeScreen extends Screen {
 	}
 
 	protected void openModal(ModalPromptOverlay modal) {
+		this.codeEditorWidget.dismissAutocomplete();
 		this.activeModal = modal;
 		syncTextInputState();
 	}

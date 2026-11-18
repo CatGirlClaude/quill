@@ -2,6 +2,9 @@ package dev.catgirlclaude.quill.client.gui;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
+import com.mojang.brigadier.CommandDispatcher;
+import dev.catgirlclaude.quill.client.editor.BrigadierAssistService;
+import dev.catgirlclaude.quill.client.editor.SyntaxHighlighter;
 import dev.catgirlclaude.quill.client.editor.TextDocumentBuffer;
 import dev.catgirlclaude.quill.client.session.OpenTabState;
 import net.minecraft.client.Minecraft;
@@ -10,19 +13,53 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.multiplayer.ClientSuggestionProvider;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Multi-line code editor widget using proportional {@link Font} metrics for caret positioning,
- * selection highlighting, mouse click/drag selection, clipboard, undo/redo, and 2D scrolling.
+ * Multi-line code editor widget with VS Code Dark+ syntax highlighting, live Brigadier
+ * command autocomplete & hover signatures, proportional {@link Font} caret/selection math,
+ * mouse click/drag selection, clipboard, undo/redo, and 2D scrolling.
  */
 public final class CodeEditorWidget {
 	private static final int LINE_PADDING_Y = 2;
 	private static final int CODE_LEFT_PADDING = 6;
 	private static final int SCROLLBAR_SIZE = 5;
+	private static final int MAX_VISIBLE_SUGGESTIONS = 8;
+	private static final int SUGGESTION_ROW_HEIGHT = 13;
 
 	private IdeLayout.Rect lastEditorRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect lastCodeViewport = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private final List<IdeLayout.Rect> suggestionRowRects = new ArrayList<>();
 	private boolean draggingSelection = false;
+
+	// Brigadier autocomplete & hover state
+	private boolean autocompleteOpen = false;
+	private int selectedSuggestionIndex = 0;
+	private int suggestionScroll = 0;
+	private long assistGeneration = 0L;
+	private String lastCaretTabPath = "";
+	private BrigadierAssistService.AssistResult currentAssist = BrigadierAssistService.AssistResult.EMPTY;
+
+	private String lastHoverKey = "";
+	private List<String> cachedHoverSignatures = List.of();
+	private int lastHoverLine = -1;
+
+	public boolean isAutocompleteOpen() {
+		return autocompleteOpen && !currentAssist.suggestions().isEmpty();
+	}
+
+	public void dismissAutocomplete() {
+		autocompleteOpen = false;
+		selectedSuggestionIndex = 0;
+		suggestionScroll = 0;
+		lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
+		suggestionRowRects.clear();
+	}
 
 	public void render(
 			GuiGraphicsExtractor graphics,
@@ -33,8 +70,15 @@ public final class CodeEditorWidget {
 			int mouseY
 	) {
 		lastEditorRect = editorRect;
-		TextDocumentBuffer buffer = tab.buffer();
+		if (!tab.relativePath().equals(lastCaretTabPath)) {
+			lastCaretTabPath = tab.relativePath();
+			dismissAutocomplete();
+			currentAssist = BrigadierAssistService.AssistResult.EMPTY;
+			lastHoverKey = "";
+			cachedHoverSignatures = List.of();
+		}
 
+		TextDocumentBuffer buffer = tab.buffer();
 		int lineHeight = font.lineHeight + LINE_PADDING_Y;
 		int gutterWidth = Math.max(30, font.width(String.valueOf(Math.max(1, buffer.lineCount()))) + 14);
 		int codeX = editorRect.x() + gutterWidth;
@@ -61,11 +105,11 @@ public final class CodeEditorWidget {
 		QuillDraw.fill(graphics, editorRect.x(), editorRect.y(), gutterWidth, editorRect.height(), QuillTheme.BG_GUTTER);
 		QuillDraw.vLine(graphics, codeX - 1, editorRect.y(), editorRect.height(), QuillTheme.BORDER_SUBTLE);
 
-		if (lastCodeViewport.contains(mouseX, mouseY)) {
+		boolean hoveringPopup = isAutocompleteOpen() && lastPopupRect.contains(mouseX, mouseY);
+		if (lastCodeViewport.contains(mouseX, mouseY) && !hoveringPopup) {
 			QuillDraw.requestCursor(graphics, CursorTypes.IBEAM);
 		}
 
-		// Render gutter and code lines
 		int firstLine = tab.scrollLine();
 		int lastLine = Math.min(buffer.lineCount() - 1, firstLine + visibleLines);
 		TextDocumentBuffer.Position cursor = buffer.cursor();
@@ -89,6 +133,10 @@ public final class CodeEditorWidget {
 		}
 		QuillDraw.endClip(graphics);
 
+		SyntaxHighlighter.Language language = SyntaxHighlighter.languageForPath(tab.relativePath());
+		int caretScreenX = codeX + CODE_LEFT_PADDING;
+		int caretScreenY = editorRect.y() + 4;
+
 		QuillDraw.beginClip(graphics, lastCodeViewport);
 		for (int i = firstLine; i <= lastLine; i++) {
 			int rowY = editorRect.y() + 4 + (i - firstLine) * lineHeight;
@@ -109,13 +157,24 @@ public final class CodeEditorWidget {
 				}
 			}
 
-			QuillDraw.text(graphics, font, lineText, drawX, rowY, QuillTheme.TEXT_PRIMARY);
+			if (language == SyntaxHighlighter.Language.PLAIN || lineText.isEmpty()) {
+				QuillDraw.text(graphics, font, lineText, drawX, rowY, QuillTheme.SYNTAX_PLAIN);
+			} else {
+				List<SyntaxHighlighter.TokenSpan> spans = SyntaxHighlighter.tokenizeLine(lineText, language);
+				for (SyntaxHighlighter.TokenSpan span : spans) {
+					String segment = lineText.substring(span.start(), span.end());
+					int segX = drawX + (span.start() == 0 ? 0 : font.width(lineText.substring(0, span.start())));
+					QuillDraw.text(graphics, font, segment, segX, rowY, span.color());
+				}
+			}
 
-			// Blinking caret
-			if (i == cursor.line() && (System.currentTimeMillis() / 500L) % 2L == 0L) {
+			if (i == cursor.line()) {
 				int col = Math.min(cursor.column(), lineText.length());
-				int caretX = drawX + font.width(lineText.substring(0, col));
-				QuillDraw.fill(graphics, caretX, rowY - 1, 1, lineHeight, QuillTheme.CURSOR_COLOR);
+				caretScreenX = drawX + font.width(lineText.substring(0, col));
+				caretScreenY = rowY;
+				if ((System.currentTimeMillis() / 500L) % 2L == 0L) {
+					QuillDraw.fill(graphics, caretScreenX, rowY - 1, 1, lineHeight, QuillTheme.CURSOR_COLOR);
+				}
 			}
 		}
 		QuillDraw.endClip(graphics);
@@ -138,12 +197,187 @@ public final class CodeEditorWidget {
 			QuillDraw.fill(graphics, codeX, trackY, codeW, SCROLLBAR_SIZE, QuillTheme.BG_SIDEBAR);
 			QuillDraw.fill(graphics, thumbX, trackY + 1, thumbW, SCROLLBAR_SIZE - 2, QuillTheme.TEXT_MUTED);
 		}
+
+		// Brigadier autocomplete popup & hover signature tooltips (.mcfunction only)
+		if (language == SyntaxHighlighter.Language.MCFUNCTION) {
+			if (isAutocompleteOpen()) {
+				renderAutocompletePopup(graphics, font, editorRect, caretScreenX, caretScreenY, lineHeight, mouseX, mouseY);
+			} else {
+				lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
+				suggestionRowRects.clear();
+				renderHoverOrUsageTooltip(graphics, font, editorRect, tab, lineHeight, mouseX, mouseY);
+			}
+		} else {
+			lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
+			suggestionRowRects.clear();
+		}
+	}
+
+	private void renderAutocompletePopup(
+			GuiGraphicsExtractor graphics,
+			Font font,
+			IdeLayout.Rect editorRect,
+			int caretX,
+			int caretY,
+			int lineHeight,
+			int mouseX,
+			int mouseY
+	) {
+		List<BrigadierAssistService.SuggestionEntry> list = currentAssist.suggestions();
+		if (list.isEmpty()) {
+			lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
+			suggestionRowRects.clear();
+			return;
+		}
+
+		selectedSuggestionIndex = Math.max(0, Math.min(list.size() - 1, selectedSuggestionIndex));
+		int visibleCount = Math.min(MAX_VISIBLE_SUGGESTIONS, list.size());
+		if (selectedSuggestionIndex < suggestionScroll) {
+			suggestionScroll = selectedSuggestionIndex;
+		} else if (selectedSuggestionIndex >= suggestionScroll + visibleCount) {
+			suggestionScroll = selectedSuggestionIndex - visibleCount + 1;
+		}
+		suggestionScroll = Math.max(0, Math.min(Math.max(0, list.size() - visibleCount), suggestionScroll));
+
+		List<String> usages = currentAssist.usageSignatures();
+		boolean showUsageHeader = !usages.isEmpty();
+		int usageHeaderH = showUsageHeader ? 14 : 0;
+
+		int contentW = 140;
+		for (int i = suggestionScroll; i < Math.min(list.size(), suggestionScroll + visibleCount); i++) {
+			BrigadierAssistService.SuggestionEntry e = list.get(i);
+			int rowW = font.width(e.text()) + 16;
+			if (e.tooltip() != null && !e.tooltip().isBlank()) {
+				rowW += Math.min(120, font.width(" - " + e.tooltip()));
+			}
+			contentW = Math.max(contentW, rowW);
+		}
+		if (showUsageHeader) {
+			contentW = Math.max(contentW, Math.min(280, font.width(usages.getFirst()) + 14));
+		}
+		int popupW = Math.min(Math.max(120, editorRect.width() - 16), Math.min(300, contentW));
+		int popupH = usageHeaderH + visibleCount * SUGGESTION_ROW_HEIGHT + 4;
+
+		int px = Math.max(editorRect.x() + 4, Math.min(caretX, editorRect.right() - popupW - 4));
+		int py = caretY + lineHeight + 2;
+		if (py + popupH > editorRect.bottom() - 4) {
+			py = Math.max(editorRect.y() + 4, caretY - popupH - 2);
+		}
+
+		lastPopupRect = new IdeLayout.Rect(px, py, popupW, popupH);
+		QuillDraw.fill(graphics, px, py, popupW, popupH, QuillTheme.BG_POPUP);
+		QuillDraw.outline(graphics, px, py, popupW, popupH, QuillTheme.ACCENT_FOCUS);
+
+		int y = py + 2;
+		if (showUsageHeader) {
+			QuillDraw.fill(graphics, px + 1, py + 1, popupW - 2, usageHeaderH - 1, QuillTheme.BG_TAB_INACTIVE);
+			QuillDraw.hLine(graphics, px + 1, popupW - 2, py + usageHeaderH, QuillTheme.BORDER_SUBTLE);
+			String sig = QuillDraw.clipToWidth(font, usages.getFirst(), popupW - 10);
+			QuillDraw.text(graphics, font, sig, px + 5, py + 3, QuillTheme.SYNTAX_PROPERTY);
+			y = py + usageHeaderH + 2;
+		}
+
+		suggestionRowRects.clear();
+		for (int i = 0; i < visibleCount; i++) {
+			int idx = suggestionScroll + i;
+			BrigadierAssistService.SuggestionEntry entry = list.get(idx);
+			IdeLayout.Rect rowRect = new IdeLayout.Rect(px + 2, y, popupW - 4, SUGGESTION_ROW_HEIGHT);
+			suggestionRowRects.add(rowRect);
+
+			boolean isSelected = idx == selectedSuggestionIndex;
+			boolean isHovered = rowRect.contains(mouseX, mouseY);
+			if (isSelected) {
+				QuillDraw.fill(graphics, rowRect.x(), rowRect.y(), rowRect.width(), rowRect.height(), QuillTheme.BG_POPUP_SELECTED);
+			} else if (isHovered) {
+				QuillDraw.fill(graphics, rowRect.x(), rowRect.y(), rowRect.width(), rowRect.height(), QuillTheme.BG_HOVER);
+			}
+			if (isHovered) {
+				QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
+			}
+
+			int ty = rowRect.y() + (SUGGESTION_ROW_HEIGHT - font.lineHeight) / 2;
+			String label = entry.text();
+			String tip = (entry.tooltip() != null && !entry.tooltip().isBlank()) ? "  " + entry.tooltip() : "";
+			int labelW = font.width(label);
+			int maxLabelW = rowRect.width() - 8;
+			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, label, maxLabelW),
+					rowRect.x() + 4, ty, isSelected ? QuillTheme.TEXT_BRIGHT : QuillTheme.SYNTAX_COMMAND);
+			if (!tip.isEmpty() && labelW + 14 < maxLabelW) {
+				QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, tip, maxLabelW - labelW),
+						rowRect.x() + 4 + labelW, ty, QuillTheme.TEXT_MUTED);
+			}
+			y += SUGGESTION_ROW_HEIGHT;
+		}
+	}
+
+	private void renderHoverOrUsageTooltip(
+			GuiGraphicsExtractor graphics,
+			Font font,
+			IdeLayout.Rect editorRect,
+			OpenTabState tab,
+			int lineHeight,
+			int mouseX,
+			int mouseY
+	) {
+		if (!lastCodeViewport.contains(mouseX, mouseY)) {
+			return;
+		}
+		TextDocumentBuffer buffer = tab.buffer();
+		int hoverLine = tab.scrollLine() + Math.max(0, (mouseY - (lastCodeViewport.y() + 4)) / lineHeight);
+		if (hoverLine < 0 || hoverLine >= buffer.lineCount()) {
+			return;
+		}
+		String lineText = buffer.line(hoverLine);
+		if (lineText.isBlank()) {
+			return;
+		}
+		TextDocumentBuffer.Position hoverPos = hitTest(font, tab, mouseX, mouseY);
+		String hoverKey = tab.relativePath() + "|" + hoverLine + "|" + hoverPos.column() + "|" + lineText;
+		if (!hoverKey.equals(lastHoverKey)) {
+			lastHoverKey = hoverKey;
+			lastHoverLine = hoverLine;
+			cachedHoverSignatures = queryLiveHoverSignatures(lineText, hoverPos.column());
+		}
+
+		if (cachedHoverSignatures.isEmpty() || lastHoverLine != hoverLine) {
+			return;
+		}
+		int maxLines = Math.min(2, cachedHoverSignatures.size());
+		int maxW = 0;
+		for (int i = 0; i < maxLines; i++) {
+			maxW = Math.max(maxW, font.width(cachedHoverSignatures.get(i)));
+		}
+		int boxW = Math.min(Math.max(80, editorRect.width() - 20), maxW + 12);
+		int boxH = maxLines * 11 + 6;
+		int rowY = editorRect.y() + 4 + (hoverLine - tab.scrollLine()) * lineHeight;
+		int bx = Math.max(editorRect.x() + 6, Math.min(mouseX + 8, editorRect.right() - boxW - 6));
+		int by = rowY - boxH - 3;
+		if (by < editorRect.y() + 2) {
+			by = Math.min(editorRect.bottom() - boxH - 4, rowY + lineHeight + 3);
+		}
+		QuillDraw.fill(graphics, bx, by, boxW, boxH, QuillTheme.BG_POPUP);
+		QuillDraw.outline(graphics, bx, by, boxW, boxH, QuillTheme.BORDER_SUBTLE);
+		for (int i = 0; i < maxLines; i++) {
+			String text = QuillDraw.clipToWidth(font, cachedHoverSignatures.get(i), boxW - 8);
+			QuillDraw.text(graphics, font, text, bx + 4, by + 3 + i * 11, QuillTheme.SYNTAX_PROPERTY);
+		}
 	}
 
 	public boolean mouseClicked(MouseButtonEvent event, Font font, OpenTabState tab) {
 		if (event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
 			return false;
 		}
+		if (isAutocompleteOpen() && lastPopupRect.contains(event.x(), event.y())) {
+			for (int i = 0; i < suggestionRowRects.size(); i++) {
+				if (suggestionRowRects.get(i).contains(event.x(), event.y())) {
+					selectedSuggestionIndex = suggestionScroll + i;
+					acceptSelectedSuggestion(font, tab);
+					return true;
+				}
+			}
+			return true;
+		}
+		dismissAutocomplete();
 		if (!lastCodeViewport.contains(event.x(), event.y())) {
 			return false;
 		}
@@ -171,6 +405,14 @@ public final class CodeEditorWidget {
 	}
 
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY, Font font, OpenTabState tab) {
+		if (isAutocompleteOpen() && lastPopupRect.contains(mouseX, mouseY)) {
+			int total = currentAssist.suggestions().size();
+			int maxScroll = Math.max(0, total - Math.min(MAX_VISIBLE_SUGGESTIONS, total));
+			if (scrollY != 0) {
+				suggestionScroll = Math.max(0, Math.min(maxScroll, suggestionScroll - (int) Math.signum(scrollY) * 2));
+			}
+			return true;
+		}
 		if (!lastEditorRect.contains(mouseX, mouseY)) {
 			return false;
 		}
@@ -191,8 +433,38 @@ public final class CodeEditorWidget {
 		boolean shift = event.hasShiftDown();
 		boolean ctrl = event.hasControlDownWithQuirk();
 
+		// Ctrl+Space explicitly invokes Brigadier autocomplete
+		if (ctrl && !event.hasAltDown()
+				&& (event.shortcutKey() == InputConstants.KEYCODE_SPACE || event.key() == InputConstants.KEY_SPACE)) {
+			triggerAutocomplete(tab, true);
+			return true;
+		}
+
+		// Autocomplete popup navigation takes precedence when open
+		if (isAutocompleteOpen()) {
+			if (event.isEscape()) {
+				dismissAutocomplete();
+				return true;
+			}
+			if (event.isUp()) {
+				int size = currentAssist.suggestions().size();
+				selectedSuggestionIndex = (selectedSuggestionIndex - 1 + size) % size;
+				return true;
+			}
+			if (event.isDown()) {
+				int size = currentAssist.suggestions().size();
+				selectedSuggestionIndex = (selectedSuggestionIndex + 1) % size;
+				return true;
+			}
+			if (event.isCycleFocus() || event.isConfirmation()) {
+				acceptSelectedSuggestion(font, tab);
+				return true;
+			}
+		}
+
 		if (event.isSelectAll()) {
 			buffer.selectAll();
+			dismissAutocomplete();
 			return true;
 		}
 		if (event.isCopy()) {
@@ -207,6 +479,7 @@ public final class CodeEditorWidget {
 			if (!selected.isEmpty()) {
 				Minecraft.getInstance().keyboardHandler.setClipboard(selected);
 				buffer.deleteSelection();
+				dismissAutocomplete();
 				ensureCaretVisible(font, tab);
 			}
 			return true;
@@ -215,6 +488,7 @@ public final class CodeEditorWidget {
 			String clip = Minecraft.getInstance().keyboardHandler.getClipboard();
 			if (clip != null && !clip.isEmpty()) {
 				buffer.insertText(clip);
+				dismissAutocomplete();
 				ensureCaretVisible(font, tab);
 			}
 			return true;
@@ -222,12 +496,14 @@ public final class CodeEditorWidget {
 		if (ctrl && !event.hasAltDown() && event.shortcutKey() == InputConstants.KEYCODE_Z) {
 			boolean changed = shift ? buffer.redo() : buffer.undo();
 			if (changed) {
+				dismissAutocomplete();
 				ensureCaretVisible(font, tab);
 			}
 			return true;
 		}
 		if (ctrl && !shift && !event.hasAltDown() && event.shortcutKey() == InputConstants.KEYCODE_Y) {
 			if (buffer.redo()) {
+				dismissAutocomplete();
 				ensureCaretVisible(font, tab);
 			}
 			return true;
@@ -235,63 +511,79 @@ public final class CodeEditorWidget {
 
 		if (event.isConfirmation()) {
 			buffer.insertNewline();
+			dismissAutocomplete();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.isCycleFocus()) {
 			buffer.insertTab();
+			dismissAutocomplete();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.shortcutKey() == InputConstants.KEYCODE_BACKSPACE || event.key() == InputConstants.KEY_BACKSPACE) {
 			buffer.backspace();
 			ensureCaretVisible(font, tab);
+			if (autocompleteOpen) {
+				triggerAutocomplete(tab, false);
+			}
 			return true;
 		}
 		if (event.shortcutKey() == InputConstants.KEYCODE_DELETE || event.key() == InputConstants.KEY_DELETE) {
 			buffer.deleteForward();
 			ensureCaretVisible(font, tab);
+			if (autocompleteOpen) {
+				triggerAutocomplete(tab, false);
+			}
 			return true;
 		}
 
 		if (event.isLeft()) {
 			buffer.moveLeft(shift, ctrl);
+			dismissAutocomplete();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.isRight()) {
 			buffer.moveRight(shift, ctrl);
+			dismissAutocomplete();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.isUp()) {
 			buffer.moveVertical(-1, shift);
+			dismissAutocomplete();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.isDown()) {
 			buffer.moveVertical(1, shift);
+			dismissAutocomplete();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.shortcutKey() == InputConstants.KEYCODE_HOME || event.key() == InputConstants.KEY_HOME) {
 			buffer.moveHome(shift, ctrl);
+			dismissAutocomplete();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.shortcutKey() == InputConstants.KEYCODE_END || event.key() == InputConstants.KEY_END) {
 			buffer.moveEnd(shift, ctrl);
+			dismissAutocomplete();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		int pageLines = Math.max(1, lastCodeViewport.height() / Math.max(1, font.lineHeight + LINE_PADDING_Y));
 		if (event.shortcutKey() == InputConstants.KEYCODE_PAGEUP || event.key() == InputConstants.KEY_PAGEUP) {
 			buffer.moveVertical(-pageLines, shift);
+			dismissAutocomplete();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.shortcutKey() == InputConstants.KEYCODE_PAGEDOWN || event.key() == InputConstants.KEY_PAGEDOWN) {
 			buffer.moveVertical(pageLines, shift);
+			dismissAutocomplete();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
@@ -303,9 +595,98 @@ public final class CodeEditorWidget {
 		if (!event.isAllowedChatCharacter()) {
 			return false;
 		}
-		tab.buffer().insertText(event.codepointAsString());
+		String typed = event.codepointAsString();
+		tab.buffer().insertText(typed);
 		ensureCaretVisible(font, tab);
+
+		if (SyntaxHighlighter.languageForPath(tab.relativePath()) == SyntaxHighlighter.Language.MCFUNCTION) {
+			String currentLine = tab.buffer().line(tab.buffer().cursor().line());
+			if (!currentLine.isBlank() && !currentLine.stripLeading().startsWith("#")) {
+				triggerAutocomplete(tab, false);
+			} else {
+				dismissAutocomplete();
+			}
+		}
 		return true;
+	}
+
+	private void acceptSelectedSuggestion(Font font, OpenTabState tab) {
+		List<BrigadierAssistService.SuggestionEntry> list = currentAssist.suggestions();
+		if (list.isEmpty()) {
+			dismissAutocomplete();
+			return;
+		}
+		int idx = Math.max(0, Math.min(list.size() - 1, selectedSuggestionIndex));
+		BrigadierAssistService.SuggestionEntry entry = list.get(idx);
+		TextDocumentBuffer buffer = tab.buffer();
+		buffer.replaceRange(buffer.cursor().line(), entry.replaceStartCol(), entry.replaceEndCol(), entry.text());
+		dismissAutocomplete();
+		ensureCaretVisible(font, tab);
+	}
+
+	private void triggerAutocomplete(OpenTabState tab, boolean explicit) {
+		if (SyntaxHighlighter.languageForPath(tab.relativePath()) != SyntaxHighlighter.Language.MCFUNCTION) {
+			dismissAutocomplete();
+			return;
+		}
+		Minecraft mc = Minecraft.getInstance();
+		if (mc == null) {
+			return;
+		}
+		ClientPacketListener connection = mc.getConnection();
+		if (connection == null) {
+			return;
+		}
+		CommandDispatcher<ClientSuggestionProvider> dispatcher = connection.getCommands();
+		ClientSuggestionProvider provider = connection.getSuggestionsProvider();
+		if (dispatcher == null || provider == null) {
+			return;
+		}
+
+		TextDocumentBuffer.Position cursor = tab.buffer().cursor();
+		String lineText = tab.buffer().line(cursor.line());
+		long gen = ++assistGeneration;
+
+		BrigadierAssistService.query(dispatcher, provider, lineText, cursor.column()).whenComplete((result, error) -> {
+			Runnable apply = () -> {
+				if (gen != assistGeneration) {
+					return;
+				}
+				if (error != null || result == null || result.suggestions().isEmpty()) {
+					currentAssist = result == null ? BrigadierAssistService.AssistResult.EMPTY : result;
+					if (!explicit || currentAssist.suggestions().isEmpty()) {
+						dismissAutocomplete();
+					}
+					return;
+				}
+				currentAssist = result;
+				selectedSuggestionIndex = 0;
+				suggestionScroll = 0;
+				autocompleteOpen = true;
+			};
+			if (mc.isSameThread()) {
+				apply.run();
+			} else {
+				mc.execute(apply);
+			}
+		});
+	}
+
+	private static List<String> queryLiveHoverSignatures(String lineText, int hoverColumn) {
+		Minecraft mc = Minecraft.getInstance();
+		if (mc == null) {
+			return List.of();
+		}
+		ClientPacketListener connection = mc.getConnection();
+		if (connection == null || connection.getCommands() == null || connection.getSuggestionsProvider() == null) {
+			return List.of();
+		}
+		return BrigadierAssistService.queryHoverSignatures(
+				connection.getCommands(),
+				connection.getSuggestionsProvider(),
+				lineText,
+				hoverColumn
+		);
 	}
 
 	public void ensureCaretVisible(Font font, OpenTabState tab) {

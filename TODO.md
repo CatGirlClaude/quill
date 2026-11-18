@@ -43,8 +43,8 @@ Single source of truth for project progress, planned tasks, optional feature pro
 
 ## Phase 4: IDE Productivity & Language Features (In Progress)
 
-- [ ] **`.mcfunction` & `.json` Syntax Highlighting**: Tokenize command names, `execute` subcommands, selectors (`@a`, `@e[...]`), coordinates (`~ ~ ~`, `^ ^ ^`), SNBT payloads, identifiers, comments (`#`), macro lines (`$`, `$(var)`), and JSON keys/values with VS Code Dark+ colors.
-- [ ] **Brigadier Command Autocomplete & Hover Signatures**: Query the client's live `CommandDispatcher` tree to show real-time argument suggestions (`Tab`/`Enter` to accept, `Ctrl+Space` to invoke) and syntax usage tooltips at the cursor/hover position.
+- [x] **`.mcfunction` & `.json` Syntax Highlighting**: Tokenize command names, `execute` subcommands, selectors (`@a`, `@e[...]`), coordinates (`~ ~ ~`, `^ ^ ^`), SNBT payloads, identifiers, comments (`#`), macro lines (`$`, `$(var)`), and JSON keys/values with VS Code Dark+ colors.
+- [x] **Brigadier Command Autocomplete & Hover Signatures**: Query the client's live `CommandDispatcher` tree to show real-time argument suggestions (`Tab`/`Enter` to accept, `Ctrl+Space` to invoke) and syntax usage tooltips at the cursor/hover position.
 - [ ] **Command Palette (`Ctrl+Shift+P` / `F1`)**: Quick fuzzy-search modal for running IDE actions (New Datapack, Apply Preset, Reload Datapacks, Run Current Function, View switches, etc.).
 - [ ] **Quick Open File Switcher (`Ctrl+P`)**: Fuzzy filename search across all datapacks in the current world (with seamless `>` toggle to Command Palette).
 - [ ] **Integrated Reload & Function Output Log Panel**: Bottom panel (VS Code `PROBLEMS` / `OUTPUT` tabs, toggleable via `Ctrl+J`) displaying scrollable datapack parse exceptions with clickable line jump, live reload/command output log, and a "Run Function Now (`/function ...`)" button.

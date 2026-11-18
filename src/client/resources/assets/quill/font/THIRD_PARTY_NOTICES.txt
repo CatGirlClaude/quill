@@ -1,0 +1,16 @@
+Third-Party Font Notices
+========================
+
+1. Roboto Regular (roboto_regular.ttf)
+   Copyright 2015 Google Inc. All Rights Reserved.
+   Licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
+2. DejaVu Sans & DejaVu Sans Mono (dejavu_sans.ttf, dejavu_sans_mono.ttf)
+   Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved.
+   DejaVu changes are in the public domain.
+   Licensed under the Bitstream Vera Fonts permissive license:
+   Permission is hereby granted, free of charge, to any person obtaining a copy of the fonts
+   accompanying this license and associated documentation files, to reproduce and distribute
+   the Font Software, including without limitation the rights to use, copy, merge, publish,
+   distribute, and/or sell copies of the Font Software, provided that the above copyright
+   and trademark notices and this permission notice are included.

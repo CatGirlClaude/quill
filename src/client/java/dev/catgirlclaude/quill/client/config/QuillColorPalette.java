@@ -1,0 +1,233 @@
+package dev.catgirlclaude.quill.client.config;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Immutable ARGB color palette modeling authentic Visual Studio Code color themes.
+ */
+public record QuillColorPalette(
+		String id,
+		String displayName,
+		boolean lightTheme,
+		int bgBackdrop,
+		int bgTitleBar,
+		int bgActivityBar,
+		int bgSidebar,
+		int bgEditor,
+		int bgGutter,
+		int bgTabBar,
+		int bgTabActive,
+		int bgTabInactive,
+		int bgBreadcrumb,
+		int bgStatusBar,
+		int bgStatusDirty,
+		int bgStatusError,
+		int bgStatusRemoteBadge,
+		int bgDiagnostics,
+		int bgModal,
+		int bgInput,
+		int bgButton,
+		int bgButtonHover,
+		int bgButtonDanger,
+		int bgButtonSecondary,
+		int bgHover,
+		int accentBlue,
+		int accentFocus,
+		int borderSubtle,
+		int textPrimary,
+		int textBright,
+		int textMuted,
+		int textDirty,
+		int textError,
+		int textWarning,
+		int textSuccess,
+		int textFolder,
+		int textFunction,
+		int textJson,
+		int syntaxPlain,
+		int syntaxComment,
+		int syntaxCommand,
+		int syntaxKeyword,
+		int syntaxBoolean,
+		int syntaxSelector,
+		int syntaxCoordinate,
+		int syntaxNumber,
+		int syntaxString,
+		int syntaxProperty,
+		int syntaxIdentifier,
+		int syntaxMacro,
+		int syntaxBracket,
+		int bgPopup,
+		int bgPopupSelected,
+		int bgPanel,
+		int bgPanelHeader,
+		int matchHighlight,
+		int selectionBg,
+		int rowSelected,
+		int lineHighlight,
+		int cursorColor,
+		int bracketMatchBg,
+		int warningBannerBg,
+		int warningBannerBorder
+) {
+	public static final QuillColorPalette DARK_PLUS = new QuillColorPalette(
+			"dark_plus", "Dark+ (Default Dark)", false,
+			0x55000000,
+			0xFF323233, 0xFF333333, 0xFF252526, 0xFF1E1E1E, 0xFF1E1E1E,
+			0xFF252526, 0xFF1E1E1E, 0xFF2D2D2D, 0xFF1E1E1E,
+			0xFF007ACC, 0xFFCC6633, 0xFFC72E0F, 0xFF16825D,
+			0xFF2B1B1B, 0xFF252526, 0xFF3C3C3C,
+			0xFF0E639C, 0xFF1177BB, 0xFFA1260D, 0xFF3A3D41, 0xFF2A2D2E,
+			0xFF007ACC, 0xFF007FD4, 0xFF3C3C3C,
+			0xFFCCCCCC, 0xFFFFFFFF, 0xFF858585, 0xFFE2C08D,
+			0xFFF48771, 0xFFCCA700, 0xFF89D185,
+			0xFFDCAD6E, 0xFF75BEFF, 0xFFCBCB41,
+			0xFFD4D4D4, 0xFF6A9955, 0xFFDCDCAA, 0xFFC586C0, 0xFF569CD6,
+			0xFF4EC9B0, 0xFF4FC1FF, 0xFFB5CEA8, 0xFFCE9178, 0xFF9CDCFE,
+			0xFF4EC9B0, 0xFFD16D9E, 0xFFFFD700,
+			0xFF252526, 0xFF04395E, 0xFF1E1E1E, 0xFF252526,
+			0x66EA5C00, 0xAA264F78, 0xFF094771, 0xFF282828, 0xFFAEAFAD,
+			0x554D4D4D, 0xFF4D3800, 0xFFCCA700
+	);
+
+	public static final QuillColorPalette DARK_MODERN = new QuillColorPalette(
+			"dark_modern", "Dark Modern", false,
+			0x55000000,
+			0xFF181818, 0xFF181818, 0xFF181818, 0xFF1F1F1F, 0xFF1F1F1F,
+			0xFF181818, 0xFF1F1F1F, 0xFF181818, 0xFF1F1F1F,
+			0xFF181818, 0xFF9C4D1E, 0xFFB5200D, 0xFF0078D4,
+			0xFF2A1818, 0xFF1F1F1F, 0xFF313131,
+			0xFF0078D4, 0xFF026EC1, 0xFFA1260D, 0xFF313131, 0xFF2A2D2E,
+			0xFF0078D4, 0xFF0078D4, 0xFF2B2B2B,
+			0xFFCCCCCC, 0xFFFFFFFF, 0xFF868686, 0xFFE2C08D,
+			0xFFF85149, 0xFFCCA700, 0xFF73C991,
+			0xFFDCA96E, 0xFF75BEFF, 0xFFCBCB41,
+			0xFFD4D4D4, 0xFF6A9955, 0xFFDCDCAA, 0xFFC586C0, 0xFF569CD6,
+			0xFF4EC9B0, 0xFF4FC1FF, 0xFFB5CEA8, 0xFFCE9178, 0xFF9CDCFE,
+			0xFF4EC9B0, 0xFFD16D9E, 0xFFFFD700,
+			0xFF202020, 0xFF04395E, 0xFF181818, 0xFF181818,
+			0x66EA5C00, 0xB0264F78, 0xFF04395E, 0xFF262626, 0xFFD4D4D4,
+			0x55585858, 0xFF4D3800, 0xFFE0B422
+	);
+
+	public static final QuillColorPalette MONOKAI = new QuillColorPalette(
+			"monokai", "Monokai", false,
+			0x55000000,
+			0xFF1E1F1C, 0xFF272822, 0xFF1E1F1C, 0xFF272822, 0xFF272822,
+			0xFF1E1F1C, 0xFF272822, 0xFF34352F, 0xFF272822,
+			0xFF414339, 0xFFB86B1A, 0xFFC72E0F, 0xFF75715E,
+			0xFF332024, 0xFF1E1F1C, 0xFF414339,
+			0xFF75715E, 0xFF8C8873, 0xFFA1260D, 0xFF3E3D32, 0xFF3E3D32,
+			0xFFA6E22E, 0xFFE6DB74, 0xFF414339,
+			0xFFF8F8F2, 0xFFFFFFFF, 0xFF90908A, 0xFFE6DB74,
+			0xFFF92672, 0xFFFD971F, 0xFFA6E22E,
+			0xFFE6DB74, 0xFF66D9EF, 0xFFA6E22E,
+			0xFFF8F8F2, 0xFF88846F, 0xFFA6E22E, 0xFFF92672, 0xFFAE81FF,
+			0xFF66D9EF, 0xFFFD971F, 0xFFAE81FF, 0xFFE6DB74, 0xFF66D9EF,
+			0xFFA6E22E, 0xFFF92672, 0xFFFD971F,
+			0xFF1E1F1C, 0xFF49483E, 0xFF272822, 0xFF1E1F1C,
+			0x66FD971F, 0xB049483E, 0xFF49483E, 0xFF3E3D32, 0xFFF8F8F0,
+			0x5575715E, 0xFF4D3400, 0xFFFD971F
+	);
+
+	public static final QuillColorPalette ONE_DARK_PRO = new QuillColorPalette(
+			"one_dark_pro", "One Dark Pro", false,
+			0x55000000,
+			0xFF21252B, 0xFF282C34, 0xFF21252B, 0xFF282C34, 0xFF282C34,
+			0xFF21252B, 0xFF282C34, 0xFF21252B, 0xFF282C34,
+			0xFF21252B, 0xFFD19A66, 0xFFE06C75, 0xFF528BFF,
+			0xFF302226, 0xFF21252B, 0xFF1D1F23,
+			0xFF404754, 0xFF4D78CC, 0xFFBE5046, 0xFF323842, 0xFF2C313A,
+			0xFF528BFF, 0xFF528BFF, 0xFF3A3F4B,
+			0xFFABB2BF, 0xFFFFFFFF, 0xFF6B717D, 0xFFE5C07B,
+			0xFFE06C75, 0xFFE5C07B, 0xFF98C379,
+			0xFFE5C07B, 0xFF61AFEF, 0xFFD19A66,
+			0xFFABB2BF, 0xFF5C6370, 0xFF61AFEF, 0xFFC678DD, 0xFFD19A66,
+			0xFF56B6C2, 0xFF61AFEF, 0xFFD19A66, 0xFF98C379, 0xFFE06C75,
+			0xFFE5C07B, 0xFFC678DD, 0xFFE5C07B,
+			0xFF21252B, 0xFF323842, 0xFF282C34, 0xFF21252B,
+			0x66D19A66, 0xB03E4451, 0xFF323842, 0xFF2C313C, 0xFF528BFF,
+			0x55528BFF, 0xFF4A3810, 0xFFE5C07B
+	);
+
+	public static final QuillColorPalette DRACULA = new QuillColorPalette(
+			"dracula", "Dracula", false,
+			0x55000000,
+			0xFF21222C, 0xFF343746, 0xFF21222C, 0xFF282A36, 0xFF282A36,
+			0xFF191A21, 0xFF282A36, 0xFF21222C, 0xFF282A36,
+			0xFF191A21, 0xFFFFB86C, 0xFFFF5555, 0xFFBD93F9,
+			0xFF331F29, 0xFF21222C, 0xFF282A36,
+			0xFF6272A4, 0xFF7B8EC8, 0xFFFF5555, 0xFF44475A, 0xFF343746,
+			0xFFBD93F9, 0xFFFF79C6, 0xFF44475A,
+			0xFFF8F8F2, 0xFFFFFFFF, 0xFF6272A4, 0xFFFFB86C,
+			0xFFFF5555, 0xFFF1FA8C, 0xFF50FA7B,
+			0xFFF1FA8C, 0xFF8BE9FD, 0xFFFFB86C,
+			0xFFF8F8F2, 0xFF6272A4, 0xFF50FA7B, 0xFFFF79C6, 0xFFBD93F9,
+			0xFF8BE9FD, 0xFFFFB86C, 0xFFBD93F9, 0xFFF1FA8C, 0xFF8BE9FD,
+			0xFF50FA7B, 0xFFFF79C6, 0xFFFFB86C,
+			0xFF21222C, 0xFF44475A, 0xFF282A36, 0xFF21222C,
+			0x66FFB86C, 0xB844475A, 0xFF44475A, 0xFF343746, 0xFFF8F8F2,
+			0x556272A4, 0xFF4D3418, 0xFFFFB86C
+	);
+
+	public static final QuillColorPalette GITHUB_DARK = new QuillColorPalette(
+			"github_dark", "GitHub Dark", false,
+			0x55000000,
+			0xFF010409, 0xFF0D1117, 0xFF010409, 0xFF0D1117, 0xFF0D1117,
+			0xFF010409, 0xFF0D1117, 0xFF010409, 0xFF0D1117,
+			0xFF010409, 0xFF9E6A03, 0xFFDA3633, 0xFF1F6FEB,
+			0xFF2D1619, 0xFF161B22, 0xFF0D1117,
+			0xFF238636, 0xFF2EA043, 0xFFDA3633, 0xFF21262D, 0xFF161B22,
+			0xFF58A6FF, 0xFF1F6FEB, 0xFF30363D,
+			0xFFC9D1D9, 0xFFF0F6FC, 0xFF8B949E, 0xFFD29922,
+			0xFFF85149, 0xFFD29922, 0xFF3FB950,
+			0xFFD29922, 0xFF79C0FF, 0xFFA5D6FF,
+			0xFFC9D1D9, 0xFF8B949E, 0xFFD2A8FF, 0xFFFF7B72, 0xFF79C0FF,
+			0xFF7EE787, 0xFF79C0FF, 0xFF79C0FF, 0xFFA5D6FF, 0xFF79C0FF,
+			0xFF7EE787, 0xFFFFA657, 0xFF79C0FF,
+			0xFF161B22, 0xFF1F3B61, 0xFF0D1117, 0xFF010409,
+			0x66D29922, 0xB0264F78, 0xFF1F3B61, 0xFF161B22, 0xFF58A6FF,
+			0x5530363D, 0xFF3D2E00, 0xFFD29922
+	);
+
+	public static final QuillColorPalette LIGHT_PLUS = new QuillColorPalette(
+			"light_plus", "Light+ (Default Light)", true,
+			0x44000000,
+			0xFFDDDDDD, 0xFF2C2C2C, 0xFFF3F3F3, 0xFFFFFFFF, 0xFFFFFFFF,
+			0xFFF3F3F3, 0xFFFFFFFF, 0xFFECECEC, 0xFFFFFFFF,
+			0xFF007ACC, 0xFFCC6633, 0xFFC72E0F, 0xFF16825D,
+			0xFFFDECEC, 0xFFF3F3F3, 0xFFFFFFFF,
+			0xFF007ACC, 0xFF0062A3, 0xFFC72E0F, 0xFFE0E0E0, 0xFFE8E8E8,
+			0xFF007ACC, 0xFF007ACC, 0xFFD4D4D4,
+			0xFF333333, 0xFF000000, 0xFF6E6E6E, 0xFFB06000,
+			0xFFCD3131, 0xFFBF8803, 0xFF107C10,
+			0xFF9E6B00, 0xFF0451A5, 0xFF795E26,
+			0xFF1E1E1E, 0xFF008000, 0xFF795E26, 0xFFAF00DB, 0xFF0000FF,
+			0xFF267F99, 0xFF0070C1, 0xFF098658, 0xFFA31515, 0xFF0451A5,
+			0xFF267F99, 0xFFAF00DB, 0xFF0431FA,
+			0xFFF3F3F3, 0xFF0060C0, 0xFFF8F8F8, 0xFFF3F3F3,
+			0x66F5A623, 0xBBADD6FF, 0xFFD6EBFF, 0xFFF0F0F0, 0xFF000000,
+			0x5599C2FF, 0xFFFFF4CE, 0xFFBF8803
+	);
+
+	private static final Map<String, QuillColorPalette> ALL_BY_ID = new LinkedHashMap<>();
+
+	static {
+		for (QuillColorPalette p : List.of(DARK_PLUS, DARK_MODERN, MONOKAI, ONE_DARK_PRO, DRACULA, GITHUB_DARK, LIGHT_PLUS)) {
+			ALL_BY_ID.put(p.id(), p);
+		}
+	}
+
+	public static List<QuillColorPalette> all() {
+		return List.copyOf(ALL_BY_ID.values());
+	}
+
+	public static QuillColorPalette byId(String id) {
+		if (id == null) {
+			return DARK_PLUS;
+		}
+		return ALL_BY_ID.getOrDefault(id, DARK_PLUS);
+	}
+}

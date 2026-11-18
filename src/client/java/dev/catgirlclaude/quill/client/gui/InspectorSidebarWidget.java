@@ -22,16 +22,22 @@ public final class InspectorSidebarWidget {
 	private static final int ROW_HEIGHT = 15;
 
 	private enum SectionKind {
-		SCOREBOARDS("SCOREBOARD OBJECTIVES", QuillTheme.SYNTAX_IDENTIFIER),
-		STORAGE("STORAGE NAMESPACES", QuillTheme.SYNTAX_PROPERTY),
-		MACROS("MACRO PARAMETERS", QuillTheme.SYNTAX_MACRO);
+		SCOREBOARDS("SCOREBOARD OBJECTIVES"),
+		STORAGE("STORAGE NAMESPACES"),
+		MACROS("MACRO PARAMETERS");
 
 		final String title;
-		final int symbolColor;
 
-		SectionKind(String title, int symbolColor) {
+		SectionKind(String title) {
 			this.title = title;
-			this.symbolColor = symbolColor;
+		}
+
+		int symbolColor() {
+			return switch (this) {
+				case SCOREBOARDS -> QuillTheme.SYNTAX_IDENTIFIER;
+				case STORAGE -> QuillTheme.SYNTAX_PROPERTY;
+				case MACROS -> QuillTheme.SYNTAX_MACRO;
+			};
 		}
 	}
 
@@ -105,7 +111,7 @@ public final class InspectorSidebarWidget {
 		// Header
 		QuillDraw.text(graphics, font, "INSPECTOR", area.x() + 6, area.y() + 5, QuillTheme.TEXT_MUTED);
 		String refLabel = "Refresh";
-		int refW = font.width(refLabel) + 8;
+		int refW = QuillDraw.textWidth(font, refLabel) + 8;
 		refreshBtnRect = new IdeLayout.Rect(area.right() - refW - 5, area.y() + 2, refW, 14);
 		boolean hoverRef = refreshBtnRect.contains(mouseX, mouseY);
 		if (hoverRef) {
@@ -218,7 +224,8 @@ public final class InspectorSidebarWidget {
 					boolean expanded = expandedSymbols.contains(key);
 					IdeLayout.Rect symRect = new IdeLayout.Rect(listRect.x(), y, listRect.width(), ROW_HEIGHT);
 					if (y + ROW_HEIGHT >= listRect.y() && y <= listRect.bottom()) {
-						visibleRows.add(new SymbolRow(key, entry, kind.symbolColor, symRect));
+						int symColor = kind.symbolColor();
+						visibleRows.add(new SymbolRow(key, entry, symColor, symRect));
 						boolean hover = listRect.contains(mouseX, mouseY) && symRect.contains(mouseX, mouseY);
 						if (hover) {
 							QuillDraw.fill(graphics, symRect.x(), symRect.y(), symRect.width(), symRect.height(), QuillTheme.BG_HOVER);
@@ -227,11 +234,11 @@ public final class InspectorSidebarWidget {
 						int textY = y + (ROW_HEIGHT - font.lineHeight) / 2;
 						String chevron = expanded ? "v " : "> ";
 						String countBadge = " (" + entry.occurrences().size() + ")";
-						int badgeW = font.width(countBadge);
+						int badgeW = QuillDraw.textWidth(font, countBadge);
 						int maxNameW = Math.max(24, symRect.width() - 14 - badgeW);
 						String clippedName = QuillDraw.clipToWidth(font, chevron + entry.name(), maxNameW);
-						QuillDraw.text(graphics, font, clippedName, symRect.x() + 8, textY, kind.symbolColor);
-						QuillDraw.text(graphics, font, countBadge, symRect.x() + 8 + font.width(clippedName), textY, QuillTheme.TEXT_MUTED);
+						QuillDraw.text(graphics, font, clippedName, symRect.x() + 8, textY, symColor);
+						QuillDraw.text(graphics, font, countBadge, symRect.x() + 8 + QuillDraw.textWidth(font, clippedName), textY, QuillTheme.TEXT_MUTED);
 					}
 					y += ROW_HEIGHT;
 

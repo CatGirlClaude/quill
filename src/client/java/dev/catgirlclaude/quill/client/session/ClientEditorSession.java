@@ -8,6 +8,7 @@ import dev.catgirlclaude.quill.api.PresetDescriptor;
 import dev.catgirlclaude.quill.api.ReloadDiagnostic;
 import dev.catgirlclaude.quill.api.ReloadReport;
 import dev.catgirlclaude.quill.api.RevisionConflictException;
+import dev.catgirlclaude.quill.client.config.QuillClientConfig;
 import dev.catgirlclaude.quill.preset.DatapackScaffolder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -73,6 +74,8 @@ public final class ClientEditorSession {
 	private final List<OpenTabState> openTabs = new ArrayList<>();
 	private final Set<String> expandedPaths = new HashSet<>();
 	private final List<OutputLogEntry> outputLog = new ArrayList<>();
+	private final Set<String> autosaveInFlight = new HashSet<>();
+	private final Set<String> autosaveQueued = new HashSet<>();
 	private Consumer<String> commandDispatcher = ClientEditorSession::sendDefaultMinecraftCommand;
 
 	private FileTreeNode rootTree = new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of());
@@ -91,6 +94,7 @@ public final class ClientEditorSession {
 	private SidebarView sidebarView = SidebarView.EXPLORER;
 	private long lastCommandDispatchMs = 0L;
 	private long workspaceRevision = 0L;
+	private boolean reloadPendingOnClose = false;
 
 	public ClientEditorSession(EditorBackend backend) {
 		this(backend, task -> Minecraft.getInstance().execute(task), "Local");
@@ -508,6 +512,164 @@ public final class ClientEditorSession {
 		saveTabInternal(tab, tab.sha256(), reloadAfterSave, null);
 	}
 
+	/**
+	 * Saves the active tab honoring {@link QuillClientConfig#reloadTriggerMode()}.
+	 */
+	public void saveActiveTabAccordingToConfig() {
+		saveActiveTab(QuillClientConfig.current().shouldReloadOnSave());
+	}
+
+	public boolean isReloadPendingOnClose() {
+		return reloadPendingOnClose;
+	}
+
+	/**
+	 * Called after any user edit to an open tab buffer. Triggers coalesced instant autosave when
+	 * {@link QuillClientConfig.AutosaveMode#ON_KEYPRESS} is active.
+	 */
+	public void notifyTabBufferEdited(OpenTabState tab) {
+		if (tab == null) {
+			return;
+		}
+		if (QuillClientConfig.current().autosaveMode() != QuillClientConfig.AutosaveMode.ON_KEYPRESS) {
+			return;
+		}
+		triggerCoalescedAutosave(tab, QuillClientConfig.current().shouldReloadOnSave());
+	}
+
+	private void triggerCoalescedAutosave(OpenTabState tab, boolean reloadAfterSave) {
+		String path = tab.relativePath();
+		if (autosaveInFlight.contains(path)) {
+			autosaveQueued.add(path);
+			return;
+		}
+		if (!tab.isDirty()) {
+			return;
+		}
+		autosaveInFlight.add(path);
+		String content = tab.buffer().getText();
+		backend.writeFile(path, content, tab.sha256(), reloadAfterSave).whenComplete((result, error) -> runOnClient(() -> {
+			autosaveInFlight.remove(path);
+			if (error != null) {
+				autosaveQueued.remove(path);
+				Throwable unwrapped = unwrapThrowable(error);
+				if (unwrapped instanceof RevisionConflictException rce) {
+					this.pendingConflict = new PendingConflict(
+							rce.relativePath(),
+							rce.expectedSha256(),
+							rce.actualSha256(),
+							reloadAfterSave
+					);
+					setError(rce.getMessage());
+				} else {
+					setError("Autosave failed: " + unwrapMessage(error));
+				}
+				return;
+			}
+			tab.applySavedDocument(result.document());
+			bumpWorkspaceRevision();
+			if (result.reloadReport() != null) {
+				applyReloadReport(result.reloadReport(), true);
+			} else {
+				reloadPendingOnClose = true;
+				setStatus("Autosaved " + tab.fileName(), false);
+			}
+			boolean hadQueued = autosaveQueued.remove(path);
+			if ((hadQueued || tab.isDirty())
+					&& QuillClientConfig.current().autosaveMode() == QuillClientConfig.AutosaveMode.ON_KEYPRESS) {
+				triggerCoalescedAutosave(tab, QuillClientConfig.current().shouldReloadOnSave());
+			} else if (autosaveInFlight.isEmpty() && pendingReloadAfterAutosave) {
+				pendingReloadAfterAutosave = false;
+				reloadDatapacks();
+			}
+		}));
+	}
+
+	private boolean pendingReloadAfterAutosave = false;
+
+	/**
+	 * Saves all currently dirty tabs without per-file reloads, invoking {@code onAllComplete}
+	 * once every write has completed (and at least one succeeded or none were skipped).
+	 */
+	public void saveAllDirtyTabs(boolean reloadAfterLastSave, Runnable onAllComplete) {
+		List<OpenTabState> dirtyTabs = new ArrayList<>();
+		for (OpenTabState tab : openTabs) {
+			if (tab.isDirty()) {
+				if (autosaveInFlight.contains(tab.relativePath())) {
+					autosaveQueued.add(tab.relativePath());
+				} else {
+					dirtyTabs.add(tab);
+				}
+			}
+		}
+		if (dirtyTabs.isEmpty()) {
+			if (!autosaveInFlight.isEmpty() && reloadAfterLastSave) {
+				pendingReloadAfterAutosave = true;
+			} else if (onAllComplete != null) {
+				onAllComplete.run();
+			}
+			return;
+		}
+		int[] remaining = {dirtyTabs.size()};
+		boolean[] anySaved = {false};
+		for (OpenTabState tab : dirtyTabs) {
+			String path = tab.relativePath();
+			autosaveInFlight.add(path);
+			String content = tab.buffer().getText();
+			backend.writeFile(path, content, tab.sha256(), false).whenComplete((result, error) -> runOnClient(() -> {
+				autosaveInFlight.remove(path);
+				if (error != null) {
+					setError("Autosave failed (" + tab.fileName() + "): " + unwrapMessage(error));
+				} else {
+					tab.applySavedDocument(result.document());
+					bumpWorkspaceRevision();
+					reloadPendingOnClose = true;
+					anySaved[0] = true;
+					appendOutput(LogLevel.SUCCESS, "Autosaved " + tab.relativePath());
+				}
+				remaining[0]--;
+				if (remaining[0] == 0) {
+					if (reloadAfterLastSave && anySaved[0]) {
+						reloadDatapacks();
+					}
+					if (onAllComplete != null) {
+						onAllComplete.run();
+					}
+				}
+			}));
+		}
+	}
+
+	/**
+	 * Invoked when {@code QuillIdeScreen} closes; applies configured autosave-on-close
+	 * and reload-on-close triggers.
+	 */
+	public void onIdeClosed() {
+		QuillClientConfig cfg = QuillClientConfig.current();
+		boolean shouldAutosave = cfg.autosaveMode() == QuillClientConfig.AutosaveMode.ON_GUI_CLOSE
+				|| cfg.autosaveMode() == QuillClientConfig.AutosaveMode.ON_KEYPRESS;
+		boolean reloadOnClose = cfg.reloadTriggerMode() == QuillClientConfig.ReloadTriggerMode.ON_GUI_CLOSE;
+
+		if (shouldAutosave && hasAnyDirtyTab()) {
+			boolean needReload = reloadOnClose || cfg.shouldReloadOnSave();
+			saveAllDirtyTabs(false, () -> {
+				if ((needReload || reloadPendingOnClose) && autosaveInFlight.isEmpty()) {
+					reloadDatapacks();
+				} else if (needReload || reloadPendingOnClose) {
+					pendingReloadAfterAutosave = true;
+				}
+			});
+			return;
+		}
+		if (reloadOnClose && (reloadPendingOnClose || !autosaveInFlight.isEmpty())) {
+			if (autosaveInFlight.isEmpty()) {
+				reloadDatapacks();
+			} else {
+				pendingReloadAfterAutosave = true;
+			}
+		}
+	}
+
 	public void forceSaveActiveTab(boolean reloadAfterSave) {
 		OpenTabState tab = activeTab();
 		if (tab == null) {
@@ -641,6 +803,7 @@ public final class ClientEditorSession {
 					afterCleanSaveAndReload.run();
 				}
 			} else {
+				reloadPendingOnClose = true;
 				String msg = "Saved " + tab.relativePath();
 				setStatus("Saved " + tab.fileName(), false);
 				appendOutput(LogLevel.SUCCESS, msg);
@@ -662,6 +825,7 @@ public final class ClientEditorSession {
 
 	public void reloadDatapacks() {
 		busy = true;
+		reloadPendingOnClose = false;
 		setStatus("Reloading datapacks...", false);
 		backend.reloadDatapacks().whenComplete((report, error) -> runOnClient(() -> {
 			busy = false;
@@ -811,6 +975,7 @@ public final class ClientEditorSession {
 
 	private void applyReloadReport(ReloadReport report, boolean afterSave) {
 		this.lastReloadReport = report;
+		this.reloadPendingOnClose = false;
 		if (report.hasErrors()) {
 			this.bottomPanelTab = BottomPanelTab.PROBLEMS;
 			this.diagnosticsExpanded = true;

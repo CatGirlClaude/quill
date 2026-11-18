@@ -1,80 +1,166 @@
 package dev.catgirlclaude.quill.client.gui;
 
+import dev.catgirlclaude.quill.client.config.QuillColorPalette;
+
 /**
- * VS Code Dark+ inspired ARGB color palette and spacing constants for Quill's UI.
+ * Dynamic Visual Studio Code ARGB color palette and spacing constants for Quill's UI.
+ * Color fields update live via {@link #applyPalette(QuillColorPalette)} when the user
+ * selects a theme in Settings.
  */
 public final class QuillTheme {
-	public static final int BG_BACKDROP = 0x55000000;
-	public static final int BG_TITLE_BAR = 0xFF323233;
-	public static final int BG_ACTIVITY_BAR = 0xFF333333;
-	public static final int BG_SIDEBAR = 0xFF252526;
-	public static final int BG_EDITOR = 0xFF1E1E1E;
-	public static final int BG_GUTTER = 0xFF1E1E1E;
-	public static final int BG_TAB_BAR = 0xFF252526;
-	public static final int BG_TAB_ACTIVE = 0xFF1E1E1E;
-	public static final int BG_TAB_INACTIVE = 0xFF2D2D2D;
+	private static volatile QuillColorPalette activePalette = QuillColorPalette.DARK_PLUS;
 
-	public static final int BG_STATUS_BAR = 0xFF007ACC;
-	public static final int BG_STATUS_DIRTY = 0xFFCC6633;
-	public static final int BG_STATUS_ERROR = 0xFFC72E0F;
+	public static int BG_BACKDROP = QuillColorPalette.DARK_PLUS.bgBackdrop();
+	public static int BG_TITLE_BAR = QuillColorPalette.DARK_PLUS.bgTitleBar();
+	public static int BG_ACTIVITY_BAR = QuillColorPalette.DARK_PLUS.bgActivityBar();
+	public static int BG_SIDEBAR = QuillColorPalette.DARK_PLUS.bgSidebar();
+	public static int BG_EDITOR = QuillColorPalette.DARK_PLUS.bgEditor();
+	public static int BG_GUTTER = QuillColorPalette.DARK_PLUS.bgGutter();
+	public static int BG_TAB_BAR = QuillColorPalette.DARK_PLUS.bgTabBar();
+	public static int BG_TAB_ACTIVE = QuillColorPalette.DARK_PLUS.bgTabActive();
+	public static int BG_TAB_INACTIVE = QuillColorPalette.DARK_PLUS.bgTabInactive();
+	public static int BG_BREADCRUMB = QuillColorPalette.DARK_PLUS.bgBreadcrumb();
 
-	public static final int BG_DIAGNOSTICS = 0xFF2B1B1B;
-	public static final int BG_MODAL = 0xFF252526;
-	public static final int BG_INPUT = 0xFF3C3C3C;
-	public static final int BG_BUTTON = 0xFF0E639C;
-	public static final int BG_BUTTON_HOVER = 0xFF1177BB;
-	public static final int BG_BUTTON_DANGER = 0xFFA1260D;
-	public static final int BG_BUTTON_SECONDARY = 0xFF3A3D41;
-	public static final int BG_HOVER = 0xFF2A2D2E;
+	public static int BG_STATUS_BAR = QuillColorPalette.DARK_PLUS.bgStatusBar();
+	public static int BG_STATUS_DIRTY = QuillColorPalette.DARK_PLUS.bgStatusDirty();
+	public static int BG_STATUS_ERROR = QuillColorPalette.DARK_PLUS.bgStatusError();
+	public static int BG_STATUS_REMOTE_BADGE = QuillColorPalette.DARK_PLUS.bgStatusRemoteBadge();
 
-	public static final int ACCENT_BLUE = 0xFF007ACC;
-	public static final int ACCENT_FOCUS = 0xFF007FD4;
-	public static final int BORDER_SUBTLE = 0xFF3C3C3C;
+	public static int BG_DIAGNOSTICS = QuillColorPalette.DARK_PLUS.bgDiagnostics();
+	public static int BG_MODAL = QuillColorPalette.DARK_PLUS.bgModal();
+	public static int BG_INPUT = QuillColorPalette.DARK_PLUS.bgInput();
+	public static int BG_BUTTON = QuillColorPalette.DARK_PLUS.bgButton();
+	public static int BG_BUTTON_HOVER = QuillColorPalette.DARK_PLUS.bgButtonHover();
+	public static int BG_BUTTON_DANGER = QuillColorPalette.DARK_PLUS.bgButtonDanger();
+	public static int BG_BUTTON_SECONDARY = QuillColorPalette.DARK_PLUS.bgButtonSecondary();
+	public static int BG_HOVER = QuillColorPalette.DARK_PLUS.bgHover();
 
-	public static final int TEXT_PRIMARY = 0xFFCCCCCC;
-	public static final int TEXT_BRIGHT = 0xFFFFFFFF;
-	public static final int TEXT_MUTED = 0xFF858585;
-	public static final int TEXT_DIRTY = 0xFFE2C08D;
-	public static final int TEXT_ERROR = 0xFFF48771;
-	public static final int TEXT_WARNING = 0xFFCCA700;
-	public static final int TEXT_SUCCESS = 0xFF89D185;
-	public static final int TEXT_FOLDER = 0xFFDCAD6E;
-	public static final int TEXT_FUNCTION = 0xFF75BEFF;
-	public static final int TEXT_JSON = 0xFFCBCB41;
+	public static int ACCENT_BLUE = QuillColorPalette.DARK_PLUS.accentBlue();
+	public static int ACCENT_FOCUS = QuillColorPalette.DARK_PLUS.accentFocus();
+	public static int BORDER_SUBTLE = QuillColorPalette.DARK_PLUS.borderSubtle();
 
-	// VS Code Dark+ syntax highlighting palette
-	public static final int SYNTAX_PLAIN = 0xFFD4D4D4;
-	public static final int SYNTAX_COMMENT = 0xFF6A9955;
-	public static final int SYNTAX_COMMAND = 0xFFDCDCAA;
-	public static final int SYNTAX_KEYWORD = 0xFFC586C0;
-	public static final int SYNTAX_BOOLEAN = 0xFF569CD6;
-	public static final int SYNTAX_SELECTOR = 0xFF4EC9B0;
-	public static final int SYNTAX_COORDINATE = 0xFF4FC1FF;
-	public static final int SYNTAX_NUMBER = 0xFFB5CEA8;
-	public static final int SYNTAX_STRING = 0xFFCE9178;
-	public static final int SYNTAX_PROPERTY = 0xFF9CDCFE;
-	public static final int SYNTAX_IDENTIFIER = 0xFF4EC9B0;
-	public static final int SYNTAX_MACRO = 0xFFD16D9E;
-	public static final int SYNTAX_BRACKET = 0xFFFFD700;
+	public static int TEXT_PRIMARY = QuillColorPalette.DARK_PLUS.textPrimary();
+	public static int TEXT_BRIGHT = QuillColorPalette.DARK_PLUS.textBright();
+	public static int TEXT_MUTED = QuillColorPalette.DARK_PLUS.textMuted();
+	public static int TEXT_DIRTY = QuillColorPalette.DARK_PLUS.textDirty();
+	public static int TEXT_ERROR = QuillColorPalette.DARK_PLUS.textError();
+	public static int TEXT_WARNING = QuillColorPalette.DARK_PLUS.textWarning();
+	public static int TEXT_SUCCESS = QuillColorPalette.DARK_PLUS.textSuccess();
+	public static int TEXT_FOLDER = QuillColorPalette.DARK_PLUS.textFolder();
+	public static int TEXT_FUNCTION = QuillColorPalette.DARK_PLUS.textFunction();
+	public static int TEXT_JSON = QuillColorPalette.DARK_PLUS.textJson();
 
-	public static final int BG_POPUP = 0xFF252526;
-	public static final int BG_POPUP_SELECTED = 0xFF04395E;
-	public static final int BG_PANEL = 0xFF1E1E1E;
-	public static final int BG_PANEL_HEADER = 0xFF252526;
-	public static final int MATCH_HIGHLIGHT = 0x66EA5C00;
+	public static int SYNTAX_PLAIN = QuillColorPalette.DARK_PLUS.syntaxPlain();
+	public static int SYNTAX_COMMENT = QuillColorPalette.DARK_PLUS.syntaxComment();
+	public static int SYNTAX_COMMAND = QuillColorPalette.DARK_PLUS.syntaxCommand();
+	public static int SYNTAX_KEYWORD = QuillColorPalette.DARK_PLUS.syntaxKeyword();
+	public static int SYNTAX_BOOLEAN = QuillColorPalette.DARK_PLUS.syntaxBoolean();
+	public static int SYNTAX_SELECTOR = QuillColorPalette.DARK_PLUS.syntaxSelector();
+	public static int SYNTAX_COORDINATE = QuillColorPalette.DARK_PLUS.syntaxCoordinate();
+	public static int SYNTAX_NUMBER = QuillColorPalette.DARK_PLUS.syntaxNumber();
+	public static int SYNTAX_STRING = QuillColorPalette.DARK_PLUS.syntaxString();
+	public static int SYNTAX_PROPERTY = QuillColorPalette.DARK_PLUS.syntaxProperty();
+	public static int SYNTAX_IDENTIFIER = QuillColorPalette.DARK_PLUS.syntaxIdentifier();
+	public static int SYNTAX_MACRO = QuillColorPalette.DARK_PLUS.syntaxMacro();
+	public static int SYNTAX_BRACKET = QuillColorPalette.DARK_PLUS.syntaxBracket();
 
-	public static final int SELECTION_BG = 0x88264F78;
-	public static final int ROW_SELECTED = 0xFF094771;
-	public static final int LINE_HIGHLIGHT = 0xFF282828;
-	public static final int CURSOR_COLOR = 0xFFAEAFAD;
+	public static int BG_POPUP = QuillColorPalette.DARK_PLUS.bgPopup();
+	public static int BG_POPUP_SELECTED = QuillColorPalette.DARK_PLUS.bgPopupSelected();
+	public static int BG_PANEL = QuillColorPalette.DARK_PLUS.bgPanel();
+	public static int BG_PANEL_HEADER = QuillColorPalette.DARK_PLUS.bgPanelHeader();
+	public static int MATCH_HIGHLIGHT = QuillColorPalette.DARK_PLUS.matchHighlight();
 
-	public static final int TITLE_BAR_HEIGHT = 20;
-	public static final int ACTIVITY_BAR_WIDTH = 34;
-	public static final int SIDEBAR_DEFAULT_WIDTH = 196;
-	public static final int TAB_BAR_HEIGHT = 22;
+	public static int SELECTION_BG = QuillColorPalette.DARK_PLUS.selectionBg();
+	public static int ROW_SELECTED = QuillColorPalette.DARK_PLUS.rowSelected();
+	public static int LINE_HIGHLIGHT = QuillColorPalette.DARK_PLUS.lineHighlight();
+	public static int CURSOR_COLOR = QuillColorPalette.DARK_PLUS.cursorColor();
+	public static int BRACKET_MATCH_BG = QuillColorPalette.DARK_PLUS.bracketMatchBg();
+	public static int WARNING_BANNER_BG = QuillColorPalette.DARK_PLUS.warningBannerBg();
+	public static int WARNING_BANNER_BORDER = QuillColorPalette.DARK_PLUS.warningBannerBorder();
+
+	public static final int TITLE_BAR_HEIGHT = 22;
+	public static final int ACTIVITY_BAR_WIDTH = 36;
+	public static final int SIDEBAR_DEFAULT_WIDTH = 204;
+	public static final int TAB_BAR_HEIGHT = 24;
+	public static final int BREADCRUMB_HEIGHT = 16;
 	public static final int STATUS_BAR_HEIGHT = 18;
-	public static final int DIAGNOSTICS_HEIGHT = 86;
+	public static final int DIAGNOSTICS_HEIGHT = 96;
 
 	private QuillTheme() {
+	}
+
+	public static QuillColorPalette palette() {
+		return activePalette;
+	}
+
+	public static boolean isLightTheme() {
+		return activePalette.lightTheme();
+	}
+
+	public static void applyPalette(QuillColorPalette p) {
+		if (p == null) {
+			p = QuillColorPalette.DARK_PLUS;
+		}
+		activePalette = p;
+		BG_BACKDROP = p.bgBackdrop();
+		BG_TITLE_BAR = p.bgTitleBar();
+		BG_ACTIVITY_BAR = p.bgActivityBar();
+		BG_SIDEBAR = p.bgSidebar();
+		BG_EDITOR = p.bgEditor();
+		BG_GUTTER = p.bgGutter();
+		BG_TAB_BAR = p.bgTabBar();
+		BG_TAB_ACTIVE = p.bgTabActive();
+		BG_TAB_INACTIVE = p.bgTabInactive();
+		BG_BREADCRUMB = p.bgBreadcrumb();
+		BG_STATUS_BAR = p.bgStatusBar();
+		BG_STATUS_DIRTY = p.bgStatusDirty();
+		BG_STATUS_ERROR = p.bgStatusError();
+		BG_STATUS_REMOTE_BADGE = p.bgStatusRemoteBadge();
+		BG_DIAGNOSTICS = p.bgDiagnostics();
+		BG_MODAL = p.bgModal();
+		BG_INPUT = p.bgInput();
+		BG_BUTTON = p.bgButton();
+		BG_BUTTON_HOVER = p.bgButtonHover();
+		BG_BUTTON_DANGER = p.bgButtonDanger();
+		BG_BUTTON_SECONDARY = p.bgButtonSecondary();
+		BG_HOVER = p.bgHover();
+		ACCENT_BLUE = p.accentBlue();
+		ACCENT_FOCUS = p.accentFocus();
+		BORDER_SUBTLE = p.borderSubtle();
+		TEXT_PRIMARY = p.textPrimary();
+		TEXT_BRIGHT = p.textBright();
+		TEXT_MUTED = p.textMuted();
+		TEXT_DIRTY = p.textDirty();
+		TEXT_ERROR = p.textError();
+		TEXT_WARNING = p.textWarning();
+		TEXT_SUCCESS = p.textSuccess();
+		TEXT_FOLDER = p.textFolder();
+		TEXT_FUNCTION = p.textFunction();
+		TEXT_JSON = p.textJson();
+		SYNTAX_PLAIN = p.syntaxPlain();
+		SYNTAX_COMMENT = p.syntaxComment();
+		SYNTAX_COMMAND = p.syntaxCommand();
+		SYNTAX_KEYWORD = p.syntaxKeyword();
+		SYNTAX_BOOLEAN = p.syntaxBoolean();
+		SYNTAX_SELECTOR = p.syntaxSelector();
+		SYNTAX_COORDINATE = p.syntaxCoordinate();
+		SYNTAX_NUMBER = p.syntaxNumber();
+		SYNTAX_STRING = p.syntaxString();
+		SYNTAX_PROPERTY = p.syntaxProperty();
+		SYNTAX_IDENTIFIER = p.syntaxIdentifier();
+		SYNTAX_MACRO = p.syntaxMacro();
+		SYNTAX_BRACKET = p.syntaxBracket();
+		BG_POPUP = p.bgPopup();
+		BG_POPUP_SELECTED = p.bgPopupSelected();
+		BG_PANEL = p.bgPanel();
+		BG_PANEL_HEADER = p.bgPanelHeader();
+		MATCH_HIGHLIGHT = p.matchHighlight();
+		SELECTION_BG = p.selectionBg();
+		ROW_SELECTED = p.rowSelected();
+		LINE_HIGHLIGHT = p.lineHighlight();
+		CURSOR_COLOR = p.cursorColor();
+		BRACKET_MATCH_BG = p.bracketMatchBg();
+		WARNING_BANNER_BG = p.warningBannerBg();
+		WARNING_BANNER_BORDER = p.warningBannerBorder();
 	}
 }

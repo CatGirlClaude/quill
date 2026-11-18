@@ -78,7 +78,7 @@ public final class BottomPanelWidget {
 
 		// PROBLEMS tab
 		String probLabel = "PROBLEMS (" + problemCount + ")";
-		int probW = font.width(probLabel) + 12;
+		int probW = QuillDraw.textWidth(font, probLabel) + 12;
 		problemsTabRect = new IdeLayout.Rect(header.x() + 4, header.y() + 1, probW, HEADER_HEIGHT - 2);
 		boolean probActive = activeTab == ClientEditorSession.BottomPanelTab.PROBLEMS;
 		boolean hoverProb = problemsTabRect.contains(mouseX, mouseY);
@@ -96,7 +96,7 @@ public final class BottomPanelWidget {
 
 		// OUTPUT tab
 		String outLabel = "OUTPUT (" + outputCount + ")";
-		int outW = font.width(outLabel) + 12;
+		int outW = QuillDraw.textWidth(font, outLabel) + 12;
 		outputTabRect = new IdeLayout.Rect(problemsTabRect.right() + 4, header.y() + 1, outW, HEADER_HEIGHT - 2);
 		boolean outActive = activeTab == ClientEditorSession.BottomPanelTab.OUTPUT;
 		boolean hoverOut = outputTabRect.contains(mouseX, mouseY);
@@ -117,13 +117,13 @@ public final class BottomPanelWidget {
 			QuillDraw.fill(graphics, closeBtnRect.x(), closeBtnRect.y(), closeBtnRect.width(), closeBtnRect.height(), QuillTheme.BG_HOVER);
 		}
 		QuillDraw.text(graphics, font, "x",
-				closeBtnRect.x() + (closeBtnRect.width() - font.width("x")) / 2, textY,
+				closeBtnRect.x() + (closeBtnRect.width() - QuillDraw.textWidth(font, "x")) / 2, textY,
 				hoverClose ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
 		rightCursor = closeBtnRect.x() - 4;
 
 		if (outActive) {
 			String clearLabel = "Clear";
-			int cw = font.width(clearLabel) + 10;
+			int cw = QuillDraw.textWidth(font, clearLabel) + 10;
 			clearBtnRect = new IdeLayout.Rect(rightCursor - cw, header.y() + 2, cw, HEADER_HEIGHT - 4);
 			boolean hoverClear = clearBtnRect.contains(mouseX, mouseY);
 			QuillDraw.fill(graphics, clearBtnRect.x(), clearBtnRect.y(), clearBtnRect.width(), clearBtnRect.height(),
@@ -138,10 +138,10 @@ public final class BottomPanelWidget {
 		int maxRunSpace = rightCursor - (outputTabRect.right() + 8);
 		if (fnId != null && maxRunSpace > 46) {
 			String fullLabel = "> Run /function " + fnId;
-			String runLabel = font.width(fullLabel) + 10 <= maxRunSpace
+			String runLabel = QuillDraw.textWidth(font, fullLabel) + 10 <= maxRunSpace
 					? fullLabel
 					: QuillDraw.clipToWidth(font, "> Run " + fnId, maxRunSpace - 10);
-			int rw = font.width(runLabel) + 10;
+			int rw = QuillDraw.textWidth(font, runLabel) + 10;
 			runFnBtnRect = new IdeLayout.Rect(rightCursor - rw, header.y() + 2, rw, HEADER_HEIGHT - 4);
 			boolean hoverRun = runFnBtnRect.contains(mouseX, mouseY);
 			QuillDraw.fill(graphics, runFnBtnRect.x(), runFnBtnRect.y(), runFnBtnRect.width(), runFnBtnRect.height(),
@@ -232,7 +232,7 @@ public final class BottomPanelWidget {
 		for (int i = outputScroll; i < end; i++) {
 			ClientEditorSession.OutputLogEntry entry = entries.get(i);
 			String prefix = "[" + entry.timestamp() + "] ";
-			int prefixW = font.width(prefix);
+			int prefixW = QuillDraw.textWidth(font, prefix);
 			int textY = y + (OUTPUT_ROW_HEIGHT - font.lineHeight) / 2;
 			QuillDraw.text(graphics, font, prefix, bodyRect.x() + 6, textY, QuillTheme.TEXT_MUTED);
 			int msgColor = switch (entry.level()) {

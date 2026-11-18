@@ -102,14 +102,14 @@ public final class EditorTabBarWidget {
 			QuillDraw.text(graphics, font, title, tabRect.x() + 8, textY, titleColor);
 
 			if (tab.isDirty()) {
-				int dotX = tabRect.x() + 8 + font.width(title) + 4;
+				int dotX = tabRect.x() + 8 + QuillDraw.textWidth(font, title) + 4;
 				QuillDraw.text(graphics, font, "*", dotX, textY, QuillTheme.TEXT_DIRTY);
 			}
 
 			if (closeHovered) {
 				QuillDraw.fill(graphics, closeRect.x(), closeRect.y(), closeRect.width(), closeRect.height(), QuillTheme.BG_BUTTON_SECONDARY);
 			}
-			int xTextX = closeRect.x() + (closeRect.width() - font.width("x")) / 2;
+			int xTextX = closeRect.x() + (closeRect.width() - QuillDraw.textWidth(font, "x")) / 2;
 			QuillDraw.text(graphics, font, "x", xTextX, textY,
 					closeHovered ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
 
@@ -176,6 +176,6 @@ public final class EditorTabBarWidget {
 
 	private static int computeTabWidth(Font font, OpenTabState tab) {
 		int dirtyW = tab.isDirty() ? 10 : 0;
-		return Math.max(64, font.width(tab.fileName()) + dirtyW + 30);
+		return Math.max(64, QuillDraw.textWidth(font, tab.fileName()) + dirtyW + 30);
 	}
 }

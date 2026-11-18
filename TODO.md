@@ -83,7 +83,7 @@ odtwarzającym błąd przed poprawką.
 - [ ] Pole tworzenia nowego pliku: różowe pole jest za duże i nie widać w nim znaku `_`.
 - [ ] Rebinding: ESC przypisuje pusty klawisz zamiast anulować.
 - [ ] Ctrl+Z rozdzielone na dwa stosy: w edytorze cofa zmiany w kodzie, poza edytorem cofa operacje na plikach (usunięcia, zmiany nazw itd.).
-- [ ] Wcięcie przed pierwszą literą w edytorze jest zbyt duże (zajmuje szerokość całej litery).
+- [x] Wcięcie przed pierwszą literą w edytorze jest zbyt duże (zajmuje szerokość całej litery).
 - [ ] Kolor czerwony dla niezapisanych zmian w sidebarze wygląda jak błąd. Zmienić na neutralny znacznik `*`.
 - [ ] Search: tekst jest ucinany przez "..." (np. `Triggers /reload on every keystroke`). Rozszerzyć pole albo zawijać tekst.
 

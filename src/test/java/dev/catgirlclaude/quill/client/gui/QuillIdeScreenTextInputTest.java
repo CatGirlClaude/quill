@@ -761,6 +761,13 @@ class QuillIdeScreenTextInputTest {
 		assertTrue(screen.keyReleased(f3Event), "Code editor view must consume F3 release.");
 	}
 
+	@Test
+	void codeEditorLeftIndentIsCompact() {
+		assertTrue(CodeEditorWidget.codeLeftPadding() <= 3,
+				"Left padding before column 0 must not look like a full-character indent (<= 3px), was: "
+						+ CodeEditorWidget.codeLeftPadding());
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

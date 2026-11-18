@@ -30,8 +30,12 @@ import java.util.function.Consumer;
  */
 public final class CodeEditorWidget {
 	private static final int LINE_PADDING_Y = 2;
-	private static final int CODE_LEFT_PADDING = 6;
+	private static final int CODE_LEFT_PADDING = 2;
 	private static final int SCROLLBAR_SIZE = 5;
+
+	static int codeLeftPadding() {
+		return CODE_LEFT_PADDING;
+	}
 	private static final int MAX_VISIBLE_SUGGESTIONS = 8;
 	private static final int SUGGESTION_ROW_HEIGHT = 13;
 	private static final long MULTI_CLICK_WINDOW_MS = 400L;

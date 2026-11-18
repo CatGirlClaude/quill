@@ -23,6 +23,9 @@ import java.util.Locale;
  * All changes apply live and persist immediately to {@code config/quill-client.json}.
  */
 public final class SettingsPanelWidget {
+	static final String INSTANT_RELOAD_WARNING_BODY =
+			"Triggers /reload on every keystroke and may cause lag or partial-edit errors.";
+
 	private record ClickTarget(IdeLayout.Rect rect, Runnable action) {
 	}
 
@@ -125,17 +128,21 @@ public final class SettingsPanelWidget {
 		QuillDraw.beginClip(graphics, area);
 
 		// Header row
-		QuillDraw.textShadow(graphics, font, "Settings", x, y, QuillTheme.TEXT_BRIGHT);
-		String sub = "Global client configuration (config/quill-client.json)";
-		QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, sub, Math.max(40, contentW - 160)),
-				x, y + 12, QuillTheme.TEXT_MUTED);
-
 		String resetAllLabel = "Reset All Defaults";
 		int resetAllW = QuillDraw.textWidth(font, resetAllLabel) + 12;
 		String doneLabel = "Close";
 		int doneW = QuillDraw.textWidth(font, doneLabel) + 12;
 		IdeLayout.Rect doneRect = new IdeLayout.Rect(x + contentW - doneW, y + 2, doneW, 18);
 		IdeLayout.Rect resetAllRect = new IdeLayout.Rect(doneRect.x() - resetAllW - 6, y + 2, resetAllW, 18);
+
+		QuillDraw.textShadow(graphics, font, "Settings", x, y, QuillTheme.TEXT_BRIGHT);
+		String sub = "Global client configuration (config/quill-client.json)";
+		int subMaxW = Math.max(80, resetAllRect.x() - x - 8);
+		List<String> subLines = QuillDraw.wrapLines(font, sub, subMaxW);
+		int lineStep = Math.max(10, font.lineHeight + 2);
+		for (int i = 0; i < subLines.size(); i++) {
+			QuillDraw.text(graphics, font, subLines.get(i), x, y + 12 + i * lineStep, QuillTheme.TEXT_MUTED);
+		}
 
 		hoveredClickable |= renderButton(graphics, font, resetAllRect, resetAllLabel, false, false, mouseX, mouseY, area, () -> {
 			cfg.resetAllToDefaults();
@@ -152,7 +159,7 @@ public final class SettingsPanelWidget {
 			}
 		});
 
-		y += 28;
+		y += Math.max(28, 12 + subLines.size() * lineStep + 6);
 		QuillDraw.hLine(graphics, x, contentW, y, QuillTheme.BORDER_SUBTLE);
 		y += 10;
 
@@ -330,19 +337,29 @@ public final class SettingsPanelWidget {
 
 		// Warning banner when ON_KEYPRESS + ON_SAVE
 		if (cfg.hasInstantAutosaveReloadWarning()) {
-			int warnH = 48;
+			int warnTextW = Math.max(60, contentW - 18);
+			List<String> warnTitleLines = QuillDraw.wrapLines(font, "[!] Warning: Instant Autosave + Reload On Save", warnTextW);
+			List<String> warnBodyLines = QuillDraw.wrapLines(font, INSTANT_RELOAD_WARNING_BODY, warnTextW);
+			int textTop = y + 5;
+			int bodyTop = textTop + warnTitleLines.size() * lineStep + 1;
+			int btnTop = bodyTop + warnBodyLines.size() * lineStep + 3;
+			int warnH = (btnTop - y) + 15 + 5;
+
 			QuillDraw.fill(graphics, x, y, contentW, warnH, QuillTheme.WARNING_BANNER_BG);
 			QuillDraw.outline(graphics, x, y, contentW, warnH, QuillTheme.WARNING_BANNER_BORDER);
 			QuillDraw.fill(graphics, x, y, 3, warnH, QuillTheme.TEXT_WARNING);
-			QuillDraw.textShadow(graphics, font, "[!] Warning: Instant Autosave + Reload On Save",
-					x + 9, y + 5, QuillTheme.TEXT_WARNING);
-			QuillDraw.text(graphics, font,
-					QuillDraw.clipToWidth(font, "Triggers /reload on every keystroke and may cause lag or partial-edit errors.", contentW - 16),
-					x + 9, y + 17, QuillTheme.TEXT_BRIGHT);
+			for (int i = 0; i < warnTitleLines.size(); i++) {
+				QuillDraw.textShadow(graphics, font, warnTitleLines.get(i),
+						x + 9, textTop + i * lineStep, QuillTheme.TEXT_WARNING);
+			}
+			for (int i = 0; i < warnBodyLines.size(); i++) {
+				QuillDraw.text(graphics, font, warnBodyLines.get(i),
+						x + 9, bodyTop + i * lineStep, QuillTheme.TEXT_BRIGHT);
+			}
 
 			String fixLabel = "Switch Reload to On GUI Close";
 			int fixW = QuillDraw.textWidth(font, fixLabel) + 12;
-			IdeLayout.Rect fixRect = new IdeLayout.Rect(x + 9, y + 29, Math.min(contentW - 18, fixW), 15);
+			IdeLayout.Rect fixRect = new IdeLayout.Rect(x + 9, btnTop, Math.min(contentW - 18, fixW), 15);
 			hoveredClickable |= renderButton(graphics, font, fixRect, fixLabel, true, false, mouseX, mouseY, area, () -> {
 				cfg.setReloadTriggerMode(QuillClientConfig.ReloadTriggerMode.ON_GUI_CLOSE);
 				QuillClientConfig.saveCurrent();
@@ -354,10 +371,11 @@ public final class SettingsPanelWidget {
 		QuillDraw.hLine(graphics, x, contentW, y, QuillTheme.BORDER_SUBTLE);
 		y += 10;
 		y = renderSectionTitle(graphics, font, x, y, "New Datapack Template Defaults");
-		QuillDraw.text(graphics, font,
-				QuillDraw.clipToWidth(font, "Used when 'Use template' is checked in New Datapack.", contentW),
-				x, y, QuillTheme.TEXT_MUTED);
-		y += 13;
+		for (String line : QuillDraw.wrapLines(font, "Used when 'Use template' is checked in New Datapack.", contentW)) {
+			QuillDraw.text(graphics, font, line, x, y, QuillTheme.TEXT_MUTED);
+			y += lineStep;
+		}
+		y += 2;
 
 		String[] tplLabels = {"Default Namespace", "Default Load Function", "Default Tick Function"};
 		String[] tplPlaceholders = {"demo", "load", "tick"};
@@ -377,9 +395,10 @@ public final class SettingsPanelWidget {
 			}
 			y += 20;
 			if (templateErrors[i] != null) {
-				QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, templateErrors[i], contentW),
-						inputX, y - 1, QuillTheme.TEXT_ERROR);
-				y += 11;
+				for (String errLine : QuillDraw.wrapLines(font, templateErrors[i], contentW)) {
+					QuillDraw.text(graphics, font, errLine, x, y - 1, QuillTheme.TEXT_ERROR);
+					y += lineStep;
+				}
 			}
 		}
 		y += 6;
@@ -391,11 +410,17 @@ public final class SettingsPanelWidget {
 		String winInfo = cfg.hasCustomWindowBounds()
 				? "Custom window: (" + cfg.windowX() + ", " + cfg.windowY() + ") " + cfg.windowWidth() + "x" + cfg.windowHeight()
 				: "Default docked window (drag Title Bar to move, drag edges/corners to resize)";
-		QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, winInfo, contentW), x, y, QuillTheme.TEXT_MUTED);
-		y += 13;
+		for (String line : QuillDraw.wrapLines(font, winInfo, contentW)) {
+			QuillDraw.text(graphics, font, line, x, y, QuillTheme.TEXT_MUTED);
+			y += lineStep;
+		}
+		y += 1;
 		String splitInfo = "Sidebar: " + cfg.sidebarWidth() + "px  |  Bottom Panel: " + cfg.bottomPanelHeight() + "px";
-		QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, splitInfo, contentW), x, y, QuillTheme.TEXT_MUTED);
-		y += 15;
+		for (String line : QuillDraw.wrapLines(font, splitInfo, contentW)) {
+			QuillDraw.text(graphics, font, line, x, y, QuillTheme.TEXT_MUTED);
+			y += lineStep;
+		}
+		y += 3;
 
 		String resetWinLabel = "Reset Window Position & Size";
 		IdeLayout.Rect resetWinRect = new IdeLayout.Rect(x, y, QuillDraw.textWidth(font, resetWinLabel) + 14, 18);
@@ -412,10 +437,11 @@ public final class SettingsPanelWidget {
 		QuillDraw.hLine(graphics, x, contentW, y, QuillTheme.BORDER_SUBTLE);
 		y += 10;
 		y = renderSectionTitle(graphics, font, x, y, "Keyboard Shortcuts");
-		QuillDraw.text(graphics, font,
-				QuillDraw.clipToWidth(font, "Click a binding to record a new key combination (Esc cancels).", contentW),
-				x, y, QuillTheme.TEXT_MUTED);
-		y += 14;
+		for (String line : QuillDraw.wrapLines(font, "Click a binding to record a new key combination (Esc cancels).", contentW)) {
+			QuillDraw.text(graphics, font, line, x, y, QuillTheme.TEXT_MUTED);
+			y += lineStep;
+		}
+		y += 2;
 
 		for (QuillClientConfig.ShortcutAction action : QuillClientConfig.ShortcutAction.values()) {
 			boolean recording = recordingAction == action;

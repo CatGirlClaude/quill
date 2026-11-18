@@ -218,10 +218,13 @@ public final class SearchSidebarWidget {
 		} else {
 			summaryText = lastOutcome.totalMatches() + " result(s) in " + lastOutcome.files().size() + " file(s)";
 		}
-		QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, summaryText, area.width() - 12),
-				area.x() + pad, summaryY, summaryColor);
+		List<String> summaryLines = QuillDraw.wrapLines(font, summaryText, Math.max(24, area.width() - pad * 2));
+		int lineStep = Math.max(10, font.lineHeight + 2);
+		for (int i = 0; i < summaryLines.size(); i++) {
+			QuillDraw.text(graphics, font, summaryLines.get(i), area.x() + pad, summaryY + i * lineStep, summaryColor);
+		}
 
-		int listTop = summaryY + 13;
+		int listTop = summaryY + Math.max(1, summaryLines.size()) * lineStep + 3;
 		QuillDraw.hLine(graphics, area.x(), area.width() - 1, listTop - 1, QuillTheme.BORDER_SUBTLE);
 		resultsRect = new IdeLayout.Rect(area.x(), listTop, area.width() - 1, Math.max(0, area.bottom() - listTop));
 

@@ -10,7 +10,10 @@ import net.minecraft.network.chat.FormattedText;
 import net.minecraft.network.chat.Style;
 import net.minecraft.resources.Identifier;
 
+import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.List;
+import java.util.function.ToIntFunction;
 
 /**
  * Thin wrapper around Minecraft 26.3's {@link GuiGraphicsExtractor} that localizes
@@ -196,6 +199,88 @@ public final class QuillDraw {
 			return plainSubstrByWidth(font, text, maxWidth, scale);
 		}
 		return plainSubstrByWidth(font, text, maxWidth - ellipsisW, scale) + ellipsis;
+	}
+
+	public static List<String> wrapLines(Font font, String text, int maxWidth) {
+		return wrapLines(text, maxWidth, s -> textWidth(font, s));
+	}
+
+	public static List<String> wrapLines(String text, int maxWidth, ToIntFunction<String> widthMeasurer) {
+		if (text == null || text.isEmpty()) {
+			return List.of();
+		}
+		if (maxWidth <= 0 || widthMeasurer == null) {
+			return List.of(text);
+		}
+		List<String> lines = new ArrayList<>();
+		for (String paragraph : text.split("\n", -1)) {
+			if (paragraph.isEmpty()) {
+				lines.add("");
+				continue;
+			}
+			StringBuilder current = new StringBuilder();
+			int i = 0;
+			int len = paragraph.length();
+			while (i < len) {
+				while (i < len && paragraph.charAt(i) == ' ') {
+					i++;
+				}
+				if (i >= len) {
+					break;
+				}
+				int wordStart = i;
+				while (i < len && paragraph.charAt(i) != ' ') {
+					i++;
+				}
+				String word = paragraph.substring(wordStart, i);
+				if (current.isEmpty()) {
+					if (widthMeasurer.applyAsInt(word) <= maxWidth) {
+						current.append(word);
+					} else {
+						appendSplitLongWord(word, maxWidth, widthMeasurer, lines, current);
+					}
+				} else {
+					String candidate = current + " " + word;
+					if (widthMeasurer.applyAsInt(candidate) <= maxWidth) {
+						current.append(' ').append(word);
+					} else {
+						lines.add(current.toString());
+						current.setLength(0);
+						if (widthMeasurer.applyAsInt(word) <= maxWidth) {
+							current.append(word);
+						} else {
+							appendSplitLongWord(word, maxWidth, widthMeasurer, lines, current);
+						}
+					}
+				}
+			}
+			if (!current.isEmpty()) {
+				lines.add(current.toString());
+			}
+		}
+		return lines.isEmpty() ? List.of(text) : List.copyOf(lines);
+	}
+
+	private static void appendSplitLongWord(
+			String word,
+			int maxWidth,
+			ToIntFunction<String> widthMeasurer,
+			List<String> lines,
+			StringBuilder current
+	) {
+		for (int i = 0; i < word.length(); ) {
+			int next = i + 1;
+			while (next < word.length() && widthMeasurer.applyAsInt(word.substring(i, next + 1)) <= maxWidth) {
+				next++;
+			}
+			String chunk = word.substring(i, next);
+			i = next;
+			if (i < word.length()) {
+				lines.add(chunk);
+			} else {
+				current.append(chunk);
+			}
+		}
 	}
 
 	public static void beginClip(GuiGraphicsExtractor graphics, IdeLayout.Rect rect) {

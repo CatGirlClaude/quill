@@ -85,7 +85,7 @@ odtwarzającym błąd przed poprawką.
 - [ ] Ctrl+Z rozdzielone na dwa stosy: w edytorze cofa zmiany w kodzie, poza edytorem cofa operacje na plikach (usunięcia, zmiany nazw itd.).
 - [x] Wcięcie przed pierwszą literą w edytorze jest zbyt duże (zajmuje szerokość całej litery).
 - [ ] Kolor czerwony dla niezapisanych zmian w sidebarze wygląda jak błąd. Zmienić na neutralny znacznik `*`.
-- [ ] Search: tekst jest ucinany przez "..." (np. `Triggers /reload on every keystroke`). Rozszerzyć pole albo zawijać tekst.
+- [x] Search: tekst jest ucinany przez "..." (np. `Triggers /reload on every keystroke`). Rozszerzyć pole albo zawijać tekst.
 
 ### P1: wygląd i ogólne UX
 - [ ] Ogólny styl: GUI wygląda zbyt Minecraftowo. Cel: wrażenie prawdziwej aplikacji. Zaproponować system motywu (kolory, odstępy, obramowania) przed poprawkami pojedynczych elementów.

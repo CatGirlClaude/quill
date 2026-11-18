@@ -187,6 +187,14 @@ Verified against `net.minecraft.client.multiplayer.ClientPacketListener` and Fab
 - **Running Commands**: `connection.sendCommand("function " + functionId)` dispatches a server command without a leading `/`.
 - **Capturing Command Feedback**: Register `ClientReceiveMessageEvents.GAME.register((Component message, boolean overlay) -> ...)` in `QuillClient` to stream server/function output into Quill's `OUTPUT` panel (skipping action-bar `overlay == true` messages).
 
+### 4.8 Custom TrueType Fonts, Matrix Text Scaling, Resize Cursors & Pause Toggle
+
+Verified against `minecraft-client-only.jar` (`26.3`):
+- **Custom Fonts (`FontDescription.Resource`)**: Font resources live in `assets/<modid>/font/<name>.json` referencing bundled TTF files in `assets/<modid>/font/*.ttf` (using `"type": "ttf"`). In MC `26.3`, `Style.withFont(...)` takes a `net.minecraft.network.chat.FontDescription` (`new FontDescription.Resource(Identifier.parse("quill:sans_serif"))`) rather than a raw `Identifier`. Measure styled text with `font.width(FormattedText.of(text, style))` and truncate with `font.getSplitter().plainHeadByWidth(text, maxWidth, style)`.
+- **Text Scaling (`GuiGraphicsExtractor.pose()`)**: `graphics.pose()` returns JOML `Matrix3x2fStack` (`pushMatrix()`, `translate(x, y)`, `scale(sx, sy)`, `popMatrix()` — **not** legacy `PoseStack.pushPose()`).
+- **Cursor Types (`CursorTypes`)**: Available static cursors in `com.mojang.blaze3d.platform.cursor.CursorTypes` are `ARROW`, `IBEAM`, `CROSSHAIR`, `POINTING_HAND`, `RESIZE_NS`, `RESIZE_EW`, `RESIZE_ALL`, and `NOT_ALLOWED` (no diagonal `RESIZE_NWSE`/`RESIZE_NESW` constants; use `RESIZE_ALL` for corner handles and window dragging).
+- **Dynamic Pause Screen**: `Screen.isPauseScreen()` is queried per-tick in singleplayer, so returning `QuillClientConfig.current().pauseGameWhileOpen()` takes effect immediately when toggled in Settings without reopening the screen.
+
 ---
 
 ## 5. Local testing

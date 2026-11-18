@@ -56,11 +56,12 @@ flowchart TB
   - `reload/` — `DatapackReloadCoordinator` (triggers `PackRepository.reload()` + `MinecraftServer.reloadResources(...)` and captures function/JSON parse diagnostics).
   - `network/` — `QuillNetworkPayloads` (`quill:c2s_frame`, `quill:s2c_frame`, `quill:s2c_tree_changed`), `QuillRpcRequest`, `QuillRpcResponse`, `QuillProtocolCodec`, `ChunkedTransferAssembler`, and `ServerNetworkEditorHandler`.
 - **`src/client/java/dev/catgirlclaude/quill/client/`**:
+  - `config/` — `QuillClientConfig` (`config/quill-client.json`), `QuillColorPalette` (7 built-in VS Code themes), and `KeyShortcut` (configurable shortcut parsing, matching, and live recording).
   - `input/` — `QuillKeyMappings` (`KeyMappingHelper` registration, server capability check via `ClientNetworkHandler.isServerQuillAvailable()`, and tick listener).
   - `network/` — `RemoteEditorBackend` (chunked C2S/S2C RPC `EditorBackend` client) and `ClientNetworkHandler` (S2C receivers and disconnect cleanup).
-  - `session/` — `ClientSessionManager`, `ClientEditorSession`, and `OpenTabState` (manages singleplayer/multiplayer sessions, open tabs, workspace revision counter, Problems/Output bottom-panel state, `/function` execution, optimistic concurrency conflict prompts, and live `TreeChangedPayload` synchronization).
-  - `editor/` — Pure-Java editor and language services (headless-testable via JUnit): `TextDocumentBuffer`, `SyntaxHighlighter`, `BrigadierAssistService`, `FuzzyMatcher`, `WorkspaceFileCache`, `WorkspaceSearchEngine`, and `DatapackInspector`.
-  - `gui/` — `QuillIdeScreen`, `IdeLayout`, `QuillTheme`, `QuillDraw`, and VS Code-styled widgets/overlays (`FileExplorerTreeWidget`, `SearchSidebarWidget`, `InspectorSidebarWidget`, `QuickActionsAndPresetsWidget`, `EditorTabBarWidget`, `CodeEditorWidget`, `BottomPanelWidget`, `QuickPickOverlay`, `ModalPromptOverlay`).
+  - `session/` — `ClientSessionManager`, `ClientEditorSession`, and `OpenTabState` (manages singleplayer/multiplayer sessions, open tabs, coalesced autosave/reload triggers, templated datapack creation, workspace revision counter, Problems/Output bottom-panel state, `/function` execution, optimistic concurrency conflict prompts, and live `TreeChangedPayload` synchronization).
+  - `editor/` — Pure-Java editor and language services (headless-testable via JUnit): `TextDocumentBuffer`, `SingleLineTextInput`, `SyntaxHighlighter`, `BrigadierAssistService`, `FuzzyMatcher`, `WorkspaceFileCache`, `WorkspaceSearchEngine`, and `DatapackInspector`.
+  - `gui/` — `QuillIdeScreen`, `IdeLayout` (movable/resizable floating bounds, splitters, breadcrumbs), `QuillTheme`, `QuillDraw` (font style & scaled rendering), `IdeModal`, and VS Code-styled widgets/overlays (`FileExplorerTreeWidget` with inline create/rename, `SearchSidebarWidget`, `InspectorSidebarWidget`, `QuickActionsAndPresetsWidget`, `EditorTabBarWidget`, `CodeEditorWidget`, `SettingsPanelWidget`, `BottomPanelWidget`, `QuickPickOverlay`, `ModalPromptOverlay`, `NewDatapackModal`).
 
 ---
 

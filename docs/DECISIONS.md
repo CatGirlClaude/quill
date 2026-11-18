@@ -236,3 +236,30 @@ Choosing Option A means we do not get browser DOM/CSS or pre-built tree/code wid
   - Keeps RPC wire protocol `v1` completely unchanged and works identically across Singleplayer (`ServerEditorBackend`) and Multiplayer (`RemoteEditorBackend`).
   - Avoids redundant network/disk reads when running multiple searches or switching to the Variable Inspector while guaranteeing live visibility of unsaved editor changes and SHA-256 optimistic concurrency safety on closed files.
   - Preserves ADR-006's fast headless testability across all Phase 4 IDE productivity features.
+
+---
+
+## ADR-010: Client Configuration (`quill-client.json`), Bundled Permissive TrueType Fonts, Coalesced Autosave, and Zero-Protocol-Break Datapack Templates
+
+- **Date**: 2026-11-18
+- **Status**: Accepted
+- **Context**:
+  Phase 5 introduces an in-IDE client configuration UI (`SettingsPanelWidget`) supporting 7 VS Code color themes (including Light+), sans-serif / Arial-style / monospace fonts, configurable editor text size, singleplayer pause toggle (`pauseGameWhileOpen`), autosave on GUI close or every keypress, configurable datapack reload triggers (`ON_SAVE` vs `ON_GUI_CLOSE`), movable/resizable window bounds, customizable shortcuts, and templated datapack creation with customizable `load`/`tick` function names.
+- **Decision**:
+  1. **Single Client Config File (`config/quill-client.json`) & Dynamic `QuillTheme`**:
+     - Persist all client preferences in `QuillClientConfig` (loaded on client startup via `QuillClient`), updating static ARGB tokens in `QuillTheme.applyPalette(...)` immediately when the user picks any of the 7 `QuillColorPalette` presets.
+     - Keep `QuillIdeScreen.isPauseScreen()` dynamically wired to `QuillClientConfig.current().pauseGameWhileOpen()` (default `false` to preserve non-pausing workflow unless opted in).
+  2. **Bundled Permissive TrueType Fonts (`assets/quill/font/*.json` + `*.ttf`)**:
+     - Avoid proprietary Windows-only Arial binaries; bundle permissively licensed TrueType fonts (`roboto_regular.ttf` Apache-2.0 for `quill:sans_serif`, `dejavu_sans.ttf` Bitstream Vera for `quill:arial`, and `dejavu_sans_mono.ttf` for `quill:monospace`) with attribution in `THIRD_PARTY_NOTICES.txt`.
+     - Apply fonts via MC `26.3`'s `Style.withFont(new FontDescription.Resource(...))` and editor text scaling via `GuiGraphicsExtractor.pose()` (`Matrix3x2fStack`) inside `QuillDraw`, ensuring caret hit-testing (`QuillDraw.textWidth` / `charIndexAtPixel`) stays exact across fonts and scales.
+  3. **Per-Tab Coalesced Instant Autosave**:
+     - When `AutosaveMode.ON_KEYPRESS` is active, `ClientEditorSession.notifyTabBufferEdited(...)` tracks in-flight and queued paths (`autosaveInFlight` / `autosaveQueued`), dispatching at most one `writeFile` per file at a time and chaining any edits made while a save is in flight once the new SHA-256 revision returns.
+     - Surface a prominent warning banner in Settings (with a one-click fix button) and a clickable Status Bar pill whenever `ON_KEYPRESS` and `ReloadTriggerMode.ON_SAVE` are enabled simultaneously.
+  4. **Zero-Protocol-Break Templated Datapack Creation**:
+     - Add an optional `${functionName}` variable (validated via `DatapackScaffolder.validateFunctionPath`) to the existing `minecraft:load` and `minecraft:tick` presets in `PresetRegistry` (defaulting to `"load"` / `"tick"`).
+     - `ClientEditorSession.createDatapackWithTemplate(...)` chains `createDatapack` -> `applyPreset("minecraft:load", ...)` -> `applyPreset("minecraft:tick", ...)`, working identically in Singleplayer and Multiplayer with zero changes to RPC wire protocol `v1`.
+- **Rationale**:
+  - Guarantees cross-platform font availability (Windows/macOS/Linux) with clean open-source licensing.
+  - Prevents optimistic-concurrency (`SHA-256`) race conditions during rapid typing in instant autosave mode.
+  - Keeps RPC wire protocol `v1` backward compatible while delivering full templated datapack scaffolding in both SP and MP.
+

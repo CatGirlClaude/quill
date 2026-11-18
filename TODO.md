@@ -52,17 +52,21 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] **Macro & Scoreboard Variable Inspector**: Sidebar panel listing detected scoreboard objectives, storage namespaces/keys, and macro parameters used across datapacks with click-to-jump occurrences.
 - [x] **JSON Schema Templates for Other Datapack Registries**: Expand the resource-driven preset system beyond function tags (`minecraft:load`, `minecraft:tick`) to include MC `26.3`-valid shaped/shapeless recipes, loot tables, advancements, and predicates.
 
+## Phase 5: UX, Visual Studio Code Polish & Client Configuration (Completed)
+
+- [x] **Enhanced Text Selection**: Full text selection across code editor and all single-line inputs (`SingleLineTextInput`): mouse drag selection with high-contrast highlight, double-click word / triple-click line / gutter line selection, `Shift+Arrows`, `Ctrl+Shift+Arrows`, `Shift+Home/End`, `Shift+Click`, `Ctrl+Backspace/Delete`, preferred vertical column, smart `Home`, `Tab`/`Shift+Tab` indent/unindent, and matching bracket highlight.
+- [x] **Higher-Fidelity Visual Studio Code UI**: Centered Command Center search pill in title bar, vector geometric Activity Bar icons (Explorer, Search, Inspector, Presets, bottom-pinned Settings gear) with hover tooltips, clickable Breadcrumbs bar, colored file-type badges, VS Code tab dirty dot (`●` -> `×` on hover), Status Bar (`>< Local/Remote` accent badge, selection char count, `Spaces: 4 | UTF-8 | LF | Language`, autosave/reload warning pill), and live-shortcut Welcome screen.
+- [x] **Inline File Explorer Folder/File Creation & Rename**: Inline editable rows inside `FileExplorerTreeWidget` for `+Dir`, `+File`, and `Ren`/`F2` with pre-selected file stems, live red inline validation banners, and SDL3 `TextInputManager` integration (no popup modals).
+- [x] **In-IDE Global Client-Side Config (`SettingsPanelWidget` & `config/quill-client.json`)**: 7 built-in VS Code color palettes (Dark+, Dark Modern, Monokai, One Dark Pro, Dracula, GitHub Dark, Light+), 5 font families (including bundled Roboto / DejaVu Sans / DejaVu Mono TrueType fonts), editor text size (`7–16 px`), `pauseGameWhileOpen` singleplayer toggle, customizable keybind shortcuts with live recorder, default datapack template names, and window layout reset.
+- [x] **Autosave & Reload Trigger Config Options**: `AutosaveMode` (`OFF`, `ON_GUI_CLOSE`, `ON_KEYPRESS` with per-tab coalesced saves preventing SHA-256 race conflicts), `ReloadTriggerMode` (`ON_SAVE`, `ON_GUI_CLOSE`), `QuillIdeScreen.removed()` close hooks, plus prominent Settings warning banner (with quick-fix button) and clickable Status Bar warning pill when `ON_KEYPRESS` and `ON_SAVE` are enabled together.
+- [x] **Movable & Resizable IDE Window**: Floating window title-bar drag (double-click to maximize/restore), 8-edge/corner resize handles (`IdeLayout.hitTestResizeEdge` + native `CursorTypes.RESIZE_*`), draggable Sidebar and Bottom Panel splitters, and persisted window bounds in `config/quill-client.json`.
+- [x] **Datapack Creation Template Options (`NewDatapackModal`)**: `"Use template"` checkbox revealing a Namespace field and expandable `> More` dropdown for customizing `load` and `tick` function names, each paired with a default-checked `"Use default"` checkbox referencing client config defaults (works in both SP and MP via `PresetRegistry`'s `${functionName}` variable).
+
 ## Proposals (Propozycje)
 
-> User-submitted UX, visual, and configuration proposals queued for the next phase. **Do not implement without explicit user approval.**
+> User-submitted UX, visual, and configuration proposals queued for future phases. **Do not implement without explicit user approval.**
 
-1. **Enhanced Text Selection**: Full text selection polish across editor and modal inputs (mouse cursor drag selection with high-contrast highlight, double-click word / triple-click line selection, `Shift+Arrows`, `Ctrl+Shift+Arrows`, `Shift+Home/End`, `Shift+Click`).
-2. **Higher-Fidelity Visual Studio Code UI**: Refine IDE layout chrome, icons, spacing, breadcrumbs, panels, and styling to more closely match Visual Studio Code.
-3. **Inline File Explorer Folder/Entry Creation**: Enter new folder (and file) names directly inline inside the File Explorer tree rather than via a popup modal.
-4. **In-IDE Global Client-Side Config**: Client configuration panel inside the IDE GUI covering color palettes (built-in VS Code themes), font choices (e.g., sans-serif, Arial / TrueType fonts), text size, and customizable keybind shortcuts.
-5. **Autosave & Reload Trigger Config Options**: Add client config options for autosave on GUI close or on every keypress (instant autosave), choosing whether datapack reload happens on save or on GUI close, plus a visible warning when both instant autosave and reload-on-save are enabled together.
-6. **Movable & Resizable IDE Window**: Support dragging the IDE window by its title bar and resizing it from edges/corners within the Minecraft screen.
-7. **Datapack Creation Template Options**: Add a `"Use template"` checkbox to the New Datapack dialog that reveals a namespace input box and an expandable `"More"` dropdown to customize `tick` and `load` function names, each with a default-checked `"Use default"` checkbox whose default names can be configured in client config.
+*(None pending)*
 
 ## Inbox
 

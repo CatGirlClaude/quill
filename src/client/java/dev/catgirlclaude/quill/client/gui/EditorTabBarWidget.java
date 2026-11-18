@@ -132,16 +132,13 @@ public final class EditorTabBarWidget {
 				QuillDraw.fill(graphics, tabRect.x(), tabRect.y(), tabRect.width(), 2, QuillTheme.ACCENT_BLUE);
 			}
 
-			String badge = FileExplorerTreeWidget.fileBadge(tab.fileName());
-			int badgeColor = badgeColor(tab.fileName());
-			QuillDraw.text(graphics, font, badge, tabRect.x() + 7, textY, badgeColor);
-
-			int titleX = tabRect.x() + 7 + QuillDraw.textWidth(font, badge) + 4;
+			int iconW = QuillDraw.drawFileTypeIcon(graphics, font, tab.fileName(), tabRect.x() + 7, bar.y(), bar.height() - 1);
+			int titleX = tabRect.x() + 7 + iconW + 4;
 			String title = tab.fileName();
 			int titleColor = active ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY;
 			QuillDraw.text(graphics, font, title, titleX, textY, titleColor);
 
-			// Neutral '*' dirty indicator -> close 'x' on hover
+			// Neutral '*' dirty indicator -> geometric close X on hover
 			if (tab.isDirty() && !hovered && !closeHovered) {
 				String glyph = dirtyIndicatorGlyph();
 				int glyphX = closeRect.x() + (closeRect.width() - QuillDraw.textWidth(font, glyph)) / 2;
@@ -150,8 +147,7 @@ public final class EditorTabBarWidget {
 				if (closeHovered) {
 					QuillDraw.fill(graphics, closeRect.x(), closeRect.y(), closeRect.width(), closeRect.height(), QuillTheme.BG_BUTTON_SECONDARY);
 				}
-				int xTextX = closeRect.x() + (closeRect.width() - QuillDraw.textWidth(font, "x")) / 2;
-				QuillDraw.text(graphics, font, "x", xTextX, textY,
+				QuillDraw.drawCloseX(graphics, closeRect.x() + 3, closeRect.y() + (closeRect.height() - 7) / 2, 7,
 						closeHovered ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
 			}
 
@@ -174,15 +170,14 @@ public final class EditorTabBarWidget {
 			QuillDraw.vLine(graphics, tabRect.right() - 1, tabRect.y(), tabRect.height(), QuillTheme.BORDER_SUBTLE);
 			QuillDraw.fill(graphics, tabRect.x(), tabRect.y(), tabRect.width(), 2, QuillTheme.ACCENT_BLUE);
 
-			QuillDraw.text(graphics, font, "*", tabRect.x() + 7, textY, QuillTheme.ACCENT_BLUE);
-			int labelX = tabRect.x() + 7 + QuillDraw.textWidth(font, "*") + 4;
+			QuillDraw.drawGearIcon(graphics, tabRect.x() + 12, bar.y() + (bar.height() - 1) / 2, QuillTheme.ACCENT_BLUE, QuillTheme.BG_TAB_ACTIVE);
+			int labelX = tabRect.x() + 21;
 			QuillDraw.text(graphics, font, "Settings", labelX, textY, QuillTheme.TEXT_BRIGHT);
 
 			if (closeHovered) {
 				QuillDraw.fill(graphics, closeRect.x(), closeRect.y(), closeRect.width(), closeRect.height(), QuillTheme.BG_BUTTON_SECONDARY);
 			}
-			int xTextX = closeRect.x() + (closeRect.width() - QuillDraw.textWidth(font, "x")) / 2;
-			QuillDraw.text(graphics, font, "x", xTextX, textY,
+			QuillDraw.drawCloseX(graphics, closeRect.x() + 3, closeRect.y() + (closeRect.height() - 7) / 2, 7,
 					closeHovered ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
 
 			if (hovered || closeHovered) {
@@ -259,26 +254,15 @@ public final class EditorTabBarWidget {
 	}
 
 	private static int computeTabWidth(Font font, OpenTabState tab) {
-		String badge = FileExplorerTreeWidget.fileBadge(tab.fileName());
-		int badgeW = QuillDraw.textWidth(font, badge) + 4;
+		int badgeW = QuillDraw.fileTypeIconWidth(font, tab.fileName()) + 4;
 		return Math.max(72, badgeW + QuillDraw.textWidth(font, tab.fileName()) + 30);
 	}
 
 	private static int computeSettingsTabWidth(Font font) {
-		return Math.max(76, QuillDraw.textWidth(font, "* Settings") + 28);
+		return Math.max(82, 16 + QuillDraw.textWidth(font, "Settings") + 28);
 	}
 
 	static String dirtyIndicatorGlyph() {
 		return "*";
-	}
-
-	private static int badgeColor(String fileName) {
-		if (fileName.endsWith(".mcfunction")) {
-			return QuillTheme.TEXT_FUNCTION;
-		}
-		if (fileName.endsWith(".json") || fileName.endsWith(".mcmeta")) {
-			return QuillTheme.TEXT_JSON;
-		}
-		return QuillTheme.TEXT_MUTED;
 	}
 }

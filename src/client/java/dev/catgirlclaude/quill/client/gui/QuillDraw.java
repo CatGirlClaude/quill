@@ -201,6 +201,34 @@ public final class QuillDraw {
 		return plainSubstrByWidth(font, text, maxWidth - ellipsisW, scale) + ellipsis;
 	}
 
+	public static String clipToWidth(
+			Font font,
+			String text,
+			QuillClientConfig.FontChoice fontChoice,
+			int maxWidth,
+			float scale
+	) {
+		if (font == null || maxWidth <= 0 || text == null || text.isEmpty()) {
+			return "";
+		}
+		Style style = styleFor(fontChoice);
+		int baseWidth = style == Style.EMPTY ? font.width(text) : font.width(FormattedText.of(text, style));
+		if (Math.round(baseWidth * scale) <= maxWidth) {
+			return text;
+		}
+		int unscaledMax = Math.max(0, Math.round(maxWidth / Math.max(0.01f, scale)));
+		int ellipsisW = style == Style.EMPTY ? font.width("...") : font.width(FormattedText.of("...", style));
+		if (unscaledMax <= ellipsisW) {
+			return style == Style.EMPTY
+					? font.plainSubstrByWidth(text, unscaledMax)
+					: font.getSplitter().plainHeadByWidth(text, unscaledMax, style);
+		}
+		String head = style == Style.EMPTY
+				? font.plainSubstrByWidth(text, unscaledMax - ellipsisW)
+				: font.getSplitter().plainHeadByWidth(text, unscaledMax - ellipsisW, style);
+		return head + "...";
+	}
+
 	public static List<String> wrapLines(Font font, String text, int maxWidth) {
 		return wrapLines(text, maxWidth, s -> textWidth(font, s));
 	}
@@ -293,5 +321,237 @@ public final class QuillDraw {
 
 	public static void requestCursor(GuiGraphicsExtractor graphics, CursorType cursor) {
 		graphics.requestCursor(cursor);
+	}
+
+	/**
+	 * Minimal pixel-rectangle drawing target allowing unit tests to verify vector icon geometry
+	 * without a live Minecraft graphics context.
+	 */
+	@FunctionalInterface
+	public interface PixelRectTarget {
+		void fill(int x, int y, int width, int height, int color);
+	}
+
+	public static int jsonBracesGapPx() {
+		return 2;
+	}
+
+	/**
+	 * Renders a VS Code Codicons-style 45-degree geometric chevron without ASCII fallback glyphs.
+	 */
+	public static void drawChevron(GuiGraphicsExtractor graphics, int x, int y, int rowHeight, boolean expanded, int color) {
+		drawChevron((rx, ry, rw, rh, c) -> fill(graphics, rx, ry, rw, rh, c), x, y, rowHeight, expanded, color);
+	}
+
+	public static void drawChevron(PixelRectTarget target, int x, int y, int rowHeight, boolean expanded, int color) {
+		int cx = x + 2;
+		int cy = y + rowHeight / 2;
+		if (expanded) {
+			// Crisp down-pointing chevron (7px wide, 4px tall)
+			target.fill(cx, cy - 1, 2, 1, color);
+			target.fill(cx + 1, cy, 2, 1, color);
+			target.fill(cx + 2, cy + 1, 2, 1, color);
+			target.fill(cx + 3, cy + 2, 1, 1, color);
+			target.fill(cx + 3, cy + 1, 2, 1, color);
+			target.fill(cx + 4, cy, 2, 1, color);
+			target.fill(cx + 5, cy - 1, 2, 1, color);
+		} else {
+			// Crisp right-pointing chevron (4px wide, 7px tall)
+			target.fill(cx + 1, cy - 3, 1, 2, color);
+			target.fill(cx + 2, cy - 2, 1, 2, color);
+			target.fill(cx + 3, cy - 1, 1, 2, color);
+			target.fill(cx + 4, cy, 1, 1, color);
+			target.fill(cx + 3, cy, 1, 2, color);
+			target.fill(cx + 2, cy + 1, 1, 2, color);
+			target.fill(cx + 1, cy + 2, 1, 2, color);
+		}
+	}
+
+	public static int drawFolderIcon(GuiGraphicsExtractor graphics, int x, int y, int rowHeight, boolean expanded, int color) {
+		int top = y + Math.max(2, (rowHeight - 9) / 2);
+		// Folder tab + body
+		fill(graphics, x + 1, top, 4, 2, color);
+		fill(graphics, x, top + 2, 10, 7, color);
+		if (expanded) {
+			// Subtle open-flap cutout on expanded folders
+			fill(graphics, x + 1, top + 4, 8, 4, QuillTheme.BG_SIDEBAR);
+			fill(graphics, x + 2, top + 5, 7, 3, color);
+		} else {
+			fill(graphics, x + 1, top + 3, 8, 1, QuillTheme.BG_SIDEBAR);
+		}
+		return 11;
+	}
+
+	/**
+	 * Custom geometric terminal/command vector emblem for {@code .mcfunction} files (replaces literal {@code "fn"} text).
+	 */
+	public static int drawFunctionIcon(GuiGraphicsExtractor graphics, int x, int y, int rowHeight, int color) {
+		int top = y + Math.max(2, (rowHeight - 9) / 2);
+		outline(graphics, x, top, 12, 9, QuillTheme.withAlpha(color, 0xCC));
+		// Command prompt '>' + '_' inside the emblem
+		fill(graphics, x + 2, top + 2, 2, 1, color);
+		fill(graphics, x + 3, top + 3, 2, 1, color);
+		fill(graphics, x + 4, top + 4, 1, 1, color);
+		fill(graphics, x + 3, top + 5, 2, 1, color);
+		fill(graphics, x + 2, top + 6, 2, 1, color);
+		fill(graphics, x + 6, top + 6, 4, 1, color);
+		return 13;
+	}
+
+	/**
+	 * Draws the approved Version B {@code {}} JSON icon: {@code '{'} and {@code '}'} rendered
+	 * separately with a fixed {@value 2}px gap across all configured font families.
+	 */
+	public static int drawJsonBracesBadge(GuiGraphicsExtractor graphics, Font font, int x, int y, int color) {
+		int leftW = textWidth(font, "{");
+		int rightW = textWidth(font, "}");
+		int gap = jsonBracesGapPx();
+		text(graphics, font, "{", x, y, color);
+		text(graphics, font, "}", x + leftW + gap, y, color);
+		return leftW + gap + rightW;
+	}
+
+	public static int fileTypeIconWidth(Font font, String fileName) {
+		QuillFileTypes.FileTypeInfo info = QuillFileTypes.classify(fileName);
+		return switch (info.category()) {
+			case FUNCTION -> 13;
+			case JSON -> textWidth(font, "{") + jsonBracesGapPx() + textWidth(font, "}");
+			case MARKDOWN, TEXT, IMAGE, AUDIO, NBT, ARCHIVE, BINARY -> 12;
+		};
+	}
+
+	public static int drawFileTypeIcon(GuiGraphicsExtractor graphics, Font font, String fileName, int x, int y, int rowHeight) {
+		QuillFileTypes.FileTypeInfo info = QuillFileTypes.classify(fileName);
+		int color = info.badgeColor();
+		int top = y + Math.max(2, (rowHeight - 9) / 2);
+		int textY = font != null ? y + (rowHeight - font.lineHeight) / 2 : y + 2;
+
+		return switch (info.category()) {
+			case FUNCTION -> drawFunctionIcon(graphics, x, y, rowHeight, color);
+			case JSON -> drawJsonBracesBadge(graphics, font, x, textY, color);
+			case MARKDOWN -> {
+				outline(graphics, x + 1, top, 10, 9, color);
+				fill(graphics, x + 3, top + 2, 1, 5, color);
+				fill(graphics, x + 4, top + 3, 1, 2, color);
+				fill(graphics, x + 5, top + 2, 1, 5, color);
+				fill(graphics, x + 8, top + 2, 1, 4, color);
+				fill(graphics, x + 7, top + 5, 3, 1, color);
+				fill(graphics, x + 8, top + 6, 1, 1, color);
+				yield 12;
+			}
+			case TEXT -> {
+				outline(graphics, x + 1, top, 9, 9, color);
+				hLine(graphics, x + 3, 5, top + 3, color);
+				hLine(graphics, x + 3, 5, top + 5, color);
+				hLine(graphics, x + 3, 3, top + 7, color);
+				yield 12;
+			}
+			case IMAGE -> {
+				outline(graphics, x + 1, top, 10, 9, color);
+				fill(graphics, x + 3, top + 2, 2, 2, color);
+				fill(graphics, x + 3, top + 6, 3, 1, color);
+				fill(graphics, x + 4, top + 5, 2, 1, color);
+				fill(graphics, x + 6, top + 4, 3, 3, color);
+				yield 12;
+			}
+			case AUDIO -> {
+				// Speaker + sound wave
+				fill(graphics, x + 1, top + 3, 2, 3, color);
+				fill(graphics, x + 3, top + 2, 2, 5, color);
+				fill(graphics, x + 5, top + 1, 1, 7, color);
+				fill(graphics, x + 8, top + 3, 1, 3, color);
+				fill(graphics, x + 10, top + 2, 1, 5, color);
+				yield 12;
+			}
+			case NBT -> {
+				// Isometric-inspired 3D cube outline
+				outline(graphics, x + 1, top + 1, 9, 8, color);
+				hLine(graphics, x + 3, 5, top + 3, color);
+				vLine(graphics, x + 5, top + 3, 5, color);
+				yield 12;
+			}
+			case ARCHIVE -> {
+				outline(graphics, x + 1, top, 9, 9, color);
+				hLine(graphics, x + 1, 9, top + 3, color);
+				fill(graphics, x + 4, top + 1, 3, 2, color);
+				fill(graphics, x + 4, top + 5, 3, 2, color);
+				yield 12;
+			}
+			case BINARY -> {
+				outline(graphics, x + 1, top, 10, 9, color);
+				fill(graphics, x + 3, top + 2, 2, 2, color);
+				fill(graphics, x + 7, top + 2, 2, 2, color);
+				fill(graphics, x + 3, top + 5, 2, 2, color);
+				fill(graphics, x + 7, top + 5, 2, 2, color);
+				yield 12;
+			}
+		};
+	}
+
+	/**
+	 * Draws a crisp diagonal X glyph at {@code (x, y)} of {@code size x size} pixels.
+	 */
+	public static void drawCloseX(GuiGraphicsExtractor graphics, int x, int y, int size, int color) {
+		int s = Math.max(4, size);
+		for (int i = 0; i < s; i++) {
+			fill(graphics, x + i, y + i, 1, 1, color);
+			fill(graphics, x + (s - 1 - i), y + i, 1, 1, color);
+		}
+	}
+
+	/**
+	 * Draws a crisp geometric checkmark inside an 8x8 icon area.
+	 */
+	public static void drawCheckmark(GuiGraphicsExtractor graphics, int x, int y, int color) {
+		fill(graphics, x, y + 3, 1, 2, color);
+		fill(graphics, x + 1, y + 4, 1, 2, color);
+		fill(graphics, x + 2, y + 5, 1, 2, color);
+		fill(graphics, x + 3, y + 4, 1, 2, color);
+		fill(graphics, x + 4, y + 3, 1, 2, color);
+		fill(graphics, x + 5, y + 2, 1, 2, color);
+		fill(graphics, x + 6, y + 1, 1, 2, color);
+	}
+
+	/**
+	 * Draws a smooth circular magnifying glass loupe centered in a 14x14 box at {@code (x, y)}.
+	 */
+	public static void drawSearchLoupe(GuiGraphicsExtractor graphics, int x, int y, int color) {
+		// 9px circular lens ring (smooth octagonal pixel circle, top-left (x, y))
+		hLine(graphics, x + 2, 5, y, color);
+		hLine(graphics, x + 1, 2, y + 1, color);
+		hLine(graphics, x + 6, 2, y + 1, color);
+		vLine(graphics, x, y + 2, 5, color);
+		vLine(graphics, x + 8, y + 2, 5, color);
+		hLine(graphics, x + 1, 2, y + 7, color);
+		hLine(graphics, x + 6, 2, y + 7, color);
+		hLine(graphics, x + 2, 5, y + 8, color);
+		// Subtle specular lens arc
+		fill(graphics, x + 2, y + 2, 2, 1, QuillTheme.withAlpha(color, 0x66));
+		fill(graphics, x + 2, y + 3, 1, 1, QuillTheme.withAlpha(color, 0x66));
+		// Diagonal handle
+		fill(graphics, x + 7, y + 7, 2, 2, color);
+		fill(graphics, x + 8, y + 8, 2, 2, color);
+		fill(graphics, x + 10, y + 10, 2, 2, color);
+		fill(graphics, x + 11, y + 11, 2, 2, color);
+	}
+
+	/**
+	 * Draws a crisp centered settings gear icon around {@code (centerX, centerY)}.
+	 */
+	public static void drawGearIcon(GuiGraphicsExtractor graphics, int centerX, int centerY, int color, int hollowBg) {
+		// 4 cardinal teeth
+		fill(graphics, centerX - 1, centerY - 6, 2, 2, color);
+		fill(graphics, centerX - 1, centerY + 4, 2, 2, color);
+		fill(graphics, centerX - 6, centerY - 1, 2, 2, color);
+		fill(graphics, centerX + 4, centerY - 1, 2, 2, color);
+		// 4 diagonal teeth
+		fill(graphics, centerX - 5, centerY - 5, 2, 2, color);
+		fill(graphics, centerX + 3, centerY - 5, 2, 2, color);
+		fill(graphics, centerX - 5, centerY + 3, 2, 2, color);
+		fill(graphics, centerX + 3, centerY + 3, 2, 2, color);
+		// Rounded body ring + circular hollow center
+		fill(graphics, centerX - 3, centerY - 4, 6, 8, color);
+		fill(graphics, centerX - 4, centerY - 3, 8, 6, color);
+		fill(graphics, centerX - 2, centerY - 2, 4, 4, hollowBg);
 	}
 }

@@ -104,9 +104,14 @@ public final class PathSandbox {
 		return false;
 	}
 
+	public static boolean isTempFile(Path path) {
+		String name = path.getFileName() == null ? "" : path.getFileName().toString();
+		return name.endsWith(TEMP_SUFFIX);
+	}
+
 	public static boolean isTempOrHiddenArchive(Path path) {
 		String name = path.getFileName() == null ? "" : path.getFileName().toString();
-		return name.endsWith(TEMP_SUFFIX) || name.toLowerCase(Locale.ROOT).endsWith(".zip");
+		return isTempFile(path) || name.toLowerCase(Locale.ROOT).endsWith(".zip");
 	}
 
 	public Path resolveExistingFile(String rawRelativePath) {

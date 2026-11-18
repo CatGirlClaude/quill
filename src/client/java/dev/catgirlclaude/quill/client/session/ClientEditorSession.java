@@ -10,6 +10,7 @@ import dev.catgirlclaude.quill.api.ReloadReport;
 import dev.catgirlclaude.quill.api.RevisionConflictException;
 import dev.catgirlclaude.quill.client.config.QuillClientConfig;
 import dev.catgirlclaude.quill.preset.DatapackScaffolder;
+import dev.catgirlclaude.quill.security.PathSandbox;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 
@@ -83,6 +84,15 @@ public final class ClientEditorSession {
 		ERROR
 	}
 
+	public enum NotificationLevel {
+		INFO,
+		WARNING,
+		ERROR
+	}
+
+	public record NotificationBanner(String message, NotificationLevel level, boolean autoHide, long createdAtMs) {
+	}
+
 	public record OutputLogEntry(String timestamp, LogLevel level, String message) {
 	}
 
@@ -112,6 +122,7 @@ public final class ClientEditorSession {
 	private String selectedTreePath = "";
 	private ReloadReport lastReloadReport = null;
 	private PendingConflict pendingConflict = null;
+	private NotificationBanner activeNotification = null;
 	private String statusMessage = "Ready";
 	private boolean statusIsError = false;
 	private boolean busy = false;
@@ -391,12 +402,33 @@ public final class ClientEditorSession {
 		if (node == null) {
 			return;
 		}
-		if (node.kind() == EntryKind.FILE && !node.relativePath().isEmpty()) {
+		if (node.kind() == EntryKind.FILE && !node.relativePath().isEmpty()
+				&& PathSandbox.hasAllowedExtension(node.relativePath())) {
 			out.add(node.relativePath());
 		}
 		for (FileTreeNode child : node.children()) {
 			collectFilePaths(child, out);
 		}
+	}
+
+	public NotificationBanner activeNotification() {
+		return activeNotification;
+	}
+
+	public void showNotification(String message, NotificationLevel level) {
+		if (message == null || message.isBlank()) {
+			return;
+		}
+		this.activeNotification = new NotificationBanner(
+				message,
+				level == null ? NotificationLevel.INFO : level,
+				false,
+				System.currentTimeMillis()
+		);
+	}
+
+	public void dismissNotification() {
+		this.activeNotification = null;
 	}
 
 	public void bumpWorkspaceRevision() {
@@ -479,6 +511,20 @@ public final class ClientEditorSession {
 	}
 
 	public void openFileAndSelect(String relativePath, int oneBasedLine, int startCol, int endCol) {
+		if (relativePath == null || relativePath.isBlank()) {
+			return;
+		}
+		if (!PathSandbox.hasAllowedExtension(relativePath)) {
+			int slash = relativePath.lastIndexOf('/');
+			String fileName = slash >= 0 ? relativePath.substring(slash + 1) : relativePath;
+			showNotification(
+					fileName + " cannot be opened in the Quill text editor yet (unsupported format).",
+					NotificationLevel.INFO
+			);
+			setStatus("Unsupported format: " + fileName, false);
+			appendOutput(LogLevel.WARN, "Skipped opening unsupported file: " + relativePath);
+			return;
+		}
 		for (int i = 0; i < openTabs.size(); i++) {
 			if (openTabs.get(i).relativePath().equals(relativePath)) {
 				activeTabIndex = i;
@@ -1187,6 +1233,9 @@ public final class ClientEditorSession {
 		List<CompletableFuture<FileSnapshotEntry>> futures = new ArrayList<>(collected.size());
 		for (FileTreeNode entry : collected) {
 			if (entry.kind() == EntryKind.FILE) {
+				if (!PathSandbox.hasAllowedExtension(entry.relativePath())) {
+					continue;
+				}
 				OpenTabState open = findOpenTab(entry.relativePath());
 				if (open != null) {
 					futures.add(CompletableFuture.completedFuture(

@@ -201,7 +201,7 @@ public final class SettingsPanelWidget {
 			}
 			QuillDraw.outline(graphics, cx + 6, swatchY, sw * swatches.length - 1, 7, QuillTheme.BORDER_SUBTLE);
 
-			String nameLabel = (selected ? "* " : "") + p.displayName();
+			String nameLabel = formatCardTitle(p.displayName());
 			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, nameLabel, cardW - 12),
 					cx + 6, cy + 17, selected ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY);
 		}
@@ -214,7 +214,7 @@ public final class SettingsPanelWidget {
 		QuillClientConfig.FontChoice[] fonts = QuillClientConfig.FontChoice.values();
 		int fontCols = contentW >= 420 ? 2 : 1;
 		int fontCardW = (contentW - gap * (fontCols - 1)) / fontCols;
-		int fontCardH = 31;
+		int fontCardH = 34;
 		for (int i = 0; i < fonts.length; i++) {
 			QuillClientConfig.FontChoice fc = fonts[i];
 			int col = i % fontCols;
@@ -234,10 +234,13 @@ public final class SettingsPanelWidget {
 
 			QuillDraw.fill(graphics, fx, fy, fontCardW, fontCardH, selected ? QuillTheme.ROW_SELECTED : (hover ? QuillTheme.BG_HOVER : QuillTheme.BG_SIDEBAR));
 			QuillDraw.outline(graphics, fx, fy, fontCardW, fontCardH, selected ? QuillTheme.ACCENT_BLUE : QuillTheme.BORDER_SUBTLE);
-			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, (selected ? "* " : "") + fc.displayName(), fontCardW - 10),
+			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, formatCardTitle(fc.displayName()), fontCardW - 12),
 					fx + 6, fy + 4, selected ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY);
-			QuillDraw.textWithFont(graphics, font, "execute as @a run say Hi", fc,
-					fx + 6, fy + 17, QuillTheme.TEXT_MUTED, 1.0f);
+			float previewScale = previewScaleForFont(fc);
+			String previewSample = QuillDraw.clipToWidth(font, "execute as @a run say Hi", fc, fontCardW - 12, previewScale);
+			int previewY = fy + (previewScale > 1.1f ? 16 : 18);
+			QuillDraw.textWithFont(graphics, font, previewSample, fc,
+					fx + 6, previewY, previewColorForFont(selected), previewScale);
 		}
 		int fontRows = (fonts.length + fontCols - 1) / fontCols;
 		y += fontRows * (fontCardH + gap) + 8;
@@ -277,20 +280,23 @@ public final class SettingsPanelWidget {
 		y += 24;
 
 		// Global UI animations toggle
-		IdeLayout.Rect animRowRect = new IdeLayout.Rect(x, y, contentW, 20);
+		List<String> animLines = QuillDraw.wrapLines(font, "Enable UI animations (transitions, fades & slides)", Math.max(40, contentW - 24));
+		int animRowH = Math.max(20, animLines.size() * lineStep + 6);
+		IdeLayout.Rect animRowRect = new IdeLayout.Rect(x, y, contentW, animRowH);
 		boolean hoverAnim = area.contains(mouseX, mouseY) && animRowRect.contains(mouseX, mouseY);
 		if (hoverAnim) {
 			hoveredClickable = true;
-			QuillDraw.fill(graphics, x, y, contentW, 20, QuillTheme.BG_HOVER);
+			QuillDraw.fill(graphics, x, y, contentW, animRowH, QuillTheme.BG_HOVER);
 		}
 		clickTargets.add(new ClickTarget(animRowRect, () -> {
 			cfg.setAnimationsEnabled(!cfg.animationsEnabled());
 			QuillClientConfig.saveCurrent();
 		}));
-		drawCheckbox(graphics, font, x + 2, y + 4, cfg.animationsEnabled());
-		QuillDraw.text(graphics, font, "Enable UI animations (transitions, fades & slides)",
-				x + 20, y + 5, QuillTheme.TEXT_PRIMARY);
-		y += 26;
+		drawCheckbox(graphics, x + 2, y + 4, cfg.animationsEnabled());
+		for (int i = 0; i < animLines.size(); i++) {
+			QuillDraw.text(graphics, font, animLines.get(i), x + 20, y + 4 + i * lineStep, QuillTheme.TEXT_PRIMARY);
+		}
+		y += animRowH + 6;
 
 		// ========== SECTION 2: BEHAVIOR, PAUSE, AUTOSAVE & RELOAD ==========
 		QuillDraw.hLine(graphics, x, contentW, y, QuillTheme.BORDER_SUBTLE);
@@ -298,20 +304,23 @@ public final class SettingsPanelWidget {
 		y = renderSectionTitle(graphics, font, x, y, "Gameplay, Autosave & Datapack Reload");
 
 		// Pause game toggle
-		IdeLayout.Rect pauseRowRect = new IdeLayout.Rect(x, y, contentW, 20);
+		List<String> pauseLines = QuillDraw.wrapLines(font, "Pause game while Quill IDE is open (Singleplayer)", Math.max(40, contentW - 24));
+		int pauseRowH = Math.max(20, pauseLines.size() * lineStep + 6);
+		IdeLayout.Rect pauseRowRect = new IdeLayout.Rect(x, y, contentW, pauseRowH);
 		boolean hoverPause = area.contains(mouseX, mouseY) && pauseRowRect.contains(mouseX, mouseY);
 		if (hoverPause) {
 			hoveredClickable = true;
-			QuillDraw.fill(graphics, x, y, contentW, 20, QuillTheme.BG_HOVER);
+			QuillDraw.fill(graphics, x, y, contentW, pauseRowH, QuillTheme.BG_HOVER);
 		}
 		clickTargets.add(new ClickTarget(pauseRowRect, () -> {
 			cfg.setPauseGameWhileOpen(!cfg.pauseGameWhileOpen());
 			QuillClientConfig.saveCurrent();
 		}));
-		drawCheckbox(graphics, font, x + 2, y + 4, cfg.pauseGameWhileOpen());
-		QuillDraw.text(graphics, font, "Pause game while Quill IDE is open (Singleplayer)",
-				x + 20, y + 5, QuillTheme.TEXT_PRIMARY);
-		y += 24;
+		drawCheckbox(graphics, x + 2, y + 4, cfg.pauseGameWhileOpen());
+		for (int i = 0; i < pauseLines.size(); i++) {
+			QuillDraw.text(graphics, font, pauseLines.get(i), x + 20, y + 4 + i * lineStep, QuillTheme.TEXT_PRIMARY);
+		}
+		y += pauseRowH + 4;
 
 		// Autosave mode selector
 		QuillDraw.text(graphics, font, "Autosave Mode", x, y, QuillTheme.TEXT_PRIMARY);
@@ -341,6 +350,10 @@ public final class SettingsPanelWidget {
 		int reloadBtnX = x;
 		for (QuillClientConfig.ReloadTriggerMode mode : reloadModes) {
 			int bw = QuillDraw.textWidth(font, mode.displayName()) + 14;
+			if (reloadBtnX + bw > x + contentW && reloadBtnX > x) {
+				reloadBtnX = x;
+				y += 22;
+			}
 			IdeLayout.Rect r = new IdeLayout.Rect(reloadBtnX, y, bw, 18);
 			boolean active = cfg.reloadTriggerMode() == mode;
 			hoveredClickable |= renderTogglePill(graphics, font, r, mode.displayName(), active, mouseX, mouseY, area, () -> {
@@ -737,11 +750,23 @@ public final class SettingsPanelWidget {
 		return hover;
 	}
 
-	private static void drawCheckbox(GuiGraphicsExtractor graphics, Font font, int x, int y, boolean checked) {
+	static String formatCardTitle(String displayName) {
+		return displayName == null ? "" : displayName;
+	}
+
+	static int previewColorForFont(boolean selected) {
+		return selected ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY;
+	}
+
+	static float previewScaleForFont(QuillClientConfig.FontChoice choice) {
+		return choice == QuillClientConfig.FontChoice.MINECRAFT_UNIFORM ? 1.25f : 1.0f;
+	}
+
+	private static void drawCheckbox(GuiGraphicsExtractor graphics, int x, int y, boolean checked) {
 		QuillDraw.fill(graphics, x, y, 12, 12, checked ? QuillTheme.BG_BUTTON : QuillTheme.BG_INPUT);
 		QuillDraw.outline(graphics, x, y, 12, 12, checked ? QuillTheme.ACCENT_BLUE : QuillTheme.BORDER_SUBTLE);
 		if (checked) {
-			QuillDraw.text(graphics, font, "x", x + 3, y + 2, QuillTheme.TEXT_BRIGHT);
+			QuillDraw.drawCheckmark(graphics, x + 2, y + 2, QuillTheme.TEXT_BRIGHT);
 		}
 	}
 

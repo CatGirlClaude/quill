@@ -89,23 +89,23 @@ odtwarzającym błąd przed poprawką.
 
 ### P1: wygląd i ogólne UX
 - [x] Ogólny styl: GUI wygląda zbyt Minecraftowo. Cel: wrażenie prawdziwej aplikacji. Zaproponować system motywu (kolory, odstępy, obramowania) przed poprawkami pojedynczych elementów.
-- [ ] Ikony wyższej jakości (np. lupa): większa rozdzielczość lub wektory (SVG).
-- [ ] Strzałki w explorerze: zamiast tekstowych `>` i `v` (oraz zamiast znaków ▸ ▾) narysować wektorowe ikony chevron w stylu VS Code (Codicons: cienka, lekko pochylona kreska, zwijana w prawo, rozwijana w dół). Rysować je geometrią w kodzie albo jako SVG/tekstura, nie jako znak tekstowy. Rozmiar i grubość mają pasować do wysokości wiersza przy każdym GUI Scale.
+- [x] Ikony wyższej jakości (np. lupa): większa rozdzielczość lub wektory (SVG).
+- [x] Strzałki w explorerze: zamiast tekstowych `>` i `v` (oraz zamiast znaków ▸ ▾) narysować wektorowe ikony chevron w stylu VS Code (Codicons: cienka, lekko pochylona kreska, zwijana w prawo, rozwijana w dół). Rysować je geometrią w kodzie albo jako SVG/tekstura, nie jako znak tekstowy. Rozmiar i grubość mają pasować do wysokości wiersza przy każdym GUI Scale.
 - [x] Znacznik niezapisanego pliku: kropkę zamienić na `*`.
-- [ ] Plik funkcji: zamienić tekst "fn" na własną ikonę.
-- [ ] Więcej ikon typów plików. Dla typów widocznych, ale nieobsługiwanych, pokazać komunikat na górze ekranu w stylu notyfikacji VS Code.
-- [ ] Nazwy plików i folderów zawsze białe. Kolor pochodzi tylko z prefiksu typu pliku (np. `{}` dla JSON, `function` dla funkcji, `js` dla skryptów).
-- [ ] Podgląd JSON: `{}` z większym odstępem między klamrami, np. `{ }`, ale mniejszym niż zwykła spacja. Pokazać dwie wersje (węższa spacja / osobny glif) i wybrać jedną.
+- [x] Plik funkcji: zamienić tekst "fn" na własną ikonę.
+- [x] Więcej ikon typów plików. Dla typów widocznych, ale nieobsługiwanych, pokazać komunikat na górze ekranu w stylu notyfikacji VS Code.
+- [x] Nazwy plików i folderów zawsze białe. Kolor pochodzi tylko z prefiksu typu pliku (np. `{}` dla JSON, `function` dla funkcji, `js` dla skryptów).
+- [x] Podgląd JSON: `{}` z większym odstępem między klamrami, np. `{ }`, ale mniejszym niż zwykła spacja. Pokazać dwie wersje (węższa spacja / osobny glif) i wybrać jedną.
 - [x] UI jest za duże i zajmuje za dużo ekranu. Zwiększyć zoom out lub naprawić skalowanie. DECYZJA: zwiększyć czy naprawić. Nie może się psuć przy różnym GUI Scale.
 - [x] Skala czcionki różna od domyślnej psuje layout. Opis z screenshotu: [uzupełnić: które elementy nachodzą lub są ucinane].
-- [ ] Status bar na dole: skompaktować i usunąć zbędne informacje.
+- [x] Status bar na dole: skompaktować i usunąć zbędne informacje.
 - [ ] Command palette: usunąć skróty już widoczne w innych miejscach (np. "CTRL + P" przy samym pasku).
 - [ ] Command palette rozwija się z góry zamiast otwierać nowe okno nad wszystkim.
 - [ ] Ustawienia: lewy panel zastąpić listą kategorii. Główna lista zostaje, a kliknięcie kategorii przeskakuje do sekcji.
-- [ ] Ustawienia: usunąć znak `*` przy zaznaczonej opcji.
-- [ ] Ustawienia: zawijanie tekstu tam, gdzie opisy nie mieszczą się w linii (np. `Triggers /reload on every keystroke`).
-- [ ] Ustawienia, Font Family: podgląd "Minecraft Uniform" jest mały i ma niski kontrast. Wszystkie podglądy mają ten sam rozmiar i kontrast, żeby porównanie było uczciwe.
-- [ ] Ustawienia, Font Family: zaznaczona opcja (Monospace) ma `*`. Usunąć razem z pozycją o `*` w ustawieniach.
+- [x] Ustawienia: usunąć znak `*` przy zaznaczonej opcji.
+- [x] Ustawienia: zawijanie tekstu tam, gdzie opisy nie mieszczą się w linii (np. `Triggers /reload on every keystroke`).
+- [x] Ustawienia, Font Family: podgląd "Minecraft Uniform" jest mały i ma niski kontrast. Wszystkie podglądy mają ten sam rozmiar i kontrast, żeby porównanie było uczciwe.
+- [x] Ustawienia, Font Family: zaznaczona opcja (Monospace) ma `*`. Usunąć razem z pozycją o `*` w ustawieniach.
 - [ ] Więcej motywów kolorystycznych.
 - [ ] Animacje w całym UI z globalnym przełącznikiem w ustawieniach.
 

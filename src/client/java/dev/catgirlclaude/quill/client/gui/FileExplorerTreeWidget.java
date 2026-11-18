@@ -273,12 +273,14 @@ public final class FileExplorerTreeWidget {
 
 				if (row instanceof InlineInputRow inlineRow) {
 					InlineEditState edit = inlineRow.edit();
-					String icon = edit.targetIsFile ? "+ " : "> ";
-					int iconColor = edit.targetIsFile ? QuillTheme.TEXT_FUNCTION : QuillTheme.TEXT_FOLDER;
-					int textY = ry + (ROW_HEIGHT - font.lineHeight) / 2;
-					QuillDraw.text(graphics, font, icon, indentX, textY, iconColor);
-
-					int boxX = indentX + QuillDraw.textWidth(font, icon);
+					int iconW;
+					if (edit.targetIsFile) {
+						String sample = edit.input.text().isBlank() ? "file.mcfunction" : edit.input.text();
+						iconW = QuillDraw.drawFileTypeIcon(graphics, font, sample, indentX + 2, ry, ROW_HEIGHT) + 2;
+					} else {
+						iconW = QuillDraw.drawFolderIcon(graphics, indentX, ry, ROW_HEIGHT, true, QuillTheme.TEXT_FOLDER);
+					}
+					int boxX = indentX + iconW + 4;
 					int maxBoxW = Math.max(36, listRect.right() - boxX - 6);
 					int contentW = Math.max(QuillDraw.textWidth(font, edit.input.text()), QuillDraw.textWidth(font, edit.placeholder()));
 					edit.boxRect = computeInlineBoxRect(boxX, ry, maxBoxW, contentW);
@@ -298,23 +300,23 @@ public final class FileExplorerTreeWidget {
 
 					int textY = ry + (ROW_HEIGHT - font.lineHeight) / 2;
 					if (node.kind() == EntryKind.FILE) {
-						String badge = fileBadge(node.name());
-						int badgeColor = colorForFile(node.name(), false);
-						QuillDraw.text(graphics, font, badge, indentX + 1, textY, badgeColor);
-						int nameX = indentX + QuillDraw.textWidth(font, badge) + 4;
+						int iconW = QuillDraw.drawFileTypeIcon(graphics, font, node.name(), indentX + 2, ry, ROW_HEIGHT);
+						int nameX = indentX + 2 + iconW + 4;
 						int maxW = Math.max(0, listRect.right() - nameX - 6);
 						var openTab = session.findOpenTab(node.relativePath());
 						boolean dirty = openTab != null && openTab.isDirty();
 						String displayName = formatFileDisplayName(node.name(), dirty);
 						QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, displayName, maxW),
-								nameX, textY, colorForFile(node.name(), selected));
+								nameX, textY, colorForEntryLabel(selected));
 					} else {
 						boolean expanded = session.isExpanded(node.relativePath());
-						String prefix = expanded ? "v " : "> ";
-						int textColor = node.kind() == EntryKind.DATAPACK ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_FOLDER;
-						int maxW = Math.max(0, listRect.right() - indentX - 6);
-						QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, prefix + node.name(), maxW),
-								indentX, textY, textColor);
+						QuillDraw.drawChevron(graphics, indentX - 1, ry, ROW_HEIGHT, expanded, QuillTheme.TEXT_MUTED);
+						int folderColor = node.kind() == EntryKind.DATAPACK ? QuillTheme.ACCENT_BLUE : QuillTheme.TEXT_FOLDER;
+						int folderW = QuillDraw.drawFolderIcon(graphics, indentX + 10, ry, ROW_HEIGHT, expanded, folderColor);
+						int nameX = indentX + 10 + folderW + 4;
+						int maxW = Math.max(0, listRect.right() - nameX - 6);
+						QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, node.name(), maxW),
+								nameX, textY, colorForEntryLabel(selected));
 					}
 				}
 			}
@@ -668,29 +670,11 @@ public final class FileExplorerTreeWidget {
 	}
 
 	public static String fileBadge(String name) {
-		if (name.endsWith(".mcfunction")) {
-			return "fn";
-		}
-		if (name.endsWith(".json") || name.endsWith(".mcmeta")) {
-			return "{}";
-		}
-		if (name.endsWith(".md")) {
-			return "md";
-		}
-		return "tx";
+		return QuillFileTypes.classify(name).shortLabel();
 	}
 
-	private static int colorForFile(String name, boolean selected) {
-		if (selected) {
-			return QuillTheme.TEXT_BRIGHT;
-		}
-		if (name.endsWith(".mcfunction")) {
-			return QuillTheme.TEXT_FUNCTION;
-		}
-		if (name.endsWith(".json") || name.endsWith(".mcmeta")) {
-			return QuillTheme.TEXT_JSON;
-		}
-		return QuillTheme.TEXT_PRIMARY;
+	static int colorForEntryLabel(boolean selected) {
+		return selected ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY;
 	}
 
 	private static Font safeFont() {

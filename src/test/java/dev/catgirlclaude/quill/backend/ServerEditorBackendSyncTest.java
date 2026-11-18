@@ -38,9 +38,11 @@ class ServerEditorBackendSyncTest {
 		FileTreeNode packNode = root.children().getFirst();
 		assertEquals("my_pack", packNode.name());
 		assertEquals(EntryKind.DATAPACK, packNode.kind());
-		assertEquals(2, packNode.children().size());
+		assertEquals(3, packNode.children().size());
 		assertEquals("data", packNode.children().get(0).name());
 		assertEquals("pack.mcmeta", packNode.children().get(1).name());
+		assertEquals("pack.png", packNode.children().get(2).name());
+		assertThrows(EditorSecurityException.class, () -> ServerEditorBackend.readDocumentSync(sandbox, "my_pack/pack.png"));
 	}
 
 	@Test

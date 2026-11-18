@@ -272,15 +272,16 @@ public final class SearchSidebarWidget {
 				}
 
 				int textY = y + (ROW_HEIGHT - font.lineHeight) / 2;
-				String chevron = collapsed ? ">" : "v";
+				QuillDraw.drawChevron(graphics, headerRect.x() + 2, y, ROW_HEIGHT, !collapsed, QuillTheme.TEXT_MUTED);
 				String rel = file.relativePath();
 				int slash = rel.lastIndexOf('/');
 				String base = slash >= 0 ? rel.substring(slash + 1) : rel;
-				String label = chevron + " " + base + " (" + file.matches().size() + ")";
-				int maxW = Math.max(20, (hoverRow ? replaceBtn.x() : headerRect.right()) - (headerRect.x() + 6));
-				int fileColor = rel.endsWith(".mcfunction") ? QuillTheme.TEXT_FUNCTION
-						: (rel.endsWith(".json") || rel.endsWith(".mcmeta") ? QuillTheme.TEXT_JSON : QuillTheme.TEXT_PRIMARY);
-				QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, label, maxW), headerRect.x() + 4, textY, fileColor);
+				int iconX = headerRect.x() + 14;
+				int iconW = QuillDraw.drawFileTypeIcon(graphics, font, base, iconX, y, ROW_HEIGHT);
+				int labelX = iconX + iconW + 4;
+				String label = base + " (" + file.matches().size() + ")";
+				int maxW = Math.max(20, (hoverRow ? replaceBtn.x() : headerRect.right()) - labelX - 2);
+				QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, label, maxW), labelX, textY, QuillTheme.TEXT_PRIMARY);
 
 				if (hoverRow) {
 					QuillDraw.fill(graphics, replaceBtn.x(), replaceBtn.y(), replaceBtn.width(), replaceBtn.height(),

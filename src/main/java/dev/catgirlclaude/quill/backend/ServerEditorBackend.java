@@ -227,7 +227,10 @@ public class ServerEditorBackend implements EditorBackend {
 			if (entryCount.get() >= EditorLimits.MAX_TREE_ENTRIES) {
 				break;
 			}
-			if (Files.isSymbolicLink(child) || PathSandbox.isTempOrHiddenArchive(child)) {
+			if (Files.isSymbolicLink(child) || PathSandbox.isTempFile(child)) {
+				continue;
+			}
+			if (directChildOfRoot && PathSandbox.isTempOrHiddenArchive(child)) {
 				continue;
 			}
 			boolean isDir = Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS);
@@ -239,8 +242,7 @@ public class ServerEditorBackend implements EditorBackend {
 				EntryKind kind = directChildOfRoot ? EntryKind.DATAPACK : EntryKind.DIRECTORY;
 				List<FileTreeNode> subChildren = scanChildren(sandbox, child, depth + 1, entryCount, false);
 				nodes.add(new FileTreeNode(name, relativePath, kind, subChildren));
-			} else if (!directChildOfRoot && Files.isRegularFile(child, LinkOption.NOFOLLOW_LINKS)
-					&& PathSandbox.hasAllowedExtension(name)) {
+			} else if (!directChildOfRoot && Files.isRegularFile(child, LinkOption.NOFOLLOW_LINKS)) {
 				entryCount.incrementAndGet();
 				nodes.add(new FileTreeNode(name, relativePath, EntryKind.FILE, List.of()));
 			}

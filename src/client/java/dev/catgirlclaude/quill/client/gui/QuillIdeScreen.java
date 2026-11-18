@@ -74,6 +74,7 @@ public class QuillIdeScreen extends Screen {
 	private final CodeEditorWidget codeEditorWidget;
 	private final SettingsPanelWidget settingsPanel;
 	private final BottomPanelWidget bottomPanelWidget;
+	private final QuillNotificationBanner notificationBanner;
 
 	private IdeModal activeModal = null;
 	private QuickPickOverlay activeQuickPick = null;
@@ -134,6 +135,7 @@ public class QuillIdeScreen extends Screen {
 		this.codeEditorWidget.setOnBufferEdited(session::notifyTabBufferEdited);
 		this.settingsPanel = new SettingsPanelWidget(this::closeSettings, this::onResetWindowBounds);
 		this.bottomPanelWidget = new BottomPanelWidget(session);
+		this.notificationBanner = new QuillNotificationBanner(session);
 		this.lastObservedActiveTab = session.activeTab();
 		this.tabBarWidget.setSettingsHooks(
 				() -> settingsOpen,
@@ -575,6 +577,8 @@ public class QuillIdeScreen extends Screen {
 				QuillDraw.text(graphics, font, hoveredActivityTooltip, tx + 5, ty + (th - font.lineHeight) / 2, QuillTheme.TEXT_BRIGHT);
 			}
 
+			notificationBanner.render(graphics, font, win, layout.titleBar().bottom(), uiMouseX, uiMouseY);
+
 			if (activeQuickPick != null) {
 				activeQuickPick.render(graphics, font, vw, vh, vmX, vmY);
 			}
@@ -682,8 +686,11 @@ public class QuillIdeScreen extends Screen {
 		}
 
 		int closeColor = hoverClose ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY;
-		QuillDraw.text(graphics, font, "x", closeBtnRect.x() + (closeBtnRect.width() - QuillDraw.textWidth(font, "x")) / 2,
-				textY, closeColor);
+		QuillDraw.drawCloseX(graphics,
+				closeBtnRect.x() + (closeBtnRect.width() - 8) / 2,
+				closeBtnRect.y() + (closeBtnRect.height() - 8) / 2,
+				8,
+				closeColor);
 
 		if (hoverMax || hoverClose || hoverRun || hoverCmdCenter) {
 			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
@@ -773,14 +780,9 @@ public class QuillIdeScreen extends Screen {
 	}
 
 	private static void drawSearchIcon(GuiGraphicsExtractor graphics, IdeLayout.Rect r, int color) {
-		int cx = r.x() + (r.width() - 12) / 2;
-		int cy = r.y() + (r.height() - 12) / 2;
-		// Magnifier ring
-		QuillDraw.outline(graphics, cx + 1, cy + 1, 7, 7, color);
-		// Diagonal handle
-		QuillDraw.fill(graphics, cx + 7, cy + 7, 2, 2, color);
-		QuillDraw.fill(graphics, cx + 9, cy + 9, 2, 2, color);
-		QuillDraw.fill(graphics, cx + 10, cy + 10, 2, 2, color);
+		int cx = r.x() + (r.width() - 13) / 2;
+		int cy = r.y() + (r.height() - 13) / 2;
+		QuillDraw.drawSearchLoupe(graphics, cx, cy, color);
 	}
 
 	private static void drawInspectorIcon(GuiGraphicsExtractor graphics, IdeLayout.Rect r, int color) {
@@ -807,20 +809,7 @@ public class QuillIdeScreen extends Screen {
 	}
 
 	private static void drawGearIcon(GuiGraphicsExtractor graphics, IdeLayout.Rect r, int color) {
-		int cx = r.x() + r.width() / 2;
-		int cy = r.y() + r.height() / 2;
-		// 4 cardinal + 4 diagonal teeth
-		QuillDraw.fill(graphics, cx - 1, cy - 6, 2, 2, color);
-		QuillDraw.fill(graphics, cx - 1, cy + 4, 2, 2, color);
-		QuillDraw.fill(graphics, cx - 6, cy - 1, 2, 2, color);
-		QuillDraw.fill(graphics, cx + 4, cy - 1, 2, 2, color);
-		QuillDraw.fill(graphics, cx - 5, cy - 5, 2, 2, color);
-		QuillDraw.fill(graphics, cx + 3, cy - 5, 2, 2, color);
-		QuillDraw.fill(graphics, cx - 5, cy + 3, 2, 2, color);
-		QuillDraw.fill(graphics, cx + 3, cy + 3, 2, 2, color);
-		// Outer gear body + hollow center
-		QuillDraw.fill(graphics, cx - 4, cy - 4, 8, 8, color);
-		QuillDraw.fill(graphics, cx - 2, cy - 2, 4, 4, QuillTheme.BG_ACTIVITY_BAR);
+		QuillDraw.drawGearIcon(graphics, r.x() + r.width() / 2, r.y() + r.height() / 2, color, QuillTheme.BG_ACTIVITY_BAR);
 	}
 
 	protected void renderSidebar(GuiGraphicsExtractor graphics, IdeLayout.Rect sidebar, int mouseX, int mouseY) {
@@ -1002,8 +991,7 @@ public class QuillIdeScreen extends Screen {
 		leftX = statusRemoteBadgeRect.right() + 4;
 
 		dev.catgirlclaude.quill.client.config.KeyShortcut saveShortcut = cfg.shortcut(QuillClientConfig.ShortcutAction.SAVE);
-		String saveBase = cfg.shouldReloadOnSave() ? "Save & Reload" : "Save";
-		String saveLabel = saveShortcut.isUnbound() ? saveBase : saveBase + " (" + saveShortcut.displayLabel() + ")";
+		String saveLabel = saveShortcut.isUnbound() ? "Save" : "Save (" + saveShortcut.displayLabel() + ")";
 		String reloadLabel = "Reload";
 		String problemsLabel = "!" + errorCount;
 		String outputLabel = "Output";
@@ -1054,37 +1042,24 @@ public class QuillIdeScreen extends Screen {
 			statusWarningPillRect = new IdeLayout.Rect(0, 0, 0, 0);
 		}
 
-		// Right-side VS Code metadata
+		// Right-side compact VS Code metadata
 		OpenTabState active = settingsOpen ? null : session.activeTab();
-		String zoomPrefix = cfg.zoomPercent() != QuillClientConfig.DEFAULT_ZOOM_PERCENT
-				? cfg.zoomPercent() + "%  |  "
-				: "";
-		String rightInfo;
-		if (active != null) {
-			String selInfo = active.buffer().hasSelection()
-					? " (" + active.buffer().selectedCharCount() + " selected)"
-					: "";
-			rightInfo = zoomPrefix + "Ln " + active.buffer().oneBasedLine() + ", Col " + active.buffer().oneBasedColumn() + selInfo
-					+ "  |  Spaces: 4  |  UTF-8  |  LF  |  " + languageLabel(active.fileName());
-		} else if (settingsOpen) {
-			rightInfo = zoomPrefix + "Settings  |  UTF-8";
-		} else {
-			rightInfo = zoomPrefix + (session.isReloadPendingOnClose() ? "Reload on close  |  " : "") + "UTF-8";
-		}
-		int rightW = QuillDraw.textWidth(font, rightInfo);
+		String rightInfo = formatStatusRightInfo(active, cfg.zoomPercent(), settingsOpen, session.isReloadPendingOnClose());
+		int rightW = rightInfo.isEmpty() ? 0 : QuillDraw.textWidth(font, rightInfo);
 		int rightX = bar.right() - rightW - 8;
-		if (rightX > statusX + 8) {
+		if (!rightInfo.isEmpty() && rightX > statusX + 8) {
 			QuillDraw.text(graphics, font, rightInfo, rightX, textY, QuillTheme.TEXT_BRIGHT);
-		} else {
-			// Compact fallback when window is narrow
-			String compact = active != null
-					? "Ln " + active.buffer().oneBasedLine() + ", Col " + active.buffer().oneBasedColumn()
-					: "UTF-8";
+		} else if (active != null) {
+			String compact = "Ln " + active.buffer().oneBasedLine() + ", Col " + active.buffer().oneBasedColumn();
 			int cw = QuillDraw.textWidth(font, compact);
 			rightX = bar.right() - cw - 6;
 			if (rightX > statusX + 4) {
 				QuillDraw.text(graphics, font, compact, rightX, textY, QuillTheme.TEXT_BRIGHT);
+			} else {
+				rightX = bar.right() - 4;
 			}
+		} else {
+			rightX = bar.right() - 4;
 		}
 
 		int statusMaxW = Math.max(0, rightX - statusX - 8);
@@ -1099,6 +1074,30 @@ public class QuillIdeScreen extends Screen {
 		if (hoverBadge || hoverSave || hoverReload || hoverProb || hoverOut || hoverWarn) {
 			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 		}
+	}
+
+	static String formatStatusRightInfo(
+			OpenTabState active,
+			int zoomPercent,
+			boolean settingsOpen,
+			boolean reloadPendingOnClose
+	) {
+		List<String> parts = new ArrayList<>();
+		if (zoomPercent != QuillClientConfig.DEFAULT_ZOOM_PERCENT) {
+			parts.add(zoomPercent + "%");
+		}
+		if (active != null) {
+			String selInfo = active.buffer().hasSelection()
+					? " (" + active.buffer().selectedCharCount() + " sel)"
+					: "";
+			parts.add("Ln " + active.buffer().oneBasedLine() + ", Col " + active.buffer().oneBasedColumn() + selInfo);
+			parts.add(languageLabel(active.fileName()));
+		} else if (settingsOpen) {
+			parts.add("Settings");
+		} else if (reloadPendingOnClose) {
+			parts.add("Reload pending");
+		}
+		return String.join("  |  ", parts);
 	}
 
 	private static String languageLabel(String fileName) {
@@ -1313,6 +1312,9 @@ public class QuillIdeScreen extends Screen {
 			boolean handled = activeQuickPick.mouseClicked(ev);
 			syncTextInputState();
 			return handled;
+		}
+		if (notificationBanner.mouseClicked(ev)) {
+			return true;
 		}
 		double mx = ev.x();
 		double my = ev.y();

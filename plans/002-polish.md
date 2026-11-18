@@ -22,7 +22,7 @@ To move away from "blocky Minecraft UI" toward a clean native IDE aesthetic, eve
 | **Pane Dividers** | Ad-hoc `hLine` / `vLine` with identical color | `BORDER_SUBTLE` (`1px` structural split), `BORDER_FOCUS` (`ACCENT_BLUE` on active pane/input), `DIVIDER_SOFT` (section separators) |
 | **Dirty Indicator** | Status bar turns red/orange (`BG_STATUS_DIRTY`); tab uses dot/color | Neutral `*` suffix/prefix indicator in `TEXT_PRIMARY`/`TEXT_MUTED`; keep error red (`TEXT_ERROR`/`BG_STATUS_ERROR`) strictly for reload/validation errors |
 | **Filename Colors** | Filenames tinted by extension in explorer/tabs | Always white/primary (`TEXT_PRIMARY` / `TEXT_BRIGHT`); color lives exclusively on the compact file-type prefix badge (`{}`, `fn`, etc.) |
-| **Notification Toast** | Errors go to bottom status bar or modal | Top-right/top-center non-blocking VS Code-style toast banner (`BG_NOTIFICATION`, `BORDER_SUBTLE`, accent stripe, dismiss button + auto-timeout) |
+| **Notification Toast** | Errors go to bottom status bar or modal | Top-right/top-center non-blocking VS Code-style toast banner (`BG_NOTIFICATION`, `BORDER_SUBTLE`, accent stripe, `X` close button, persistent without auto-hide) |
 | **Settings Category Rail** | Single long scroll list with no navigation | Left category rail (`150px` fixed in virtual space) with active left accent bar jumping directly to scroll anchor (`Appearance`, `Gameplay`, `Templates`, `Layout`, `Keybindings`) |
 
 ### 1.2 Spacing & Typography Rhythm (`QuillMetrics`)
@@ -38,7 +38,7 @@ Centralize geometry constants into `QuillTheme` (or a nested `QuillMetrics` reco
 ### 1.3 Vector Graphics & Iconography
 
 - **Explorer Chevrons**: Replace ASCII `>` / `v` with crisp Codicons-style geometric chevrons drawn via geometry or high-DPI `16x16` / `32x32` linear-filtered icon textures (`stroke = 1.25px`, `45°` arms, collapsed pointing right, expanded pointing down), scaled cleanly to row height.
-- **UI & File-Type Icons**: Render Search loupe, Function (`fx`/`fn` wave-block icon), JSON (`{}` with calibrated spacing — pending decision), Folder, Settings gear, and Close/Maximize glyphs cleanly via crisp vector/bitmap primitives rather than ASCII stand-ins.
+- **UI & File-Type Icons**: Render Search loupe, Function (`fx`/`fn` wave-block icon), JSON (`{}` drawn via **Approved Version B**: separate `{` and `}` draws with `+2px` gap across all fonts), Folder, Settings gear, and Close/Maximize glyphs cleanly via crisp vector/bitmap primitives rather than ASCII stand-ins.
 
 ---
 
@@ -50,13 +50,13 @@ Currently `Screen.width` and `Screen.height` in Minecraft `26.3` are already div
 - At **MC GUI Scale `4` on `1920x1080`**, `Screen.width = 480`, `Screen.height = 270`. At `uiScale = 1.0`, Quill looks oversized and covers almost the entire screen; zooming in (`1.5x+`) shrinks the virtual viewport to `320x180`, triggering `MIN_WINDOW_HEIGHT = 200` and collapsing/overlapping the sidebar and Settings grid.
 - At **MC GUI Scale `1` on `1920x1080`**, `Screen.width = 1920`, `Screen.height = 1080`. The IDE becomes minuscule unless zoomed up to `16px`.
 
-### Proposed GUI-Scale-Independent Formula
+### Approved GUI-Scale-Independent Formula & `50%–200%` Zoom Range
 
 Anchor Quill's virtual coordinate space to **physical framebuffer pixels** (`window.getWidth()`, `window.getHeight()`) normalized to a crisp desktop baseline (`TARGET_DENSITY = 2.0f`, representing comfortable `~960x540` virtual space on a `1080p` display):
 
 ```text
 mcGuiScale     = max(1, minecraft.getWindow().getGuiScale())
-userZoom       = cfg.zoomFactor()                  // independent of MC GUI Scale
+userZoom       = clamp(cfg.zoomFactor(), 0.50f, 2.00f)   // 50% - 200%
 effectiveScale = (TARGET_DENSITY * userZoom) / mcGuiScale
 virtualWidth   = round(Screen.width  / effectiveScale)
 virtualHeight  = round(Screen.height / effectiveScale)
@@ -66,7 +66,7 @@ Properties of this formula:
 1. Changing Minecraft's `GUI Scale` (`1x`, `2x`, `3x`, `4x`, `Auto`) **cancels out cleanly** — Quill keeps the exact same screen proportion, readable font density, sidebar width, and window bounds!
 2. `IdeLayout.compute(...)` clamps floating/docked window rectangles cleanly within `[minWindowWidth, virtualWidth] x [minWindowHeight, virtualHeight]` and enforces responsive breakpoints (e.g., Settings 1-column vs 2-column grid, auto-hiding optional status segments on very small windows `< 640px` physical equivalent).
 3. Custom window bounds (`windowX/Y/W/H`) remain stored in **physical pixels** so switching MC GUI Scale or zoom never jumps or clips the window off-screen.
-4. **Pending Decision (Zoom Out)**: Determine whether to expand zoom-out range (e.g., down to `0.6x` now that baseline GUI Scale is normalized) or replace fine zoom-out with discrete comfortable density presets (`Compact / Default / Comfortable` or `0.75x–1.5x`).
+4. **Approved Zoom Range**: **`50% – 200%`** (`0.50f` to `2.00f`), paired with the GUI-Scale-independent normalization above.
 
 ---
 
@@ -76,17 +76,16 @@ Each slice produces a self-contained, testable improvement with unit tests and a
 
 ### Slice 1 — Core Theme Tokens, GUI-Scale-Independent `IdeLayout` & Animation State
 - **Scope**:
-  - Normalize `QuillIdeScreen` scaling against `Window.getGuiScale()` so MC GUI Scale changes leave layout intact.
-  - Add responsive layout tests in `IdeLayoutTest` verifying layout invariants across simulated MC GUI Scales `1..4` and zoom steps.
+  - Normalize `QuillIdeScreen` scaling against `Window.getGuiScale()` so MC GUI Scale changes leave layout intact, with **`50%–200%`** user zoom range.
+  - Add responsive layout tests in `IdeLayoutTest` verifying layout invariants across simulated MC GUI Scales `1..4` and zoom steps (`50%–200%`).
   - Add `QuillMetrics` constants (`EXPLORER_ROW_HEIGHT = 17`, etc.) and `QuillClientConfig` global `animationsEnabled` toggle + animation interpolator utility.
 - **Touches**: `QuillTheme`, `IdeLayout`, `QuillClientConfig`, `QuillIdeScreen`.
 
 ### Slice 2 — Vector Icons, Explorer Visuals, File-Type Notifications & Compact Status Bar
 - **Scope**:
-  - Geometric VS Code Codicons chevrons (`>` / `v`), crisp Search/Function/File-type icons, white filenames with colored type prefixes, neutral `*` dirty markers across tabs/sidebar, compact bottom Status Bar.
-  - Visual parity fix for Font Family previews (equal cap-height & `TEXT_PRIMARY` contrast; remove `* `).
-  - Top VS Code-style notification banner for visible unsupported file types (pending approved type matrix & message text).
-  - Calibrated `{}` JSON badge spacing (pending approved spacing option).
+  - Geometric VS Code Codicons chevrons (`>` / `v`), crisp Search/Function/File-type icons (`{}` Version B with separate `{` + `}` draws and `+2px` gap), white filenames with colored type prefixes, compact bottom Status Bar.
+  - Visual parity fix for Font Family previews (equal cap-height & `TEXT_PRIMARY` contrast; remove `* ` from Theme and Font cards).
+  - Top VS Code-style notification banner for visible unsupported file types: `"<filename> cannot be opened in the Quill text editor yet (unsupported format)."`, **no auto-hide**, closed via explicit **`X`** button.
 - **Touches**: `QuillDraw`, `FileExplorerTreeWidget`, `EditorTabBarWidget`, `SettingsPanelWidget`, `SearchSidebarWidget`, `QuillIdeScreen`.
 
 ### Slice 3 — Top-Anchored Command Palette & Quick Open
@@ -99,7 +98,7 @@ Each slice produces a self-contained, testable improvement with unit tests and a
 ### Slice 4 — Settings Category Navigation, Extra Color Themes & Configurable Undo/Redo Shortcuts
 - **Scope**:
   - Replace single monolithic Settings header with a left category rail (`Appearance`, `Behavior`, `Templates`, `Window & Scale`, `Keybindings`) that scrolls smoothly/jumps to the selected section.
-  - Add additional curated VS Code color palettes (`GitHub Dark`, `Catppuccin Mocha`, `Nord`, `Monokai`, `One Light`, etc.) to `QuillColorPalette`.
+  - Add additional curated VS Code color palettes to `QuillColorPalette`.
   - Expose `UNDO` (`Ctrl+Z`) and `REDO` (`Ctrl+Shift+Z`) in `QuillClientConfig.ShortcutAction`.
 - **Touches**: `QuillColorPalette`, `QuillClientConfig`, `SettingsPanelWidget`.
 
@@ -107,7 +106,7 @@ Each slice produces a self-contained, testable improvement with unit tests and a
 - **Scope**:
   - Remove `+File` / `+Dir` toolbar button clutter from the Explorer header cleanly once context menu + shortcuts cover all actions.
   - Right-click context menu on files and folders (`Run function`, `Open to side`, `Reveal in file explorer`, `Find file references`, `Cut`, `Copy`, `Copy path`, `Delete`, `Rename`) respecting server vs local capability safely.
-  - Keyboard shortcuts when Explorer has focus: `F2`, `Delete`, `Ctrl+C`, `Ctrl+X`, `Ctrl+V` + Explorer undo stack (`Ctrl+Z` outside editor).
+  - Keyboard shortcuts when Explorer has focus: `F2`, `Delete`, `Ctrl+C`, `Ctrl+X`, `Ctrl+V` + Explorer undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z` outside editor).
 - **Touches**: `FileExplorerTreeWidget`, `ClientEditorSession`, `QuillIdeScreen`, reusable `ContextMenuOverlay`.
 
 ### Slice 6 — Code Editor & Tab Context Menus, `Ctrl+F`, `Alt+Z`, `Shift+Scroll`, `Ctrl+Click`
@@ -121,11 +120,11 @@ Each slice produces a self-contained, testable improvement with unit tests and a
 ### Slice 7 — Search `Include`/`Exclude` Filters & Output Console
 - **Scope**:
   - Collapsible `Files to include` / `Files to exclude` glob inputs hidden by default behind a toggle button in `SearchSidebarWidget`.
-  - Selectable/copyable text in `BottomPanelWidget` (`Output` tab) + live Minecraft log stream & player command input (pending scope decision).
+  - Selectable/copyable text in `BottomPanelWidget` (`Output` tab) + live Minecraft log stream & player command input (pending scope decision for command suggestions).
 - **Touches**: `SearchSidebarWidget`, `WorkspaceSearchEngine`, `BottomPanelWidget`, `ClientEditorSession`.
 
 ### Slice 8 — Client-Side `/quill` Command Tree
 - **Scope**:
-  - Register `/quill` client-only command tree via Fabric API `ClientCommandRegistrationCallback` & `ClientCommands` (`fabric-command-api-v2` `3.1.2`), verified against `26.3` bytecode.
-  - Opens specific IDE views/tabs without sending packets to the server (pending approved subcommand list).
+  - Register `/quill` client-only command tree via Fabric API `ClientCommandRegistrationCallback` & `ClientCommands` (`fabric-command-api-v2` `3.1.2`), verified against `26.3` bytecode: `/quill`, `/quill config` | `settings`, `/quill explorer`, `/quill search [query]`, `/quill inspector`, `/quill presets`, `/quill open <path>`, `/quill new datapack`, `/quill reload`.
+  - Opens specific IDE views/tabs without sending packets to the server.
 - **Touches**: `QuillClient`, `QuillClientCommands`, `QuillIdeScreen`.

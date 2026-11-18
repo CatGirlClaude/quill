@@ -265,3 +265,29 @@ Choosing Option A means we do not get browser DOM/CSS or pre-built tree/code wid
   - Prevents optimistic-concurrency (`SHA-256`) race conditions during rapid typing in instant autosave mode.
   - Keeps RPC wire protocol `v1` backward compatible while delivering full templated datapack scaffolding in both SP and MP.
 
+---
+
+## ADR-011: GUI-Scale-Independent Viewport Normalization, Split Undo Stacks, Approved Polish Standards, and Client Commands (`/quill`)
+
+- **Date**: 2026-11-18
+- **Status**: Accepted (User-approved during P1/P2 Planning Review)
+- **Decision**:
+  1. **GUI-Scale-Independent Scaling & Expanded `50%–200%` Zoom**:
+     - Normalize `QuillIdeScreen` against Minecraft's `Window.getGuiScale()` using `effectiveScale = (TARGET_DENSITY * userZoom) / mcGuiScale` (`TARGET_DENSITY = 2.0f`), keeping IDE proportions invariant when switching MC GUI Scale (`1x`–`4x+`) or `Auto`.
+     - Expand user zoom range to **`50%–200%`** (`0.50f – 2.00f`, persisted cleanly) while enforcing `IdeLayout` responsive breakpoints and physical-pixel window bounds storage.
+  2. **Separate Undo/Redo Stacks (`Ctrl+Z` / `Ctrl+Shift+Z`)**:
+     - Route `Ctrl+Z` / `Ctrl+Shift+Z` to `TextDocumentBuffer` when the code editor has focus, and to `ClientEditorSession`'s file-operation undo/redo stack (capturing pre-delete snapshots silently with no confirmation prompt) when Explorer or non-editor UI has focus.
+  3. **Typography & Iconography Standards**:
+     - Render all 5 `FontChoice` previews in Settings at normalized cap-height and uniform high contrast (`TEXT_PRIMARY`), without `* ` markers on active options.
+     - Render JSON `{}` prefix icons using **Version B** (separate `{` and `}` glyph draws with fixed `+2 px` internal gap across all font families).
+     - Keep all explorer/tab filenames neutral (`TEXT_PRIMARY`/`TEXT_BRIGHT`) and restrict syntax/type tinting to the prefix icon badge; mark unsaved changes with neutral `*` rather than red/orange status bar fills.
+  4. **Unsupported File Visibility & Persistent Notification Toast**:
+     - Surface visible non-text datapack formats (`.png`, `.ogg`, `.nbt`, `.zip`, `.bin`, etc.) in the Explorer tree with tailored prefix icons, and show a top VS Code-style notification banner when clicked: `"<filename> cannot be opened in the Quill text editor yet (unsupported format)."`, persisting until manually dismissed with **`X`** (no auto-hide).
+  5. **Client-Side `/quill` Command Tree (`fabric-command-api-v2`)**:
+     - Register client-only `/quill` commands via `ClientCommandRegistrationCallback` and `ClientCommands` (opening Settings/Explorer/Search/Inspector/Presets, jumping to files, prompting New Datapack, or triggering reload cleanly without server packets).
+- **Rationale**:
+  - Eliminates layout breakage across MC GUI Scales `1x`–`4x` and `Auto` while giving users wide `50%–200%` zoom flexibility.
+  - Prevents destructive surprises (file deletion via `Ctrl+Z` while editing code, or reddish status bars mistaken for syntax errors).
+  - Keeps visual comparisons honest in Settings and ensures unsupported file clicks give clear non-intrusive feedback without vanishing before the user can read them.
+
+

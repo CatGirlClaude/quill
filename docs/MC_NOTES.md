@@ -75,6 +75,23 @@ Located at `data/minecraft/tags/function/load.json` and `data/minecraft/tags/fun
 }
 ```
 
+### 2.4 Registry JSON Schema Changes in Minecraft `26.3`
+
+Verified directly from `minecraft-common.jar` codecs (`ShapedRecipe`, `ShapelessRecipe`, `LootPoolSingletonContainer`, `EntityPredicate`, `Advancement`):
+
+- **Recipes (`data/<namespace>/recipe/<name>.json`)**:
+  - `Ingredient` serializes as a bare item/tag string (not `{"item": "..."}` objects):
+    - `minecraft:crafting_shaped` `key`: `"#": "minecraft:stick"`
+    - `minecraft:crafting_shapeless` `ingredients`: `["minecraft:stick", "minecraft:coal"]`
+  - `result` uses `"id"` (and optional `"count"`), e.g., `{"id": "minecraft:diamond_shovel", "count": 1}`.
+- **Loot Tables (`data/<namespace>/loot_table/<name>.json`)**:
+  - Pool entries (`LootPoolSingletonContainer`) use singular `"modifier"` (e.g., `{"type": "minecraft:set_count", ...}`) and singular `"condition"` (with `"type": "minecraft:..."`), **not** the legacy plural `"functions"` / `"conditions"` arrays.
+- **Predicates (`data/<namespace>/predicate/<name>.json`)**:
+  - Uses top-level `"type"` (e.g., `"minecraft:entity_properties"`).
+  - Entity sub-predicate keys under `"predicate"` are namespaced (`"minecraft:entity_type": "minecraft:player"`, `"minecraft:flags": {"is_sneaking": true}`).
+- **Advancements (`data/<namespace>/advancement/<name>.json`)**:
+  - Display icon uses `"icon": {"id": "minecraft:writable_book"}` along with `criteria` and `requirements`.
+
 ---
 
 ## 3. Unobfuscated Build & Loom Pitfalls (`26.1+`)
@@ -115,7 +132,7 @@ In `26.3`, input methods receive record wrappers from `net.minecraft.client.inpu
 - `boolean mouseReleased(MouseButtonEvent event)`
 - `boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY)`
 - `boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY)`
-- `boolean keyPressed(KeyEvent event)` — `event.key()` (`InputConstants.KEY_*` physical scancode), `event.shortcutKey()` (`event.keycode()`, `InputConstants.KEYCODE_*` or ASCII char like `'s'`), `event.hasControlDownWithQuirk()`, `event.hasShiftDown()`, `event.isCopy()`, `event.isPaste()`, `event.isCut()`, `event.isSelectAll()`. Do **not** import `org.lwjgl.glfw.GLFW` in `src/client`.
+- `boolean keyPressed(KeyEvent event)` — `event.key()` (`InputConstants.KEY_*` physical SDL3 scancode, e.g., `KEY_ESCAPE = 41`, `KEY_F1`, `KEY_TAB`), `event.shortcutKey()` (`event.keycode()`, `InputConstants.KEYCODE_*` or lowercase ASCII char like `'p'`, `'s'`, `'j'`), `event.hasControlDownWithQuirk()`, `event.hasShiftDown()`, `event.hasAltDown()`, `event.isCopy()`, `event.isPaste()`, `event.isCut()`, `event.isSelectAll()`. Modifier bitmasks in `InputWithModifiers`: Shift `& 3`, Ctrl `& 192`, Alt `& 768`, cross-platform edit shortcut `InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER`. Do **not** import `org.lwjgl.glfw.GLFW` in `src/client`.
 - `boolean charTyped(CharacterEvent event)` — `event.codepoint()`, `event.codepointAsString()`
 - **SDL3 Text Input Pitfall (`TextInputManager`)**: Minecraft `26.3` uses SDL3, which only emits `SDL_EVENT_TEXT_INPUT` -> `Screen.charTyped(CharacterEvent)` while text input is explicitly started via `minecraft.textInputManager().startTextInput(owner)` (and stopped via `stopTextInput(owner)` in `removed()`). Without this call, `keyPressed` (`Backspace`, `Enter`, `Home`, `End`, arrows) still fires while `charTyped` stays silent. Custom `Screen`s that do not focus a vanilla `EditBox` must manage `TextInputManager` and override `isInputCaptured()`.
 
@@ -160,6 +177,15 @@ Verified via `javap` against `fabric-networking-api-v1` and Minecraft `26.3`:
   - `ServerPlayer.nameAndId()` returns `net.minecraft.server.players.NameAndId` (carrying `id()` UUID and `name()`).
   - `ServerPlayer.hasDisconnected()` checks whether a player disconnected before an async RPC response is sent back.
   - Operator level >= 2 permission check uses `player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)`.
+
+### 4.7 Client Brigadier Autocomplete, Command Dispatch & Output Capture
+
+Verified against `net.minecraft.client.multiplayer.ClientPacketListener` and Fabric API (`fabric-message-api-v1`):
+- **Live Command Tree**: `ClientPacketListener connection = Minecraft.getInstance().getConnection();`
+  - `connection.getCommands()` returns `CommandDispatcher<ClientSuggestionProvider>` synchronized from the connected server (works identically in Singleplayer and Multiplayer).
+  - `connection.getSuggestionsProvider()` returns `ClientSuggestionProvider` for `dispatcher.parse(line, source)` and `dispatcher.getCompletionSuggestions(parseResults, cursor)`.
+- **Running Commands**: `connection.sendCommand("function " + functionId)` dispatches a server command without a leading `/`.
+- **Capturing Command Feedback**: Register `ClientReceiveMessageEvents.GAME.register((Component message, boolean overlay) -> ...)` in `QuillClient` to stream server/function output into Quill's `OUTPUT` panel (skipping action-bar `overlay == true` messages).
 
 ---
 

@@ -15,8 +15,9 @@ flowchart TB
     subgraph Client ["src/client (Client Environment Only)"]
         KeyBind["QuillKeyMappings\n(Open IDE Shortcut)"]
         Screen["QuillIdeScreen\n(Non-pausing VS Code UI)"]
-        Widgets["UI Components\n(ActivityBar, ExplorerTree,\nTabBar, CodeEditor, StatusBar)"]
-        ClientSession["ClientSessionManager &\nClientEditorSession\n(Tabs, Dirty State, Conflict Modal)"]
+        Widgets["UI Widgets & Overlays\n(Explorer, Search, Inspector, Presets,\nTabBar, CodeEditor, BottomPanel, QuickPick)"]
+        EditorSvc["Pure-Java Language Services\n(TextDocumentBuffer, SyntaxHighlighter,\nBrigadierAssistService, WorkspaceSearchEngine,\nDatapackInspector, WorkspaceFileCache)"]
+        ClientSession["ClientSessionManager &\nClientEditorSession\n(Tabs, Output Log, Revision, Conflict Modal)"]
         RemoteBackend["RemoteEditorBackend &\nClientNetworkHandler\n(Chunked C2S/S2C RPC Client)"]
     end
 
@@ -24,14 +25,16 @@ flowchart TB
         API["EditorBackend Interface\n+ Immutable DTO Records"]
         LocalBackend["ServerEditorBackend\n(Local & Server File/Reload Service)"]
         Sandbox["PathSandbox, QuillAccessControl,\nEditorPermissionChecker, ServerRateLimiter"]
-        Scaffolder["DatapackScaffolder & PresetRegistry\n(pack.mcmeta, namespaces, load/tick)"]
+        Scaffolder["DatapackScaffolder & PresetRegistry\n(pack.mcmeta, namespaces, tags, MC 26.3 JSON)"]
         Reloader["DatapackReloadCoordinator\n(PackRepository + Reload Diagnostics)"]
         NetServer["QuillNetworkPayloads &\nServerNetworkEditorHandler\n(24 KB Chunked C2S/S2C RPC)"]
     end
 
     KeyBind --> Screen
     Screen --> Widgets
+    Widgets --> EditorSvc
     Widgets --> ClientSession
+    EditorSvc --> ClientSession
     ClientSession --> API
     ClientSession -.->|Singleplayer IntegratedServer| LocalBackend
     ClientSession -.->|Multiplayer| RemoteBackend
@@ -49,14 +52,15 @@ flowchart TB
   - `api/` — `EditorBackend` interface, request/response records (`FileTreeNode`, `FileDocument`, `SaveResult`, `ReloadReport`, `ReloadDiagnostic`, `PresetDescriptor`), and `RevisionConflictException`.
   - `backend/` — `ServerEditorBackend` (executes validated, per-root synchronized operations against a `MinecraftServer`'s `datapacks/` directory).
   - `security/` — `PathSandbox`, `QuillAccessControl` (`config/quill-acl.json`), `EditorPermissionChecker`, `ServerRateLimiter`, `EditorLimits`, `EditorSecurityException`.
-  - `preset/` — `PresetRegistry` and loader for built-in preset templates under `src/main/resources/assets/quill/presets/`.
+  - `preset/` — `DatapackScaffolder` and `PresetRegistry` (loads built-in function-tag and MC `26.3` registry JSON templates under `src/main/resources/assets/quill/presets/`).
   - `reload/` — `DatapackReloadCoordinator` (triggers `PackRepository.reload()` + `MinecraftServer.reloadResources(...)` and captures function/JSON parse diagnostics).
   - `network/` — `QuillNetworkPayloads` (`quill:c2s_frame`, `quill:s2c_frame`, `quill:s2c_tree_changed`), `QuillRpcRequest`, `QuillRpcResponse`, `QuillProtocolCodec`, `ChunkedTransferAssembler`, and `ServerNetworkEditorHandler`.
 - **`src/client/java/dev/catgirlclaude/quill/client/`**:
   - `input/` — `QuillKeyMappings` (`KeyMappingHelper` registration, server capability check via `ClientNetworkHandler.isServerQuillAvailable()`, and tick listener).
   - `network/` — `RemoteEditorBackend` (chunked C2S/S2C RPC `EditorBackend` client) and `ClientNetworkHandler` (S2C receivers and disconnect cleanup).
-  - `session/` — `ClientSessionManager`, `ClientEditorSession`, and `OpenTabState` (manages singleplayer/multiplayer sessions, open tabs, optimistic concurrency conflict prompts, and live `TreeChangedPayload` synchronization).
-  - `gui/` — `QuillIdeScreen` and VS Code-styled widgets (`ActivityBarWidget`, `FileExplorerTreeWidget`, `EditorTabBarWidget`, `CodeEditorWidget`, `StatusBarWidget`, `ModalPromptOverlay`).
+  - `session/` — `ClientSessionManager`, `ClientEditorSession`, and `OpenTabState` (manages singleplayer/multiplayer sessions, open tabs, workspace revision counter, Problems/Output bottom-panel state, `/function` execution, optimistic concurrency conflict prompts, and live `TreeChangedPayload` synchronization).
+  - `editor/` — Pure-Java editor and language services (headless-testable via JUnit): `TextDocumentBuffer`, `SyntaxHighlighter`, `BrigadierAssistService`, `FuzzyMatcher`, `WorkspaceFileCache`, `WorkspaceSearchEngine`, and `DatapackInspector`.
+  - `gui/` — `QuillIdeScreen`, `IdeLayout`, `QuillTheme`, `QuillDraw`, and VS Code-styled widgets/overlays (`FileExplorerTreeWidget`, `SearchSidebarWidget`, `InspectorSidebarWidget`, `QuickActionsAndPresetsWidget`, `EditorTabBarWidget`, `CodeEditorWidget`, `BottomPanelWidget`, `QuickPickOverlay`, `ModalPromptOverlay`).
 
 ---
 
@@ -136,13 +140,20 @@ sequenceDiagram
     Screen-->>Player: Status bar shows "Saved & Reloaded (42ms)" or error details
 ```
 
-### 3.2 Extensible Presets Flow (`data/minecraft`)
+### 3.2 Extensible Presets Flow (`data/minecraft` Tags & MC `26.3` JSON Registries)
 
 1. Built-in presets are stored as data-driven templates inside the mod JAR under `src/main/resources/assets/quill/presets/`:
-   - `index.json` — lists available preset descriptors (`id`, `DisplayName`, `targetRelativePathPattern`, `defaultVariables`).
-   - `templates/minecraft_load.json.tmpl` + `templates/namespace_load.mcfunction.tmpl` — creates/merges `data/minecraft/tags/function/load.json` and scaffolds `data/<namespace>/function/load.mcfunction`.
-   - `templates/minecraft_tick.json.tmpl` + `templates/namespace_tick.mcfunction.tmpl` — creates/merges `data/minecraft/tags/function/tick.json` and scaffolds `data/<namespace>/function/tick.mcfunction`.
-2. When the user selects a preset in the UI, `EditorBackend.applyPreset(...)` ensures the target datapack's `data/minecraft/tags/function/<tag>.json` exists (merging into the `"values"` array if the file already exists rather than overwriting existing entries!) and creates the corresponding `.mcfunction` file if missing.
+   - `index.json` — lists all 7 available preset descriptors (`id`, `displayName`, `description`, `targetRelativePathPattern`, `defaultVariables`).
+   - **Function Tags**:
+     - `templates/minecraft_load.json.tmpl` + `templates/namespace_load.mcfunction.tmpl` — creates/merges `data/minecraft/tags/function/load.json` and scaffolds `data/<namespace>/function/load.mcfunction`.
+     - `templates/minecraft_tick.json.tmpl` + `templates/namespace_tick.mcfunction.tmpl` — creates/merges `data/minecraft/tags/function/tick.json` and scaffolds `data/<namespace>/function/tick.mcfunction`.
+   - **MC `26.3` Registry JSON Templates** (see [docs/MC_NOTES.md](MC_NOTES.md) section 2.4 for verified schema rules):
+     - `templates/recipe_shaped.json.tmpl` -> `data/<namespace>/recipe/<name>.json`
+     - `templates/recipe_shapeless.json.tmpl` -> `data/<namespace>/recipe/<name>.json`
+     - `templates/loot_table.json.tmpl` -> `data/<namespace>/loot_table/<name>.json`
+     - `templates/advancement.json.tmpl` -> `data/<namespace>/advancement/<name>.json`
+     - `templates/predicate.json.tmpl` -> `data/<namespace>/predicate/<name>.json`
+2. When the user applies a preset in the UI, `EditorBackend.applyPreset(...)` validates `namespace` and resource `name` (`DatapackScaffolder.validateResourcePath`), merges `"values"` non-destructively for function-tag presets (never overwriting existing entries), writes the target JSON/function file safely inside `<world>/datapacks/`, and reloads datapacks.
 
 ---
 

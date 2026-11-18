@@ -187,8 +187,8 @@ Choosing Option A means we do not get browser DOM/CSS or pre-built tree/code wid
   Minecraft `26.3` uses SDL3 (`org.lwjgl.sdl.SDLKeyboard`) via `com.mojang.blaze3d.platform.TextInputManager`. Unlike legacy GLFW `glfwSetCharCallback` (which always fired `charTyped`), SDL3 suppresses `SDL_EVENT_TEXT_INPUT` (`KeyboardHandler.textInput` -> `Screen.charTyped(CharacterEvent)`) unless `SDLKeyboard.SDL_StartTextInput(...)` is enabled via `minecraft.textInputManager().startTextInput(owner)`. Only `KeyEvent` (`Backspace`, `Enter`, `Home`, `End`, arrows) fires without active text input, preventing character typing in custom-drawn text inputs (`ModalPromptOverlay` fields and `CodeEditorWidget`) that do not wrap vanilla `EditBox`.
 - **Decision**:
   Keep Quill's custom VS Code-styled `ModalPromptOverlay` and `CodeEditorWidget` inputs (consistent with ADR-003 Option A), and manage SDL3 text input directly in `QuillIdeScreen` via a small `TextInputBridge` seam delegating to `minecraft.textInputManager().startTextInput(this)` / `stopTextInput(this)` plus overriding `Screen.isInputCaptured()`:
-  - Enable text input when `activeModal != null && activeModal.hasTextFields()`, or when `activeModal == null && session.activeTab() != null`.
-  - Synchronize state on `init()`, `tick()`, `extractRenderState(...)`, `openModal(...)`, and `closeModal()`, and unconditionally stop text input in `removed()`.
+  - Enable text input when `activeModal != null && activeModal.hasTextFields()`, or when `activeQuickPick != null`, or when the Search sidebar input is focused, or when `session.activeTab() != null`.
+  - Synchronize state on `init()`, `tick()`, `extractRenderState(...)`, modal/quick-pick open & close, overlay mouse/key dispatch, and sidebar view transitions; unconditionally stop text input in `removed()`.
 - **Rationale**:
   - Preserves exact VS Code Dark+ styling and multi-line/modal ergonomics without mixing vanilla `EditBox` widgets into custom scissor-clipped panels.
   - Prevents global keybindings (e.g., `options.keyFriends`) from intercepting characters via `Screen.isInputCaptured()`.
@@ -214,3 +214,25 @@ Choosing Option A means we do not get browser DOM/CSS or pre-built tree/code wid
 - **Rationale**:
   - Guarantees every C2S and S2C packet stays comfortably within Minecraft `26.3`'s hard custom payload limits and proxy caps without requiring mixins or custom Netty handlers.
   - Preserves ADR-004's single `EditorBackend` boundary and enables full two-client-to-server wire-format loopback integration tests (`MultiplayerLoopbackIntegrationTest`) in headless JUnit without launching a live server.
+
+---
+
+## ADR-009: Client-Side Pure-Java Language Services & Revision-Keyed `WorkspaceFileCache`
+
+- **Date**: 2026-11-18
+- **Status**: Accepted
+- **Context**:
+  Phase 4 adds `.mcfunction`/`.json` syntax highlighting, live Brigadier autocomplete & usage tooltips, fuzzy Command Palette / Quick Open, workspace-wide Search & Replace, and a Macro & Scoreboard Variable Inspector. Implementing workspace search or static analysis on the server would require adding new C2S/S2C RPC opcodes (bumping protocol `v1`), duplicating unsaved client tab buffer state on the server, and complicating undo history across open tabs.
+- **Decision**:
+  1. **Pure-Java Language Services in `dev.catgirlclaude.quill.client.editor`**:
+     - Implement `SyntaxHighlighter`, `BrigadierAssistService<S>` (generic over Brigadier source type), `FuzzyMatcher`, `WorkspaceSearchEngine`, and `DatapackInspector` without `net.minecraft.client.*` rendering dependencies so every analyzer and search/replace edge case is unit-tested headlessly via JUnit (`./gradlew test`).
+  2. **Shared Revision-Keyed `WorkspaceFileCache` over `EditorBackend`**:
+     - Maintain an atomic `workspaceRevision` counter in `ClientEditorSession` (incremented on tree refreshes, saves, external `TreeChangedPayload` broadcasts, and file mutations).
+     - `WorkspaceFileCache` caches closed-file `EditorBackend.readFile(...)` results per `workspaceRevision` and always overlays live unsaved `OpenTabState` buffers on top of cached backend documents.
+     - Both `WorkspaceSearchEngine` and `DatapackInspector` read through `WorkspaceFileCache`: open-tab replacements push a single undoable edit (`TextDocumentBuffer.replaceAllText(...)`), while closed-file replacements write through `EditorBackend.writeFile(..., expectedBaseSha256, false)` followed by a single batched `reloadDatapacks()`.
+  3. **Live Client Brigadier & Game Message Integration**:
+     - Autocomplete queries `Minecraft.getInstance().getConnection().getCommands()` (`CommandDispatcher<ClientSuggestionProvider>`) asynchronously via `BrigadierAssistService`, and the Output panel captures `/function` execution feedback via `ClientReceiveMessageEvents.GAME` (`fabric-message-api-v1`).
+- **Rationale**:
+  - Keeps RPC wire protocol `v1` completely unchanged and works identically across Singleplayer (`ServerEditorBackend`) and Multiplayer (`RemoteEditorBackend`).
+  - Avoids redundant network/disk reads when running multiple searches or switching to the Variable Inspector while guaranteeing live visibility of unsaved editor changes and SHA-256 optimistic concurrency safety on closed files.
+  - Preserves ADR-006's fast headless testability across all Phase 4 IDE productivity features.

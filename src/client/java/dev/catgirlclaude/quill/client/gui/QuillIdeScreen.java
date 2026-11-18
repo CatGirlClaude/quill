@@ -39,7 +39,7 @@ import java.util.function.Consumer;
  * configurable themes/fonts/shortcuts/autosave/pause settings, breadcrumbs, and live tools.
  */
 public class QuillIdeScreen extends Screen {
-	interface TextInputBridge {
+	public interface TextInputBridge {
 		void startTextInput(Object owner);
 
 		void stopTextInput(Object owner);
@@ -141,7 +141,7 @@ public class QuillIdeScreen extends Screen {
 		this(Minecraft.getInstance(), Minecraft.getInstance().font, session, TextInputBridge.forMinecraft(Minecraft.getInstance()));
 	}
 
-	QuillIdeScreen(Minecraft minecraft, Font font, ClientEditorSession session, TextInputBridge textInputBridge) {
+	public QuillIdeScreen(Minecraft minecraft, Font font, ClientEditorSession session, TextInputBridge textInputBridge) {
 		super(minecraft, font, Component.literal("Quill IDE"));
 		this.session = Objects.requireNonNull(session, "session");
 		this.textInputBridge = Objects.requireNonNull(textInputBridge, "textInputBridge");
@@ -320,7 +320,7 @@ public class QuillIdeScreen extends Screen {
 		return explorerTree;
 	}
 
-	SearchSidebarWidget searchSidebar() {
+	public SearchSidebarWidget searchSidebar() {
 		return searchSidebar;
 	}
 
@@ -332,7 +332,7 @@ public class QuillIdeScreen extends Screen {
 		return settingsPanel;
 	}
 
-	IdeModal activeModal() {
+	public IdeModal activeModal() {
 		return activeModal;
 	}
 
@@ -397,6 +397,65 @@ public class QuillIdeScreen extends Screen {
 		} else {
 			openSettings();
 		}
+	}
+
+	public void openExplorer() {
+		closeSettings();
+		this.codeEditorWidget.dismissAutocomplete();
+		this.secondaryCodeEditorWidget.dismissAutocomplete();
+		this.searchSidebar.unfocus();
+		this.activeQuickPick = null;
+		this.activeContextMenu = null;
+		session.setSidebarView(ClientEditorSession.SidebarView.EXPLORER);
+		this.sidebarFocused = true;
+		syncTextInputState();
+	}
+
+	public void openSearch(String query) {
+		closeSettings();
+		this.activeQuickPick = null;
+		openSearchWithQuery(query);
+		this.sidebarFocused = true;
+	}
+
+	public void openInspector() {
+		closeSettings();
+		this.activeQuickPick = null;
+		openInspectorSidebar(true);
+		this.sidebarFocused = true;
+	}
+
+	public void openPresets() {
+		closeSettings();
+		this.codeEditorWidget.dismissAutocomplete();
+		this.secondaryCodeEditorWidget.dismissAutocomplete();
+		this.explorerTree.cancelInlineInput();
+		this.searchSidebar.unfocus();
+		this.activeQuickPick = null;
+		this.activeContextMenu = null;
+		session.setSidebarView(ClientEditorSession.SidebarView.PRESETS);
+		this.sidebarFocused = true;
+		syncTextInputState();
+	}
+
+	public void openFileFromCommand(String path) {
+		closeSettings();
+		this.activeQuickPick = null;
+		this.activeContextMenu = null;
+		if (path != null && !path.isBlank()) {
+			session.openFile(path);
+		}
+		this.sidebarFocused = false;
+		syncTextInputState();
+	}
+
+	public void openNewDatapackModal() {
+		closeSettings();
+		this.activeQuickPick = null;
+		this.activeContextMenu = null;
+		this.sidebarFocused = false;
+		quickActions.promptNewDatapack();
+		syncTextInputState();
 	}
 
 	private void onResetWindowBounds() {

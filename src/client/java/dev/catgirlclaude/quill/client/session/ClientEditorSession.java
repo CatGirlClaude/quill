@@ -1072,10 +1072,14 @@ public final class ClientEditorSession {
 	}
 
 	public void reloadDatapacks() {
+		reloadDatapacksAsync();
+	}
+
+	public CompletableFuture<ReloadReport> reloadDatapacksAsync() {
 		busy = true;
 		reloadPendingOnClose = false;
 		setStatus("Reloading datapacks...", false);
-		backend.reloadDatapacks().whenComplete((report, error) -> runOnClient(() -> {
+		return backend.reloadDatapacks().whenComplete((report, error) -> runOnClient(() -> {
 			busy = false;
 			if (error != null) {
 				setError("Reload failed: " + unwrapMessage(error));

@@ -1,6 +1,7 @@
 package dev.catgirlclaude.quill.client;
 
 import dev.catgirlclaude.quill.Quill;
+import dev.catgirlclaude.quill.client.command.QuillClientCommands;
 import dev.catgirlclaude.quill.client.config.QuillClientConfig;
 import dev.catgirlclaude.quill.client.input.QuillKeyMappings;
 import dev.catgirlclaude.quill.client.network.ClientNetworkHandler;
@@ -16,6 +17,7 @@ public class QuillClient implements ClientModInitializer {
 		QuillClientConfig.loadFromDefaultPath();
 		ClientNetworkHandler.register();
 		QuillKeyMappings.register();
+		QuillClientCommands.register();
 
 		ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
 			if (overlay || message == null) {

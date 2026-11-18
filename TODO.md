@@ -142,9 +142,9 @@ odtwarzającym błąd przed poprawką.
 - [x] Ctrl+Z i Ctrl+Shift+Z konfigurowalne w ustawieniach.
 
 ### P2: komendy klienta
-- [ ] Komenda clientside `/quill` otwiera menu IDE.
-- [ ] Subkomendy z argumentami otwierają konkretne miejsce w IDE, np. `/quill config` otwiera od razu ustawienia. DECYZJA: pełna lista subkomend (start: `/quill`, `/quill config`).
-- [ ] Komendy działają po stronie klienta, bez wysyłania na serwer.
+- [x] Komenda clientside `/quill` otwiera menu IDE.
+- [x] Subkomendy z argumentami otwierają konkretne miejsce w IDE, np. `/quill config` otwiera od razu ustawienia. DECYZJA: pełna lista subkomend (start: `/quill`, `/quill config`).
+- [x] Komendy działają po stronie klienta, bez wysyłania na serwer.
 
 ### P3: przyszłość (nie do MVP)
 - [ ] Syntax: obsługa NBT i podświetlanie błędów na bieżąco.

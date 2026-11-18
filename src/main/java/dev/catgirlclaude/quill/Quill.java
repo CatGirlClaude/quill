@@ -1,5 +1,6 @@
 package dev.catgirlclaude.quill;
 
+import dev.catgirlclaude.quill.network.ServerNetworkEditorHandler;
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
@@ -12,6 +13,7 @@ public class Quill implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		LOGGER.info("Initializing Quill common module.");
+		ServerNetworkEditorHandler.register();
 	}
 
 	public static Identifier id(String path) {

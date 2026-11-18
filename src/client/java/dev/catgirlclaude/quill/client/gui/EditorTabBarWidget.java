@@ -141,11 +141,11 @@ public final class EditorTabBarWidget {
 			int titleColor = active ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY;
 			QuillDraw.text(graphics, font, title, titleX, textY, titleColor);
 
-			// VS Code dirty dot -> close X on hover
+			// Neutral '*' dirty indicator -> close 'x' on hover
 			if (tab.isDirty() && !hovered && !closeHovered) {
-				int dotX = closeRect.x() + (closeRect.width() - 4) / 2;
-				int dotY = closeRect.y() + (closeRect.height() - 4) / 2;
-				QuillDraw.fill(graphics, dotX, dotY, 4, 4, QuillTheme.TEXT_DIRTY);
+				String glyph = dirtyIndicatorGlyph();
+				int glyphX = closeRect.x() + (closeRect.width() - QuillDraw.textWidth(font, glyph)) / 2;
+				QuillDraw.text(graphics, font, glyph, glyphX, textY, active ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY);
 			} else if (active || hovered || closeHovered) {
 				if (closeHovered) {
 					QuillDraw.fill(graphics, closeRect.x(), closeRect.y(), closeRect.width(), closeRect.height(), QuillTheme.BG_BUTTON_SECONDARY);
@@ -266,6 +266,10 @@ public final class EditorTabBarWidget {
 
 	private static int computeSettingsTabWidth(Font font) {
 		return Math.max(76, QuillDraw.textWidth(font, "* Settings") + 28);
+	}
+
+	static String dirtyIndicatorGlyph() {
+		return "*";
 	}
 
 	private static int badgeColor(String fileName) {

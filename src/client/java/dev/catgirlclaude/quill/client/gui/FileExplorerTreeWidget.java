@@ -303,7 +303,10 @@ public final class FileExplorerTreeWidget {
 						QuillDraw.text(graphics, font, badge, indentX + 1, textY, badgeColor);
 						int nameX = indentX + QuillDraw.textWidth(font, badge) + 4;
 						int maxW = Math.max(0, listRect.right() - nameX - 6);
-						QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, node.name(), maxW),
+						var openTab = session.findOpenTab(node.relativePath());
+						boolean dirty = openTab != null && openTab.isDirty();
+						String displayName = formatFileDisplayName(node.name(), dirty);
+						QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, displayName, maxW),
 								nameX, textY, colorForFile(node.name(), selected));
 					} else {
 						boolean expanded = session.isExpanded(node.relativePath());
@@ -655,6 +658,13 @@ public final class FileExplorerTreeWidget {
 			}
 		}
 		return null;
+	}
+
+	static String formatFileDisplayName(String name, boolean dirty) {
+		if (name == null) {
+			return "";
+		}
+		return dirty ? name + " *" : name;
 	}
 
 	public static String fileBadge(String name) {

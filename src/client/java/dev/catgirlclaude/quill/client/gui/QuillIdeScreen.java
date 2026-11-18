@@ -971,17 +971,19 @@ public class QuillIdeScreen extends Screen {
 		}
 	}
 
+	static int statusBarBackgroundColor(boolean hasErrors, boolean statusIsError, boolean hasAnyDirtyTab) {
+		if (statusIsError || hasErrors) {
+			return QuillTheme.BG_STATUS_ERROR;
+		}
+		return QuillTheme.BG_STATUS_BAR;
+	}
+
 	protected void renderStatusBar(GuiGraphicsExtractor graphics, IdeLayout.Rect bar, int mouseX, int mouseY) {
 		QuillClientConfig cfg = QuillClientConfig.current();
 		ReloadReport report = session.lastReloadReport();
 		boolean hasErrors = report != null && report.hasErrors();
 		int errorCount = hasErrors ? report.diagnostics().size() : 0;
-		int bg = QuillTheme.BG_STATUS_BAR;
-		if (session.statusIsError() || hasErrors) {
-			bg = QuillTheme.BG_STATUS_ERROR;
-		} else if (session.hasAnyDirtyTab()) {
-			bg = QuillTheme.BG_STATUS_DIRTY;
-		}
+		int bg = statusBarBackgroundColor(hasErrors, session.statusIsError(), session.hasAnyDirtyTab());
 		QuillDraw.fill(graphics, bar.x(), bar.y(), bar.width(), bar.height(), bg);
 
 		int textY = bar.y() + (bar.height() - font.lineHeight) / 2;

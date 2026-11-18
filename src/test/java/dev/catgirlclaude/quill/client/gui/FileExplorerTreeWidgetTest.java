@@ -60,4 +60,17 @@ class FileExplorerTreeWidgetTest {
 		assertTrue(underscoreBottomY <= clip.bottom() - 1,
 				"Underscore glyph (y=" + underscoreBottomY + ") must not be sliced by bottom scissor clip (" + clip.bottom() + ").");
 	}
+
+	@Test
+	void dirtyChangesUseNeutralAsteriskInsteadOfRedErrorColors() {
+		QuillTheme.applyPalette(dev.catgirlclaude.quill.client.config.QuillColorPalette.DARK_PLUS);
+		assertEquals(QuillTheme.BG_STATUS_BAR, QuillIdeScreen.statusBarBackgroundColor(false, false, true),
+				"Unsaved tabs must keep calm neutral status bar color, not red/orange error-like bar.");
+		assertEquals(QuillTheme.BG_STATUS_ERROR, QuillIdeScreen.statusBarBackgroundColor(true, false, true),
+				"Actual diagnostics errors must still highlight status bar as error.");
+
+		assertEquals("hello.mcfunction *", FileExplorerTreeWidget.formatFileDisplayName("hello.mcfunction", true));
+		assertEquals("hello.mcfunction", FileExplorerTreeWidget.formatFileDisplayName("hello.mcfunction", false));
+		assertEquals("*", EditorTabBarWidget.dirtyIndicatorGlyph());
+	}
 }

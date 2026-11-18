@@ -84,14 +84,14 @@ odtwarzającym błąd przed poprawką.
 - [x] Rebinding: ESC przypisuje pusty klawisz zamiast anulować.
 - [x] Ctrl+Z rozdzielone na dwa stosy: w edytorze cofa zmiany w kodzie, poza edytorem cofa operacje na plikach (usunięcia, zmiany nazw itd.).
 - [x] Wcięcie przed pierwszą literą w edytorze jest zbyt duże (zajmuje szerokość całej litery).
-- [ ] Kolor czerwony dla niezapisanych zmian w sidebarze wygląda jak błąd. Zmienić na neutralny znacznik `*`.
+- [x] Kolor czerwony dla niezapisanych zmian w sidebarze wygląda jak błąd. Zmienić na neutralny znacznik `*`.
 - [x] Search: tekst jest ucinany przez "..." (np. `Triggers /reload on every keystroke`). Rozszerzyć pole albo zawijać tekst.
 
 ### P1: wygląd i ogólne UX
 - [ ] Ogólny styl: GUI wygląda zbyt Minecraftowo. Cel: wrażenie prawdziwej aplikacji. Zaproponować system motywu (kolory, odstępy, obramowania) przed poprawkami pojedynczych elementów.
 - [ ] Ikony wyższej jakości (np. lupa): większa rozdzielczość lub wektory (SVG).
 - [ ] Strzałki w explorerze: zamiast tekstowych `>` i `v` (oraz zamiast znaków ▸ ▾) narysować wektorowe ikony chevron w stylu VS Code (Codicons: cienka, lekko pochylona kreska, zwijana w prawo, rozwijana w dół). Rysować je geometrią w kodzie albo jako SVG/tekstura, nie jako znak tekstowy. Rozmiar i grubość mają pasować do wysokości wiersza przy każdym GUI Scale.
-- [ ] Znacznik niezapisanego pliku: kropkę zamienić na `*`.
+- [x] Znacznik niezapisanego pliku: kropkę zamienić na `*`.
 - [ ] Plik funkcji: zamienić tekst "fn" na własną ikonę.
 - [ ] Więcej ikon typów plików. Dla typów widocznych, ale nieobsługiwanych, pokazać komunikat na górze ekranu w stylu notyfikacji VS Code.
 - [ ] Nazwy plików i folderów zawsze białe. Kolor pochodzi tylko z prefiksu typu pliku (np. `{}` dla JSON, `function` dla funkcji, `js` dla skryptów).

@@ -249,9 +249,11 @@ Choosing Option A means we do not get browser DOM/CSS or pre-built tree/code wid
   1. **Single Client Config File (`config/quill-client.json`) & Dynamic `QuillTheme`**:
      - Persist all client preferences in `QuillClientConfig` (loaded on client startup via `QuillClient`), updating static ARGB tokens in `QuillTheme.applyPalette(...)` immediately when the user picks any of the 7 `QuillColorPalette` presets.
      - Keep `QuillIdeScreen.isPauseScreen()` dynamically wired to `QuillClientConfig.current().pauseGameWhileOpen()` (default `false` to preserve non-pausing workflow unless opted in).
-  2. **Bundled Permissive TrueType Fonts (`assets/quill/font/*.json` + `*.ttf`)**:
-     - Avoid proprietary Windows-only Arial binaries; bundle permissively licensed TrueType fonts (`roboto_regular.ttf` Apache-2.0 for `quill:sans_serif`, `dejavu_sans.ttf` Bitstream Vera for `quill:arial`, and `dejavu_sans_mono.ttf` for `quill:monospace`) with attribution in `THIRD_PARTY_NOTICES.txt`.
-     - Apply fonts via MC `26.3`'s `Style.withFont(new FontDescription.Resource(...))` and editor text scaling via `GuiGraphicsExtractor.pose()` (`Matrix3x2fStack`) inside `QuillDraw`, ensuring caret hit-testing (`QuillDraw.textWidth` / `charIndexAtPixel`) stays exact across fonts and scales.
+  2. **Bundled Permissive TrueType Fonts (`assets/quill/font/*.json` + `*.ttf`) & Linear Glyph Smoothing**:
+     - Avoid proprietary Windows-only Arial binaries; bundle permissively licensed TrueType fonts (`roboto_regular.ttf` Apache-2.0 for `quill:sans_serif`, `dejavu_sans.ttf` Bitstream Vera for `quill:arial`, and `dejavu_sans_mono.ttf` for `quill:monospace`) with attribution in `THIRD_PARTY_NOTICES.txt`. Default `FontChoice` is `SANS_SERIF` (Roboto) for crisp typography out of the box.
+     - Apply fonts via MC `26.3`'s `Style.withFont(new FontDescription.Resource(...))` with `oversample: 2.5` (preventing aliasing across GUI scales 2–4 and 78%–178% zoom on unmipmapped `256x256` `R8_UNORM` atlases).
+     - Because MC `26.3`'s `GlyphRenderState.textureSetup()` hardcodes `FilterMode.NEAREST` and `FontTexture` allocates uninitialized atlases, `GlyphRenderStateMixin` switches to `FilterMode.LINEAR` for `quill:*` fonts and scaled text inside `QuillIdeScreen`, while `FontTextureMixin` zero-initializes `quill:*` atlas textures.
+     - Whole-GUI zoom (`uiScale()`, default `Ctrl+-` / `Ctrl+=` / `Ctrl+0`, Settings `7–16 px`, Command Palette) scales the entire `QuillIdeScreen` matrix uniformly rather than only the code editor, unscaling pointer events back to virtual coordinates while anchoring custom floating window bounds in real screen coordinates.
   3. **Per-Tab Coalesced Instant Autosave**:
      - When `AutosaveMode.ON_KEYPRESS` is active, `ClientEditorSession.notifyTabBufferEdited(...)` tracks in-flight and queued paths (`autosaveInFlight` / `autosaveQueued`), dispatching at most one `writeFile` per file at a time and chaining any edits made while a save is in flight once the new SHA-256 revision returns.
      - Surface a prominent warning banner in Settings (with a one-click fix button) and a clickable Status Bar pill whenever `ON_KEYPRESS` and `ReloadTriggerMode.ON_SAVE` are enabled simultaneously.
@@ -259,7 +261,7 @@ Choosing Option A means we do not get browser DOM/CSS or pre-built tree/code wid
      - Add an optional `${functionName}` variable (validated via `DatapackScaffolder.validateFunctionPath`) to the existing `minecraft:load` and `minecraft:tick` presets in `PresetRegistry` (defaulting to `"load"` / `"tick"`).
      - `ClientEditorSession.createDatapackWithTemplate(...)` chains `createDatapack` -> `applyPreset("minecraft:load", ...)` -> `applyPreset("minecraft:tick", ...)`, working identically in Singleplayer and Multiplayer with zero changes to RPC wire protocol `v1`.
 - **Rationale**:
-  - Guarantees cross-platform font availability (Windows/macOS/Linux) with clean open-source licensing.
+  - Guarantees cross-platform font availability (Windows/macOS/Linux) with clean open-source licensing and crisp non-pixelated rendering across all zoom levels.
   - Prevents optimistic-concurrency (`SHA-256`) race conditions during rapid typing in instant autosave mode.
   - Keeps RPC wire protocol `v1` backward compatible while delivering full templated datapack scaffolding in both SP and MP.
 

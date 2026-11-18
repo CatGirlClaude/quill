@@ -62,6 +62,11 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] **Movable & Resizable IDE Window**: Floating window title-bar drag (double-click to maximize/restore), 8-edge/corner resize handles (`IdeLayout.hitTestResizeEdge` + native `CursorTypes.RESIZE_*`), draggable Sidebar and Bottom Panel splitters, and persisted window bounds in `config/quill-client.json`.
 - [x] **Datapack Creation Template Options (`NewDatapackModal`)**: `"Use template"` checkbox revealing a Namespace field and expandable `> More` dropdown for customizing `load` and `tick` function names, each paired with a default-checked `"Use default"` checkbox referencing client config defaults (works in both SP and MP via `PresetRegistry`'s `${functionName}` variable).
 
+## Bugfixes & Post-Alpha Polish
+
+- [x] **Whole-GUI & Font Zoom (`Ctrl+-` / `Ctrl+=` / `Ctrl+0`)**: Scale the entire `QuillIdeScreen` (title bar, sidebar, explorer, tabs, breadcrumbs, code editor, bottom panel, settings, modals, quick pick, status bar) uniformly via `QuillClientConfig.uiScale()` while keeping custom floating window bounds anchored in real screen pixels; remove double-scaling from `CodeEditorWidget`; add configurable `ZOOM_IN`/`ZOOM_OUT`/`ZOOM_RESET` shortcuts (`Ctrl+=` / `Ctrl++` / `Ctrl+Numpad+`, `Ctrl+-` / `Ctrl+Numpad-`, `Ctrl+0` / `Ctrl+Numpad0`), Command Palette actions (`View: Zoom In`, `View: Zoom Out`, `View: Reset Zoom`), Settings zoom label/hint, and Status Bar zoom badge.
+- [x] **Crisp Non-Pixelated Font Rendering**: Replace MC `26.3`'s hardcoded `FilterMode.NEAREST` glyph sampling with `FilterMode.LINEAR` for `quill:*` TrueType fonts and scaled IDE text via `GlyphRenderStateMixin`; zero-initialize `quill:*` font atlases via `FontTextureMixin` to eliminate edge artifacts; tune TTF `oversample` (`2.5`) in `sans_serif.json`, `arial.json`, and `monospace.json` for `<2x` downscaling on unmipmapped `256x256` atlases; switch default `FontChoice` from `MINECRAFT_DEFAULT` to `SANS_SERIF` (Roboto).
+
 ## Proposals (Propozycje)
 
 > User-submitted UX, visual, and configuration proposals queued for future phases. **Do not implement without explicit user approval.**

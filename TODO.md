@@ -48,7 +48,7 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] **Command Palette (`Ctrl+Shift+P` / `F1`)**: Quick fuzzy-search modal for running IDE actions (New Datapack, Apply Preset, Reload Datapacks, Run Current Function, View switches, etc.).
 - [x] **Quick Open File Switcher (`Ctrl+P`)**: Fuzzy filename search across all datapacks in the current world (with seamless `>` toggle to Command Palette).
 - [x] **Integrated Reload & Function Output Log Panel**: Bottom panel (VS Code `PROBLEMS` / `OUTPUT` tabs, toggleable via `Ctrl+J`) displaying scrollable datapack parse exceptions with clickable line jump, live reload/command output log, and a "Run Function Now (`/function ...`)" button.
-- [ ] **Search & Replace Across Files (`Ctrl+Shift+F`)**: Full-text (plain/case-sensitive/regex) search and replace across all `.mcfunction` and `.json` files in `datapacks/`, honoring live unsaved tab buffers and undo history.
+- [x] **Search & Replace Across Files (`Ctrl+Shift+F`)**: Full-text (plain/case-sensitive/regex) search and replace across all `.mcfunction` and `.json` files in `datapacks/`, honoring live unsaved tab buffers and undo history.
 - [ ] **Macro & Scoreboard Variable Inspector**: Sidebar panel listing detected scoreboard objectives, storage namespaces/keys, and macro parameters used across datapacks with click-to-jump occurrences.
 - [x] **JSON Schema Templates for Other Datapack Registries**: Expand the resource-driven preset system beyond function tags (`minecraft:load`, `minecraft:tick`) to include MC `26.3`-valid shaped/shapeless recipes, loot tables, advancements, and predicates.
 

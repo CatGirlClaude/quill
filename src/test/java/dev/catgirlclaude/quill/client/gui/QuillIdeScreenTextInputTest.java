@@ -305,6 +305,45 @@ class QuillIdeScreenTextInputTest {
 		assertFalse(bridge.isActiveFor(screen), "Closing Command Palette with no open tabs stops SDL text input.");
 	}
 
+	@Test
+	void searchSidebarCtrlShiftFActivatesTextInputAndSearchesFiles() {
+		StubEditorBackend backend = new StubEditorBackend() {
+			@Override
+			public CompletableFuture<FileTreeNode> listTree() {
+				FileTreeNode fn = new FileTreeNode("hello.mcfunction", "pack/data/demo/function/hello.mcfunction", EntryKind.FILE, List.of());
+				FileTreeNode dir = new FileTreeNode("function", "pack/data/demo/function", EntryKind.DIRECTORY, List.of(fn));
+				return CompletableFuture.completedFuture(new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of(dir)));
+			}
+
+			@Override
+			public CompletableFuture<FileDocument> readFile(String relativePath) {
+				return CompletableFuture.completedFuture(new FileDocument(relativePath, "say hello_world", "sha", 0L));
+			}
+		};
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.refreshTree();
+
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+		assertFalse(bridge.isActiveFor(screen));
+
+		// Ctrl+Shift+F opens Search sidebar and captures SDL3 text input even with no open tabs
+		int ctrlShift = net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER | 1;
+		screen.keyPressed(new KeyEvent(0, InputConstants.KEYCODE_F, ctrlShift));
+		assertEquals(ClientEditorSession.SidebarView.SEARCH, session.sidebarView());
+		assertTrue(bridge.isActiveFor(screen), "Focused search input must activate SDL3 text input.");
+
+		simulateSdlTextInput(screen, bridge, "hello_world");
+		assertEquals("hello_world", screen.searchSidebar().queryText());
+		assertEquals(1, screen.searchSidebar().lastOutcome().totalMatches());
+
+		// Pressing Escape unfocuses search input and stops SDL3 text input when no editor tab is open
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0));
+		assertFalse(screen.searchSidebar().hasFocusedTextInput());
+		assertFalse(bridge.isActiveFor(screen));
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

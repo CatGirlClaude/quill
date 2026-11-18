@@ -257,6 +257,22 @@ public final class TextDocumentBuffer {
 		lastActionWasCharInsert = false;
 	}
 
+	/**
+	 * Replaces the entire document text as a single undoable operation, preserving cursor bounds.
+	 */
+	public void replaceAllText(String newText) {
+		String normalized = normalizeLineEndings(newText == null ? "" : newText);
+		if (normalized.equals(getText())) {
+			return;
+		}
+		pushUndoSnapshot();
+		Position previousCursor = cursor;
+		loadLines(normalized);
+		cursor = clampPosition(previousCursor.line(), previousCursor.column());
+		selectionAnchor = null;
+		lastActionWasCharInsert = false;
+	}
+
 	public void backspace() {
 		if (hasSelection()) {
 			pushUndoSnapshot();

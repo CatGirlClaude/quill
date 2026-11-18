@@ -41,18 +41,28 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] Enforce server-side permission checks (operator permission level >= 2 or dedicated Quill ACL), path traversal guards, rate limits, and payload size caps.
 - [x] Support chunked file transfers and optimistic concurrency (`sha256` revision hashes).
 
+## Phase 4: IDE Productivity & Language Features (In Progress)
+
+- [ ] **`.mcfunction` & `.json` Syntax Highlighting**: Tokenize command names, `execute` subcommands, selectors (`@a`, `@e[...]`), coordinates (`~ ~ ~`, `^ ^ ^`), SNBT payloads, identifiers, comments (`#`), macro lines (`$`, `$(var)`), and JSON keys/values with VS Code Dark+ colors.
+- [ ] **Brigadier Command Autocomplete & Hover Signatures**: Query the client's live `CommandDispatcher` tree to show real-time argument suggestions (`Tab`/`Enter` to accept, `Ctrl+Space` to invoke) and syntax usage tooltips at the cursor/hover position.
+- [ ] **Command Palette (`Ctrl+Shift+P` / `F1`)**: Quick fuzzy-search modal for running IDE actions (New Datapack, Apply Preset, Reload Datapacks, Run Current Function, View switches, etc.).
+- [ ] **Quick Open File Switcher (`Ctrl+P`)**: Fuzzy filename search across all datapacks in the current world (with seamless `>` toggle to Command Palette).
+- [ ] **Integrated Reload & Function Output Log Panel**: Bottom panel (VS Code `PROBLEMS` / `OUTPUT` tabs, toggleable via `Ctrl+J`) displaying scrollable datapack parse exceptions with clickable line jump, live reload/command output log, and a "Run Function Now (`/function ...`)" button.
+- [ ] **Search & Replace Across Files (`Ctrl+Shift+F`)**: Full-text (plain/case-sensitive/regex) search and replace across all `.mcfunction` and `.json` files in `datapacks/`, honoring live unsaved tab buffers and undo history.
+- [ ] **Macro & Scoreboard Variable Inspector**: Sidebar panel listing detected scoreboard objectives, storage namespaces/keys, and macro parameters used across datapacks with click-to-jump occurrences.
+- [ ] **JSON Schema Templates for Other Datapack Registries**: Expand the resource-driven preset system beyond function tags (`minecraft:load`, `minecraft:tick`) to include MC `26.3`-valid shaped/shapeless recipes, loot tables, advancements, and predicates.
+
 ## Proposals (Propozycje)
 
-> These are optional enhancement ideas. **Do not implement any of these without explicit user approval.**
+> User-submitted UX, visual, and configuration proposals queued for the next phase. **Do not implement without explicit user approval.**
 
-1. **`.mcfunction` Syntax Highlighting**: Tokenize command names, selectors (`@a`, `@e[...]`), coordinates (`~ ~ ~`, `^ ^ ^`), SNBT payloads, comments (`#`), and macro lines (`$`) with VS Code Dark+ colors.
-2. **Brigadier Command Autocomplete & Hover Signatures**: Query the client's live `CommandDispatcher` tree to show real-time argument suggestions and syntax tooltips at the cursor position.
-3. **Command Palette (`Ctrl+Shift+P` / `F1`)**: Quick fuzzy-search modal for running IDE actions (New Datapack, Apply Preset, Reload Datapacks, Run Current Function).
-4. **Quick Open File Switcher (`Ctrl+P`)**: Fuzzy filename search across all datapacks in the current world.
-5. **Integrated Reload & Function Output Log Panel**: Bottom panel (like VS Code's Problems / Output tabs) displaying detailed datapack parse exceptions with clickable line numbers and a "Run Function Now (`/function ...`)" button.
-6. **Search & Replace Across Files (`Ctrl+Shift+F`)**: Full-text search across all `.mcfunction` and `.json` files in `datapacks/`.
-7. **Macro & Scoreboard Variable Inspector**: Sidebar panel listing detected scoreboard objectives, storage namespaces, and macro parameters used across the active datapack.
-8. **JSON Schema Templates for Other Datapack Registries**: Expand the extensible preset system beyond `function` tags to include recipes, loot tables, advancements, and predicates.
+1. **Enhanced Text Selection**: Full text selection polish across editor and modal inputs (mouse cursor drag selection with high-contrast highlight, double-click word / triple-click line selection, `Shift+Arrows`, `Ctrl+Shift+Arrows`, `Shift+Home/End`, `Shift+Click`).
+2. **Higher-Fidelity Visual Studio Code UI**: Refine IDE layout chrome, icons, spacing, breadcrumbs, panels, and styling to more closely match Visual Studio Code.
+3. **Inline File Explorer Folder/Entry Creation**: Enter new folder (and file) names directly inline inside the File Explorer tree rather than via a popup modal.
+4. **In-IDE Global Client-Side Config**: Client configuration panel inside the IDE GUI covering color palettes (built-in VS Code themes), font choices (e.g., sans-serif, Arial / TrueType fonts), text size, and customizable keybind shortcuts.
+5. **Autosave & Reload Trigger Config Options**: Add client config options for autosave on GUI close or on every keypress (instant autosave), choosing whether datapack reload happens on save or on GUI close, plus a visible warning when both instant autosave and reload-on-save are enabled together.
+6. **Movable & Resizable IDE Window**: Support dragging the IDE window by its title bar and resizing it from edges/corners within the Minecraft screen.
+7. **Datapack Creation Template Options**: Add a `"Use template"` checkbox to the New Datapack dialog that reveals a namespace input box and an expandable `"More"` dropdown to customize `tick` and `load` function names, each with a default-checked `"Use default"` checkbox whose default names can be configured in client config.
 
 ## Inbox
 

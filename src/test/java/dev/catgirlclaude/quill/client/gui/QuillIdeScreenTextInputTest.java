@@ -43,7 +43,7 @@ class QuillIdeScreenTextInputTest {
 		}
 	}
 
-	private static final class StubEditorBackend implements EditorBackend {
+	private static class StubEditorBackend implements EditorBackend {
 		String createdPackName;
 		String createdPackDescription;
 
@@ -192,6 +192,54 @@ class QuillIdeScreenTextInputTest {
 		screen.closeModal();
 		assertTrue(bridge.isActiveFor(screen), "Closing confirmation modal must restore SDL text input for the active editor tab.");
 		assertTrue(screen.isInputCaptured());
+	}
+
+	@Test
+	void revisionConflictOpensModalStopsTextInputAndOverwriteForcesSave() {
+		java.util.concurrent.atomic.AtomicReference<String> lastExpectedSha = new java.util.concurrent.atomic.AtomicReference<>("unset");
+		StubEditorBackend backend = new StubEditorBackend() {
+			boolean firstAttempt = true;
+
+			@Override
+			public CompletableFuture<SaveResult> writeFile(
+					String relativePath,
+					String content,
+					String expectedBaseSha256,
+					boolean reloadAfterSave
+			) {
+				lastExpectedSha.set(expectedBaseSha256);
+				if (firstAttempt) {
+					firstAttempt = false;
+					return CompletableFuture.failedFuture(
+							new dev.catgirlclaude.quill.api.RevisionConflictException(relativePath, expectedBaseSha256, "server_new_sha")
+					);
+				}
+				return CompletableFuture.completedFuture(new SaveResult(new FileDocument(relativePath, content, "saved_sha", 0L), null));
+			}
+		};
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run, "Remote");
+		session.openOrFocusDocument(new FileDocument("pack/data/demo/function/a.mcfunction", "say hi", "base_sha", 0L));
+
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+		assertTrue(bridge.isActiveFor(screen));
+
+		session.activeTab().buffer().insertText("# edited\n");
+		session.saveActiveTab(false);
+		assertEquals("base_sha", lastExpectedSha.get());
+		screen.tick();
+
+		// Revision Conflict modal is now open (no text fields -> SDL text input paused)
+		assertFalse(bridge.isActiveFor(screen));
+		assertFalse(screen.isInputCaptured());
+
+		// Confirming modal ("Overwrite") forces save with expectedBaseSha256 == null and restores code editor text input
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+		assertEquals(null, lastExpectedSha.get());
+		assertTrue(bridge.isActiveFor(screen));
+		assertFalse(session.activeTab().isDirty());
+		assertEquals("saved_sha", session.activeTab().sha256());
 	}
 
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {

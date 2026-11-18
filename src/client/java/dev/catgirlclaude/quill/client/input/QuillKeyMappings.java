@@ -3,6 +3,7 @@ package dev.catgirlclaude.quill.client.input;
 import com.mojang.blaze3d.platform.InputConstants;
 import dev.catgirlclaude.quill.Quill;
 import dev.catgirlclaude.quill.client.gui.QuillIdeScreen;
+import dev.catgirlclaude.quill.client.network.ClientNetworkHandler;
 import dev.catgirlclaude.quill.client.session.ClientEditorSession;
 import dev.catgirlclaude.quill.client.session.ClientSessionManager;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -12,7 +13,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
 /**
- * Registers Quill's keybindings and handles opening {@link QuillIdeScreen} from gameplay.
+ * Registers Quill's keybindings and handles opening {@link QuillIdeScreen} from gameplay
+ * in both singleplayer and multiplayer sessions.
  */
 public final class QuillKeyMappings {
 	public static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Quill.id("general"));
@@ -39,11 +41,14 @@ public final class QuillKeyMappings {
 			if (client.gui.screen() != null) {
 				continue;
 			}
-			if (!client.hasSingleplayerServer() || client.getSingleplayerServer() == null) {
-				client.player.sendOverlayMessage(Component.literal("Quill: Multiplayer support is planned for Phase 3."));
-				continue;
+			boolean singleplayer = client.hasSingleplayerServer() && client.getSingleplayerServer() != null;
+			if (!singleplayer) {
+				if (client.getConnection() == null || !ClientNetworkHandler.isServerQuillAvailable()) {
+					client.player.sendOverlayMessage(Component.literal("Quill: This server does not have Quill installed."));
+					continue;
+				}
 			}
-			ClientEditorSession session = ClientSessionManager.getOrCreateSingleplayerSession(client);
+			ClientEditorSession session = ClientSessionManager.getOrCreateSession(client);
 			session.refreshAll();
 			client.gui.setScreen(new QuillIdeScreen(session));
 		}

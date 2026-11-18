@@ -49,6 +49,14 @@ public final class OpenTabState {
 		this.buffer.markSaved(document.content());
 	}
 
+	public void replaceFromDocument(FileDocument document) {
+		Objects.requireNonNull(document, "document");
+		this.sha256 = document.sha256();
+		this.buffer.resetFromDisk(document.content());
+		this.scrollLine = 0;
+		this.scrollX = 0;
+	}
+
 	public int scrollLine() {
 		return scrollLine;
 	}

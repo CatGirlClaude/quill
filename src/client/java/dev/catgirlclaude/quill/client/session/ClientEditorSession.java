@@ -6,16 +6,19 @@ import dev.catgirlclaude.quill.api.FileDocument;
 import dev.catgirlclaude.quill.api.FileTreeNode;
 import dev.catgirlclaude.quill.api.PresetDescriptor;
 import dev.catgirlclaude.quill.api.ReloadReport;
+import dev.catgirlclaude.quill.api.RevisionConflictException;
 import net.minecraft.client.Minecraft;
 
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 
 /**
@@ -28,8 +31,17 @@ public final class ClientEditorSession {
 		PRESETS
 	}
 
+	public record PendingConflict(
+			String relativePath,
+			String expectedSha256,
+			String actualSha256,
+			boolean reloadAfterSave
+	) {
+	}
+
 	private final EditorBackend backend;
 	private final Executor uiExecutor;
+	private final String backendLabel;
 	private final List<OpenTabState> openTabs = new ArrayList<>();
 	private final Set<String> expandedPaths = new HashSet<>();
 
@@ -38,6 +50,7 @@ public final class ClientEditorSession {
 	private int activeTabIndex = -1;
 	private String selectedTreePath = "";
 	private ReloadReport lastReloadReport = null;
+	private PendingConflict pendingConflict = null;
 	private String statusMessage = "Ready";
 	private boolean statusIsError = false;
 	private boolean busy = false;
@@ -47,17 +60,36 @@ public final class ClientEditorSession {
 	private SidebarView sidebarView = SidebarView.EXPLORER;
 
 	public ClientEditorSession(EditorBackend backend) {
-		this(backend, task -> Minecraft.getInstance().execute(task));
+		this(backend, task -> Minecraft.getInstance().execute(task), "Local");
+	}
+
+	public ClientEditorSession(EditorBackend backend, String backendLabel) {
+		this(backend, task -> Minecraft.getInstance().execute(task), backendLabel);
 	}
 
 	public ClientEditorSession(EditorBackend backend, Executor uiExecutor) {
+		this(backend, uiExecutor, "Local");
+	}
+
+	public ClientEditorSession(EditorBackend backend, Executor uiExecutor, String backendLabel) {
 		this.backend = Objects.requireNonNull(backend, "backend");
 		this.uiExecutor = Objects.requireNonNull(uiExecutor, "uiExecutor");
+		this.backendLabel = (backendLabel == null || backendLabel.isBlank()) ? "Local" : backendLabel;
 		this.expandedPaths.add("");
 	}
 
 	public EditorBackend backend() {
 		return backend;
+	}
+
+	public String backendLabel() {
+		return backendLabel;
+	}
+
+	public PendingConflict consumePendingConflict() {
+		PendingConflict current = this.pendingConflict;
+		this.pendingConflict = null;
+		return current;
 	}
 
 	public FileTreeNode rootTree() {
@@ -286,13 +318,119 @@ public final class ClientEditorSession {
 			}
 			return;
 		}
+		saveTabInternal(tab, tab.sha256(), reloadAfterSave);
+	}
+
+	public void forceSaveActiveTab(boolean reloadAfterSave) {
+		OpenTabState tab = activeTab();
+		if (tab == null) {
+			return;
+		}
+		saveTabInternal(tab, null, reloadAfterSave);
+	}
+
+	public void forceSaveTab(String relativePath, boolean reloadAfterSave) {
+		OpenTabState tab = findOpenTab(relativePath);
+		if (tab != null) {
+			saveTabInternal(tab, null, reloadAfterSave);
+		}
+	}
+
+	public void reloadTabFromBackend(String relativePath) {
+		if (relativePath == null || relativePath.isBlank()) {
+			return;
+		}
+		busy = true;
+		setStatus("Reloading " + relativePath + "...", false);
+		backend.readFile(relativePath).whenComplete((doc, error) -> runOnClient(() -> {
+			busy = false;
+			if (error != null) {
+				setError("Reload file failed: " + unwrapMessage(error));
+				return;
+			}
+			OpenTabState tab = findOpenTab(relativePath);
+			if (tab != null) {
+				tab.replaceFromDocument(doc);
+				setStatus("Reloaded " + tab.fileName() + " from server", false);
+			} else {
+				openOrFocusDocument(doc);
+				setStatus("Opened latest " + doc.relativePath(), false);
+			}
+		}));
+	}
+
+	/**
+	 * Applies a server-pushed datapack change broadcast on the client UI thread.
+	 */
+	public void onRemoteTreeChanged(String actorName, String changeKind, String affectedPath, String newSha256) {
+		runOnClient(() -> {
+			refreshTree();
+			String actor = (actorName == null || actorName.isBlank()) ? "another editor" : actorName;
+			String kind = changeKind == null ? "" : changeKind.toUpperCase(Locale.ROOT);
+			String path = affectedPath == null ? "" : affectedPath;
+			String sha = newSha256 == null ? "" : newSha256;
+
+			if ("WRITE".equals(kind) || "APPLY_PRESET".equals(kind)) {
+				OpenTabState tab = findOpenTab(path);
+				if (tab != null) {
+					if (!tab.isDirty()) {
+						if (sha.isEmpty() || !sha.equals(tab.sha256())) {
+							backend.readFile(path).whenComplete((doc, error) -> runOnClient(() -> {
+								if (error == null) {
+									OpenTabState current = findOpenTab(path);
+									if (current != null && !current.isDirty()) {
+										current.replaceFromDocument(doc);
+										setStatus("Synced " + current.fileName() + " (edited by " + actor + ")", false);
+									}
+								}
+							}));
+						}
+					} else {
+						setError("Remote edit by " + actor + " on " + tab.fileName() + " (unsaved local changes)");
+					}
+				}
+			} else if ("DELETE".equals(kind) || "RENAME".equals(kind)) {
+				if (!path.isEmpty()) {
+					boolean warnedDirty = false;
+					for (int i = openTabs.size() - 1; i >= 0; i--) {
+						OpenTabState tab = openTabs.get(i);
+						if (tab.relativePath().equals(path) || tab.relativePath().startsWith(path + "/")) {
+							if (!tab.isDirty()) {
+								closeTab(i);
+							} else {
+								warnedDirty = true;
+							}
+						}
+					}
+					if (warnedDirty) {
+						setError("Remote " + kind.toLowerCase(Locale.ROOT) + " by " + actor + " affected unsaved tab(s)");
+					}
+				}
+			} else if ("RELOAD".equals(kind)) {
+				setStatus("Datapacks reloaded by " + actor, false);
+			}
+		});
+	}
+
+	private void saveTabInternal(OpenTabState tab, String expectedBaseSha256, boolean reloadAfterSave) {
 		busy = true;
 		setStatus(reloadAfterSave ? "Saving & reloading..." : "Saving...", false);
 		String content = tab.buffer().getText();
 
-		backend.writeFile(tab.relativePath(), content, reloadAfterSave).whenComplete((result, error) -> runOnClient(() -> {
+		backend.writeFile(tab.relativePath(), content, expectedBaseSha256, reloadAfterSave).whenComplete((result, error) -> runOnClient(() -> {
 			busy = false;
 			if (error != null) {
+				Throwable unwrapped = unwrapThrowable(error);
+				if (unwrapped instanceof RevisionConflictException rce) {
+					this.pendingConflict = new PendingConflict(
+							rce.relativePath(),
+							rce.expectedSha256(),
+							rce.actualSha256(),
+							reloadAfterSave
+					);
+					setError(rce.getMessage());
+					return;
+				}
 				setError("Save failed: " + unwrapMessage(error));
 				return;
 			}
@@ -303,6 +441,15 @@ public final class ClientEditorSession {
 				setStatus("Saved " + tab.fileName(), false);
 			}
 		}));
+	}
+
+	private OpenTabState findOpenTab(String relativePath) {
+		for (OpenTabState tab : openTabs) {
+			if (tab.relativePath().equals(relativePath)) {
+				return tab;
+			}
+		}
+		return null;
 	}
 
 	public void reloadDatapacks() {
@@ -472,11 +619,16 @@ public final class ClientEditorSession {
 		uiExecutor.execute(task);
 	}
 
-	private static String unwrapMessage(Throwable throwable) {
+	private static Throwable unwrapThrowable(Throwable throwable) {
 		Throwable current = throwable;
-		while (current instanceof CompletionException && current.getCause() != null) {
+		while (current.getCause() != null && (current instanceof CompletionException || current instanceof ExecutionException)) {
 			current = current.getCause();
 		}
+		return current;
+	}
+
+	private static String unwrapMessage(Throwable throwable) {
+		Throwable current = unwrapThrowable(throwable);
 		return current.getMessage() != null ? current.getMessage() : current.getClass().getSimpleName();
 	}
 }

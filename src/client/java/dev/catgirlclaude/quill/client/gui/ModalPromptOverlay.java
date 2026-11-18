@@ -48,6 +48,8 @@ public final class ModalPromptOverlay {
 	private final String message;
 	private final String confirmLabel;
 	private final boolean dangerConfirm;
+	private final String secondaryLabel;
+	private final Runnable onSecondary;
 	private final List<FieldState> fields = new ArrayList<>();
 	private final Consumer<Map<String, String>> onConfirm;
 	private final Runnable onCancel;
@@ -55,6 +57,7 @@ public final class ModalPromptOverlay {
 	private int focusedFieldIndex = 0;
 	private String validationError = null;
 	private IdeLayout.Rect confirmBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect secondaryBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect cancelBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect dialogRect = new IdeLayout.Rect(0, 0, 0, 0);
 
@@ -67,10 +70,26 @@ public final class ModalPromptOverlay {
 			Consumer<Map<String, String>> onConfirm,
 			Runnable onCancel
 	) {
+		this(title, message, confirmLabel, dangerConfirm, null, null, fieldSpecs, onConfirm, onCancel);
+	}
+
+	private ModalPromptOverlay(
+			String title,
+			String message,
+			String confirmLabel,
+			boolean dangerConfirm,
+			String secondaryLabel,
+			Runnable onSecondary,
+			List<FieldSpec> fieldSpecs,
+			Consumer<Map<String, String>> onConfirm,
+			Runnable onCancel
+	) {
 		this.title = title;
 		this.message = message;
 		this.confirmLabel = confirmLabel;
 		this.dangerConfirm = dangerConfirm;
+		this.secondaryLabel = secondaryLabel;
+		this.onSecondary = onSecondary;
 		if (fieldSpecs != null) {
 			for (FieldSpec spec : fieldSpecs) {
 				this.fields.add(new FieldState(spec));
@@ -93,6 +112,31 @@ public final class ModalPromptOverlay {
 				message,
 				confirmLabel,
 				danger,
+				null,
+				null,
+				List.of(),
+				ignored -> onConfirm.run(),
+				onCancel
+		);
+	}
+
+	public static ModalPromptOverlay confirmWithSecondary(
+			String title,
+			String message,
+			String confirmLabel,
+			boolean danger,
+			Runnable onConfirm,
+			String secondaryLabel,
+			Runnable onSecondary,
+			Runnable onCancel
+	) {
+		return new ModalPromptOverlay(
+				title,
+				message,
+				confirmLabel,
+				danger,
+				secondaryLabel,
+				onSecondary,
 				List.of(),
 				ignored -> onConfirm.run(),
 				onCancel
@@ -163,26 +207,41 @@ public final class ModalPromptOverlay {
 			curY += 16;
 		}
 
-		int btnW = 78;
+		int btnW = secondaryLabel != null ? 74 : 78;
 		int btnH = 18;
 		int btnY = dy + dialogH - btnH - 8;
 		cancelBtnRect = new IdeLayout.Rect(dx + dialogW - btnW - 8, btnY, btnW, btnH);
-		confirmBtnRect = new IdeLayout.Rect(cancelBtnRect.x() - btnW - 6, btnY, btnW, btnH);
+		if (secondaryLabel != null && onSecondary != null) {
+			secondaryBtnRect = new IdeLayout.Rect(cancelBtnRect.x() - btnW - 6, btnY, btnW, btnH);
+			confirmBtnRect = new IdeLayout.Rect(secondaryBtnRect.x() - btnW - 6, btnY, btnW, btnH);
+		} else {
+			secondaryBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+			confirmBtnRect = new IdeLayout.Rect(cancelBtnRect.x() - btnW - 6, btnY, btnW, btnH);
+		}
 
 		boolean hoverConfirm = confirmBtnRect.contains(mouseX, mouseY);
+		boolean hoverSecondary = secondaryBtnRect.width() > 0 && secondaryBtnRect.contains(mouseX, mouseY);
 		boolean hoverCancel = cancelBtnRect.contains(mouseX, mouseY);
 		int confirmColor = dangerConfirm ? QuillTheme.BG_BUTTON_DANGER : (hoverConfirm ? QuillTheme.BG_BUTTON_HOVER : QuillTheme.BG_BUTTON);
 		QuillDraw.fill(graphics, confirmBtnRect.x(), confirmBtnRect.y(), confirmBtnRect.width(), confirmBtnRect.height(), confirmColor);
+		if (secondaryBtnRect.width() > 0) {
+			QuillDraw.fill(graphics, secondaryBtnRect.x(), secondaryBtnRect.y(), secondaryBtnRect.width(), secondaryBtnRect.height(),
+					hoverSecondary ? QuillTheme.BG_BUTTON_HOVER : QuillTheme.BG_BUTTON);
+		}
 		QuillDraw.fill(graphics, cancelBtnRect.x(), cancelBtnRect.y(), cancelBtnRect.width(), cancelBtnRect.height(),
 				hoverCancel ? QuillTheme.BG_HOVER : QuillTheme.BG_BUTTON_SECONDARY);
 
 		int labelY = btnY + (btnH - font.lineHeight) / 2;
 		QuillDraw.text(graphics, font, confirmLabel,
 				confirmBtnRect.x() + (btnW - font.width(confirmLabel)) / 2, labelY, QuillTheme.TEXT_BRIGHT);
+		if (secondaryBtnRect.width() > 0) {
+			QuillDraw.text(graphics, font, secondaryLabel,
+					secondaryBtnRect.x() + (btnW - font.width(secondaryLabel)) / 2, labelY, QuillTheme.TEXT_BRIGHT);
+		}
 		QuillDraw.text(graphics, font, "Cancel",
 				cancelBtnRect.x() + (btnW - font.width("Cancel")) / 2, labelY, QuillTheme.TEXT_PRIMARY);
 
-		if (hoverConfirm || hoverCancel) {
+		if (hoverConfirm || hoverSecondary || hoverCancel) {
 			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 		}
 	}
@@ -196,6 +255,10 @@ public final class ModalPromptOverlay {
 
 		if (confirmBtnRect.contains(mx, my)) {
 			trySubmit();
+			return true;
+		}
+		if (secondaryBtnRect.width() > 0 && onSecondary != null && secondaryBtnRect.contains(mx, my)) {
+			onSecondary.run();
 			return true;
 		}
 		if (cancelBtnRect.contains(mx, my)) {

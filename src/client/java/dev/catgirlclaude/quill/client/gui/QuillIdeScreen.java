@@ -125,6 +125,40 @@ public class QuillIdeScreen extends Screen {
 		}
 	}
 
+	private void pollPendingConflictModal() {
+		if (activeModal != null) {
+			return;
+		}
+		ClientEditorSession.PendingConflict conflict = session.consumePendingConflict();
+		if (conflict == null) {
+			return;
+		}
+		String fileName = conflict.relativePath();
+		int slash = fileName.lastIndexOf('/');
+		if (slash >= 0) {
+			fileName = fileName.substring(slash + 1);
+		}
+		String msg = conflict.actualSha256().isEmpty()
+				? "'" + fileName + "' was deleted on server. Overwrite to recreate?"
+				: "'" + fileName + "' changed on server. Overwrite or reload latest?";
+		openModal(ModalPromptOverlay.confirmWithSecondary(
+				"Revision Conflict",
+				msg,
+				"Overwrite",
+				true,
+				() -> {
+					closeModal();
+					session.forceSaveTab(conflict.relativePath(), conflict.reloadAfterSave());
+				},
+				"Reload",
+				() -> {
+					closeModal();
+					session.reloadTabFromBackend(conflict.relativePath());
+				},
+				this::closeModal
+		));
+	}
+
 	@Override
 	protected void init() {
 		super.init();
@@ -134,6 +168,7 @@ public class QuillIdeScreen extends Screen {
 	@Override
 	public void tick() {
 		super.tick();
+		pollPendingConflictModal();
 		syncTextInputState();
 	}
 
@@ -163,6 +198,7 @@ public class QuillIdeScreen extends Screen {
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+		pollPendingConflictModal();
 		syncTextInputState();
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
 
@@ -403,8 +439,8 @@ public class QuillIdeScreen extends Screen {
 
 		OpenTabState active = session.activeTab();
 		String rightInfo = active != null
-				? "Ln " + active.buffer().oneBasedLine() + ", Col " + active.buffer().oneBasedColumn() + " | UTF-8"
-				: "UTF-8";
+				? session.backendLabel() + " | Ln " + active.buffer().oneBasedLine() + ", Col " + active.buffer().oneBasedColumn() + " | UTF-8"
+				: session.backendLabel() + " | UTF-8";
 		int rightW = font.width(rightInfo);
 		int rightX = bar.right() - rightW - 8;
 		QuillDraw.text(graphics, font, rightInfo, rightX, textY, QuillTheme.TEXT_BRIGHT);

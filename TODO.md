@@ -131,11 +131,11 @@ odtwarzającym błąd przed poprawką.
 - [x] Z menu zakładki wykluczyć Cut i Delete. Copy path zostaje.
 
 ### P2: wyszukiwanie w folderze
-- [ ] Search w folderze z polami include i exclude.
-- [ ] Oba pola ukryte domyślnie, rozwijane przyciskiem.
+- [x] Search w folderze z polami include i exclude.
+- [x] Oba pola ukryte domyślnie, rozwijane przyciskiem.
 
 ### P2: output i konsola
-- [ ] Zaznaczanie i kopiowanie tekstu z output.
+- [x] Zaznaczanie i kopiowanie tekstu z output.
 - [ ] Konsola Minecrafta w output: logi na żywo, wpisany tekst wykonywany jako komenda od gracza. DECYZJA: zakres (sama wysyłka i logi, czy od razu podpowiedzi komend).
 
 ### P2: konfiguracja

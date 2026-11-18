@@ -21,7 +21,16 @@ import java.util.regex.PatternSyntaxException;
 public final class WorkspaceSearchEngine {
 	private static final int MAX_MATCHES_PER_FILE = 500;
 
-	public record SearchOptions(String query, boolean caseSensitive, boolean regex) {
+	public record SearchOptions(
+			String query,
+			boolean caseSensitive,
+			boolean regex,
+			String includeGlob,
+			String excludeGlob
+	) {
+		public SearchOptions(String query, boolean caseSensitive, boolean regex) {
+			this(query, caseSensitive, regex, "", "");
+		}
 	}
 
 	public record LineMatch(
@@ -68,6 +77,134 @@ public final class WorkspaceSearchEngine {
 				|| lower.endsWith(".json")
 				|| lower.endsWith(".mcmeta")
 				|| lower.endsWith(".txt");
+	}
+
+	public static boolean matchesIncludeExclude(String relativePath, String includeGlob, String excludeGlob) {
+		if (relativePath == null || relativePath.isEmpty()) {
+			return false;
+		}
+		String norm = relativePath.replace('\\', '/');
+		while (norm.startsWith("/")) {
+			norm = norm.substring(1);
+		}
+		int slash = norm.lastIndexOf('/');
+		String fileName = slash >= 0 ? norm.substring(slash + 1) : norm;
+
+		List<String> positiveIncludes = new ArrayList<>();
+		List<String> excludes = new ArrayList<>();
+		parseFilterTokens(includeGlob, positiveIncludes, excludes);
+		if (excludeGlob != null && !excludeGlob.isBlank()) {
+			for (String raw : excludeGlob.split(",")) {
+				String tok = raw.trim();
+				if (tok.startsWith("!")) {
+					tok = tok.substring(1).trim();
+				}
+				if (!tok.isEmpty()) {
+					excludes.add(tok);
+				}
+			}
+		}
+
+		if (!positiveIncludes.isEmpty()) {
+			boolean matched = false;
+			for (String inc : positiveIncludes) {
+				if (matchesSingleGlob(norm, fileName, inc)) {
+					matched = true;
+					break;
+				}
+			}
+			if (!matched) {
+				return false;
+			}
+		}
+		for (String exc : excludes) {
+			if (matchesSingleGlob(norm, fileName, exc)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static void parseFilterTokens(String spec, List<String> positiveIncludes, List<String> excludes) {
+		if (spec == null || spec.isBlank()) {
+			return;
+		}
+		for (String raw : spec.split(",")) {
+			String tok = raw.trim();
+			if (tok.isEmpty()) {
+				continue;
+			}
+			if (tok.startsWith("!")) {
+				String negated = tok.substring(1).trim();
+				if (!negated.isEmpty()) {
+					excludes.add(negated);
+				}
+			} else {
+				positiveIncludes.add(tok);
+			}
+		}
+	}
+
+	private static boolean matchesSingleGlob(String normalizedPath, String fileName, String rawPattern) {
+		String pat = rawPattern.replace('\\', '/').trim();
+		while (pat.startsWith("./")) {
+			pat = pat.substring(2);
+		}
+		while (pat.startsWith("/")) {
+			pat = pat.substring(1);
+		}
+		if (pat.isEmpty()) {
+			return false;
+		}
+		boolean hasWildcard = pat.indexOf('*') >= 0 || pat.indexOf('?') >= 0;
+		if (!pat.contains("/")) {
+			if (!hasWildcard) {
+				return fileName.equalsIgnoreCase(pat)
+						|| normalizedPath.toLowerCase(Locale.ROOT).startsWith(pat.toLowerCase(Locale.ROOT) + "/")
+						|| normalizedPath.toLowerCase(Locale.ROOT).contains("/" + pat.toLowerCase(Locale.ROOT) + "/");
+			}
+			Pattern regex = compileGlobRegex(pat);
+			return regex.matcher(fileName).matches() || regex.matcher(normalizedPath).matches();
+		}
+		if (!hasWildcard) {
+			String lowerPath = normalizedPath.toLowerCase(Locale.ROOT);
+			String lowerPat = pat.endsWith("/") ? pat.substring(0, pat.length() - 1).toLowerCase(Locale.ROOT) : pat.toLowerCase(Locale.ROOT);
+			return lowerPath.equals(lowerPat) || lowerPath.startsWith(lowerPat + "/");
+		}
+		return compileGlobRegex(pat).matcher(normalizedPath).matches();
+	}
+
+	private static Pattern compileGlobRegex(String glob) {
+		StringBuilder rx = new StringBuilder("^");
+		int i = 0;
+		while (i < glob.length()) {
+			char c = glob.charAt(i);
+			if (c == '*') {
+				if (i + 1 < glob.length() && glob.charAt(i + 1) == '*') {
+					if (i + 2 < glob.length() && glob.charAt(i + 2) == '/') {
+						rx.append("(?:.*/)?");
+						i += 3;
+					} else {
+						rx.append(".*");
+						i += 2;
+					}
+				} else {
+					rx.append("[^/]*");
+					i++;
+				}
+			} else if (c == '?') {
+				rx.append("[^/]");
+				i++;
+			} else {
+				if ("\\.[]{}()+-^$|".indexOf(c) >= 0) {
+					rx.append('\\');
+				}
+				rx.append(c);
+				i++;
+			}
+		}
+		rx.append('$');
+		return Pattern.compile(rx.toString(), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 	}
 
 	public static Pattern compilePattern(SearchOptions options) {
@@ -158,18 +295,21 @@ public final class WorkspaceSearchEngine {
 			return CompletableFuture.completedFuture(new SearchOutcome(List.of(), 0, "Invalid regex: " + e.getDescription()));
 		}
 
-		return cache.loadFiles(session, WorkspaceSearchEngine::isSearchableFile).thenApply(snapshots -> {
-			List<FileSearchResult> results = new ArrayList<>();
-			int total = 0;
-			for (WorkspaceFileCache.WorkspaceFileSnapshot snap : snapshots) {
-				List<LineMatch> fileMatches = searchContent(snap.relativePath(), snap.content(), pattern);
-				if (!fileMatches.isEmpty()) {
-					results.add(new FileSearchResult(snap.relativePath(), fileMatches));
-					total += fileMatches.size();
-				}
-			}
-			return new SearchOutcome(results, total, null);
-		});
+		String inc = options.includeGlob();
+		String exc = options.excludeGlob();
+		return cache.loadFiles(session, path -> isSearchableFile(path) && matchesIncludeExclude(path, inc, exc))
+				.thenApply(snapshots -> {
+					List<FileSearchResult> results = new ArrayList<>();
+					int total = 0;
+					for (WorkspaceFileCache.WorkspaceFileSnapshot snap : snapshots) {
+						List<LineMatch> fileMatches = searchContent(snap.relativePath(), snap.content(), pattern);
+						if (!fileMatches.isEmpty()) {
+							results.add(new FileSearchResult(snap.relativePath(), fileMatches));
+							total += fileMatches.size();
+						}
+					}
+					return new SearchOutcome(results, total, null);
+				});
 	}
 
 	public static CompletableFuture<WorkspaceReplaceSummary> replaceInFiles(

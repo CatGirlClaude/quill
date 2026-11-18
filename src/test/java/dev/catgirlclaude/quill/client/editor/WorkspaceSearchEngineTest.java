@@ -185,4 +185,105 @@ class WorkspaceSearchEngineTest {
 		assertTrue(session.activeTab().buffer().undo());
 		assertEquals("say target_val unsaved", session.activeTab().buffer().getText());
 	}
+
+	@Test
+	void includeAndExcludeGlobFiltersNarrowSearchedFiles() {
+		assertTrue(WorkspaceSearchEngine.matchesIncludeExclude(
+				"pack/data/demo/function/main.mcfunction", "*.mcfunction", ""));
+		assertFalse(WorkspaceSearchEngine.matchesIncludeExclude(
+				"pack/data/demo/tags/function/tick.json", "*.mcfunction", ""));
+		assertTrue(WorkspaceSearchEngine.matchesIncludeExclude(
+				"pack/pack.mcmeta", "*.mcfunction, *.mcmeta", ""));
+		assertTrue(WorkspaceSearchEngine.matchesIncludeExclude(
+				"pack/data/demo/function/sub/helper.mcfunction", "pack/data/demo/**", ""));
+		assertFalse(WorkspaceSearchEngine.matchesIncludeExclude(
+				"pack/data/demo/function/ignored/temp.mcfunction", "pack/data/demo/**", "**/ignored/**"));
+		assertFalse(WorkspaceSearchEngine.matchesIncludeExclude(
+				"pack/data/demo/function/skip.mcfunction", "*.mcfunction, !**/skip.mcfunction", ""));
+
+		Map<String, FileDocument> disk = Map.of(
+				"pack/data/demo/function/keep.mcfunction",
+				new FileDocument("pack/data/demo/function/keep.mcfunction", "say needle", "s1", 1L),
+				"pack/data/demo/function/temp/drop.mcfunction",
+				new FileDocument("pack/data/demo/function/temp/drop.mcfunction", "say needle", "s2", 1L),
+				"pack/data/demo/tags/function/tick.json",
+				new FileDocument("pack/data/demo/tags/function/tick.json", "{\"values\":[\"needle\"]}", "s3", 1L)
+		);
+		EditorBackend backend = new EditorBackend() {
+			@Override
+			public CompletableFuture<FileTreeNode> listTree() {
+				List<FileTreeNode> nodes = disk.keySet().stream()
+						.map(p -> new FileTreeNode(p.substring(p.lastIndexOf('/') + 1), p, EntryKind.FILE, List.of()))
+						.toList();
+				return CompletableFuture.completedFuture(new FileTreeNode("datapacks", "", EntryKind.ROOT, nodes));
+			}
+
+			@Override
+			public CompletableFuture<FileDocument> readFile(String relativePath) {
+				return CompletableFuture.completedFuture(disk.get(relativePath));
+			}
+
+			@Override
+			public CompletableFuture<SaveResult> writeFile(String p, String c, String s, boolean r) {
+				return CompletableFuture.completedFuture(null);
+			}
+
+			@Override
+			public CompletableFuture<Void> createEntry(String p, EntryKind k) {
+				return CompletableFuture.completedFuture(null);
+			}
+
+			@Override
+			public CompletableFuture<Void> renameEntry(String s, String t) {
+				return CompletableFuture.completedFuture(null);
+			}
+
+			@Override
+			public CompletableFuture<Void> deleteEntry(String p) {
+				return CompletableFuture.completedFuture(null);
+			}
+
+			@Override
+			public CompletableFuture<String> createDatapack(String n, String d) {
+				return CompletableFuture.completedFuture(n);
+			}
+
+			@Override
+			public CompletableFuture<String> createNamespace(String p, String n) {
+				return CompletableFuture.completedFuture(p);
+			}
+
+			@Override
+			public CompletableFuture<String> createFunction(String p, String n, String f) {
+				return CompletableFuture.completedFuture(p);
+			}
+
+			@Override
+			public CompletableFuture<List<PresetDescriptor>> listPresets() {
+				return CompletableFuture.completedFuture(List.of());
+			}
+
+			@Override
+			public CompletableFuture<FileDocument> applyPreset(String p, String id, Map<String, String> v) {
+				return CompletableFuture.completedFuture(null);
+			}
+
+			@Override
+			public CompletableFuture<ReloadReport> reloadDatapacks() {
+				return CompletableFuture.completedFuture(new ReloadReport(true, 1L, 1, List.of()));
+			}
+		};
+
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.refreshTree();
+		WorkspaceFileCache cache = new WorkspaceFileCache();
+
+		WorkspaceSearchEngine.SearchOutcome filtered = WorkspaceSearchEngine.searchWorkspace(
+				session,
+				new WorkspaceSearchEngine.SearchOptions("needle", false, false, "*.mcfunction", "**/temp/**"),
+				cache
+		).join();
+		assertEquals(1, filtered.files().size());
+		assertEquals("pack/data/demo/function/keep.mcfunction", filtered.files().getFirst().relativePath());
+	}
 }

@@ -1674,6 +1674,7 @@ public class QuillIdeScreen extends Screen {
 			syncTextInputState();
 		}
 		if (tabBarWidget.mouseClicked(ev)) {
+			bottomPanelWidget.unfocus();
 			sidebarFocused = false;
 			secondaryEditorFocused = false;
 			syncTextInputState();
@@ -1684,6 +1685,7 @@ public class QuillIdeScreen extends Screen {
 			syncTextInputState();
 			return true;
 		}
+		bottomPanelWidget.unfocus();
 		if (ev.button() == InputConstants.MOUSE_BUTTON_RIGHT
 				&& !settingsOpen
 				&& lastSidebarRect.contains(mx, my)
@@ -1986,6 +1988,9 @@ public class QuillIdeScreen extends Screen {
 		if (isSearchInputFocused() && searchSidebar.mouseDragged(ev)) {
 			return true;
 		}
+		if (bottomPanelWidget.mouseDragged(ev)) {
+			return true;
+		}
 		if (settingsOpen && settingsPanel.mouseDragged(ev)) {
 			return true;
 		}
@@ -2013,6 +2018,7 @@ public class QuillIdeScreen extends Screen {
 		}
 		codeEditorWidget.mouseReleased(ev);
 		secondaryCodeEditorWidget.mouseReleased(ev);
+		bottomPanelWidget.mouseReleased(ev);
 		searchSidebar.mouseReleased(ev);
 		explorerTree.mouseReleased(ev);
 		settingsPanel.mouseReleased(ev);
@@ -2185,6 +2191,10 @@ public class QuillIdeScreen extends Screen {
 		}
 
 		if (isSearchInputFocused() && searchSidebar.keyPressed(event)) {
+			syncTextInputState();
+			return true;
+		}
+		if (session.isBottomPanelOpen() && bottomPanelWidget.isOutputFocused() && bottomPanelWidget.keyPressed(event)) {
 			syncTextInputState();
 			return true;
 		}

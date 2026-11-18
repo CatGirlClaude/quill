@@ -196,6 +196,7 @@ public final class QuillClientConfig {
 	private int zoomPercent = DEFAULT_ZOOM_PERCENT;
 	private int textSize = DEFAULT_TEXT_SIZE;
 	private boolean animationsEnabled = true;
+	private boolean wordWrap = false;
 	private boolean pauseGameWhileOpen = false;
 	private AutosaveMode autosaveMode = AutosaveMode.OFF;
 	private ReloadTriggerMode reloadTriggerMode = ReloadTriggerMode.ON_SAVE;
@@ -287,6 +288,9 @@ public final class QuillClientConfig {
 			if (obj.has("animationsEnabled") && obj.get("animationsEnabled").isJsonPrimitive()) {
 				cfg.setAnimationsEnabled(obj.get("animationsEnabled").getAsBoolean());
 			}
+			if (obj.has("wordWrap") && obj.get("wordWrap").isJsonPrimitive()) {
+				cfg.setWordWrap(obj.get("wordWrap").getAsBoolean());
+			}
 			if (obj.has("pauseGameWhileOpen") && obj.get("pauseGameWhileOpen").isJsonPrimitive()) {
 				cfg.setPauseGameWhileOpen(obj.get("pauseGameWhileOpen").getAsBoolean());
 			}
@@ -350,6 +354,7 @@ public final class QuillClientConfig {
 		obj.addProperty("zoomPercent", zoomPercent);
 		obj.addProperty("textSize", textSize);
 		obj.addProperty("animationsEnabled", animationsEnabled);
+		obj.addProperty("wordWrap", wordWrap);
 		obj.addProperty("pauseGameWhileOpen", pauseGameWhileOpen);
 		obj.addProperty("autosaveMode", autosaveMode.id());
 		obj.addProperty("reloadTriggerMode", reloadTriggerMode.id());
@@ -379,6 +384,7 @@ public final class QuillClientConfig {
 		this.zoomPercent = fresh.zoomPercent;
 		this.textSize = fresh.textSize;
 		this.animationsEnabled = fresh.animationsEnabled;
+		this.wordWrap = fresh.wordWrap;
 		this.pauseGameWhileOpen = fresh.pauseGameWhileOpen;
 		this.autosaveMode = fresh.autosaveMode;
 		this.reloadTriggerMode = fresh.reloadTriggerMode;
@@ -472,6 +478,19 @@ public final class QuillClientConfig {
 
 	public void setAnimationsEnabled(boolean animationsEnabled) {
 		this.animationsEnabled = animationsEnabled;
+	}
+
+	public boolean wordWrap() {
+		return wordWrap;
+	}
+
+	public void setWordWrap(boolean wordWrap) {
+		this.wordWrap = wordWrap;
+	}
+
+	public boolean toggleWordWrap() {
+		this.wordWrap = !this.wordWrap;
+		return this.wordWrap;
 	}
 
 	public boolean pauseGameWhileOpen() {

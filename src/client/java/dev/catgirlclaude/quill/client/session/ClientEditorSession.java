@@ -583,6 +583,61 @@ public final class ClientEditorSession {
 		}
 	}
 
+	public void setTabPinned(int index, boolean pinned) {
+		if (index < 0 || index >= openTabs.size()) {
+			return;
+		}
+		OpenTabState active = activeTab();
+		OpenTabState target = openTabs.get(index);
+		target.setPinned(pinned);
+
+		// Stable partition: keep pinned tabs on the left
+		List<OpenTabState> reordered = new ArrayList<>(openTabs.size());
+		for (OpenTabState tab : openTabs) {
+			if (tab.isPinned()) {
+				reordered.add(tab);
+			}
+		}
+		for (OpenTabState tab : openTabs) {
+			if (!tab.isPinned()) {
+				reordered.add(tab);
+			}
+		}
+		openTabs.clear();
+		openTabs.addAll(reordered);
+		if (active != null) {
+			activeTabIndex = openTabs.indexOf(active);
+		}
+	}
+
+	public void closeOtherUnpinnedTabs(int keepIndex) {
+		if (keepIndex < 0 || keepIndex >= openTabs.size()) {
+			return;
+		}
+		OpenTabState keepTab = openTabs.get(keepIndex);
+		OpenTabState active = activeTab();
+		for (int i = openTabs.size() - 1; i >= 0; i--) {
+			OpenTabState tab = openTabs.get(i);
+			if (tab != keepTab && !tab.isPinned()) {
+				if (tab.relativePath().equals(secondaryTabPath)) {
+					secondaryTabPath = null;
+				}
+				openTabs.remove(i);
+			}
+		}
+		if (active != null && openTabs.contains(active)) {
+			activeTabIndex = openTabs.indexOf(active);
+		} else {
+			activeTabIndex = openTabs.indexOf(keepTab);
+		}
+	}
+
+	public void closeAllTabs() {
+		openTabs.clear();
+		activeTabIndex = -1;
+		secondaryTabPath = null;
+	}
+
 	public boolean hasAnyDirtyTab() {
 		for (OpenTabState tab : openTabs) {
 			if (tab.isDirty()) {

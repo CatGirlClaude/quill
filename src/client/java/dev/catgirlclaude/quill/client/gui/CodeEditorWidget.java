@@ -5,6 +5,7 @@ import com.mojang.blaze3d.platform.cursor.CursorTypes;
 import com.mojang.brigadier.CommandDispatcher;
 import dev.catgirlclaude.quill.client.config.QuillClientConfig;
 import dev.catgirlclaude.quill.client.editor.BrigadierAssistService;
+import dev.catgirlclaude.quill.client.editor.SingleLineTextInput;
 import dev.catgirlclaude.quill.client.editor.SyntaxHighlighter;
 import dev.catgirlclaude.quill.client.editor.TextDocumentBuffer;
 import dev.catgirlclaude.quill.client.session.OpenTabState;
@@ -19,11 +20,15 @@ import net.minecraft.client.multiplayer.ClientSuggestionProvider;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.function.ToIntFunction;
 
 /**
  * Multi-line code editor widget with dynamic VS Code syntax highlighting, customizable font,
- * live Brigadier command autocomplete &amp; hover signatures,
+ * live Brigadier command autocomplete &amp; hover signatures, in-file {@code Ctrl+F} find bar,
+ * right-click context menu, {@code Alt+Z} soft word wrap, {@code Shift+Wheel} horizontal scrolling,
  * bracket-pair matching, mouse click/double-click/triple-click/gutter/drag selection,
  * {@code Shift+Arrows}, {@code Ctrl+Shift+Arrows}, {@code Ctrl+Backspace/Delete},
  * {@code Tab}/{@code Shift+Tab} indent/unindent, clipboard, undo/redo, and 2D scrolling.
@@ -36,9 +41,89 @@ public final class CodeEditorWidget {
 	static int codeLeftPadding() {
 		return CODE_LEFT_PADDING;
 	}
+
 	private static final int MAX_VISIBLE_SUGGESTIONS = 8;
 	private static final int SUGGESTION_ROW_HEIGHT = 13;
 	private static final long MULTI_CLICK_WINDOW_MS = 400L;
+
+	public record FindMatch(int line, int startCol, int endCol) {
+	}
+
+	public static final class WordWrapLayout {
+		public record VisualRow(int logicalLine, int startCol, int endCol, boolean firstSegment) {
+		}
+
+		private WordWrapLayout() {
+		}
+
+		public static List<VisualRow> wrapLines(
+				List<String> lines,
+				boolean wordWrap,
+				int maxWidthPx,
+				ToIntFunction<String> textWidth
+		) {
+			List<VisualRow> rows = new ArrayList<>();
+			for (int i = 0; i < lines.size(); i++) {
+				String line = lines.get(i);
+				if (!wordWrap || maxWidthPx <= 16 || line.isEmpty() || textWidth.applyAsInt(line) <= maxWidthPx) {
+					rows.add(new VisualRow(i, 0, line.length(), true));
+					continue;
+				}
+				int pos = 0;
+				while (pos < line.length()) {
+					int lo = pos + 1;
+					int hi = line.length();
+					int best = pos + 1;
+					while (lo <= hi) {
+						int mid = (lo + hi) >>> 1;
+						int w = textWidth.applyAsInt(line.substring(pos, mid));
+						if (w <= maxWidthPx) {
+							best = mid;
+							lo = mid + 1;
+						} else {
+							hi = mid - 1;
+						}
+					}
+					int cut = best;
+					if (cut < line.length()) {
+						int lastSpace = -1;
+						for (int k = cut; k > pos; k--) {
+							if (line.charAt(k - 1) <= ' ') {
+								lastSpace = k;
+								break;
+							}
+						}
+						if (lastSpace > pos) {
+							cut = lastSpace;
+						}
+					}
+					rows.add(new VisualRow(i, pos, cut, pos == 0));
+					pos = cut;
+				}
+			}
+			return rows;
+		}
+
+		static int visualRowFor(List<VisualRow> rows, int logicalLine, int col) {
+			if (rows.isEmpty()) {
+				return 0;
+			}
+			int fallback = 0;
+			for (int i = 0; i < rows.size(); i++) {
+				VisualRow r = rows.get(i);
+				if (r.logicalLine() == logicalLine) {
+					fallback = i;
+					boolean isLastForLine = (i + 1 >= rows.size()) || rows.get(i + 1).logicalLine() != logicalLine;
+					if (col >= r.startCol() && (col < r.endCol() || (isLastForLine && col <= r.endCol()))) {
+						return i;
+					}
+				} else if (r.logicalLine() > logicalLine) {
+					break;
+				}
+			}
+			return fallback;
+		}
+	}
 
 	private enum DragMode {
 		NONE,
@@ -52,6 +137,8 @@ public final class CodeEditorWidget {
 	private IdeLayout.Rect lastCodeViewport = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private final List<IdeLayout.Rect> suggestionRowRects = new ArrayList<>();
+	private List<WordWrapLayout.VisualRow> cachedVisualRows = List.of();
+	private int cachedWrapWidth = 0;
 
 	private DragMode dragMode = DragMode.NONE;
 	private long lastClickMs = 0L;
@@ -65,6 +152,23 @@ public final class CodeEditorWidget {
 
 	private Consumer<OpenTabState> onBufferEdited = tab -> {
 	};
+	private Consumer<ContextMenuOverlay> contextMenuOpener = menu -> {
+	};
+	private Runnable contextMenuDismisser = () -> {
+	};
+	private Supplier<String> clipboardGetter = CodeEditorWidget::readMinecraftClipboard;
+	private Consumer<String> clipboardSetter = CodeEditorWidget::writeMinecraftClipboard;
+
+	// In-file Find bar state (Ctrl+F)
+	private boolean findBarOpen = false;
+	private boolean findBarFocused = false;
+	private final SingleLineTextInput findInput = new SingleLineTextInput("");
+	private int activeFindMatchIdx = 0;
+	private IdeLayout.Rect findBarRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect findInputRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect findPrevBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect findNextBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect findCloseBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 
 	// Brigadier autocomplete & hover state
 	private boolean autocompleteOpen = false;
@@ -81,6 +185,98 @@ public final class CodeEditorWidget {
 	public void setOnBufferEdited(Consumer<OpenTabState> onBufferEdited) {
 		this.onBufferEdited = onBufferEdited != null ? onBufferEdited : tab -> {
 		};
+	}
+
+	public void setContextMenuHooks(Consumer<ContextMenuOverlay> contextMenuOpener, Runnable contextMenuDismisser) {
+		this.contextMenuOpener = contextMenuOpener != null ? contextMenuOpener : menu -> {
+		};
+		this.contextMenuDismisser = contextMenuDismisser != null ? contextMenuDismisser : () -> {
+		};
+	}
+
+	void setClipboardBridge(Supplier<String> clipboardGetter, Consumer<String> clipboardSetter) {
+		this.clipboardGetter = clipboardGetter != null ? clipboardGetter : CodeEditorWidget::readMinecraftClipboard;
+		this.clipboardSetter = clipboardSetter != null ? clipboardSetter : CodeEditorWidget::writeMinecraftClipboard;
+	}
+
+	void setViewportBoundsForTest(IdeLayout.Rect editorRect, IdeLayout.Rect gutterRect, IdeLayout.Rect codeViewport) {
+		this.lastEditorRect = editorRect;
+		this.lastGutterRect = gutterRect;
+		this.lastCodeViewport = codeViewport;
+	}
+
+	public boolean isFindBarOpen() {
+		return findBarOpen;
+	}
+
+	public boolean isFindBarFocused() {
+		return findBarOpen && findBarFocused;
+	}
+
+	public int activeFindMatchIndex() {
+		return activeFindMatchIdx;
+	}
+
+	public void openFindBar(OpenTabState tab) {
+		this.findBarOpen = true;
+		this.findBarFocused = true;
+		dismissAutocomplete();
+		if (tab != null && tab.buffer().hasSelection()) {
+			TextDocumentBuffer.Position s = tab.buffer().selectionStart();
+			TextDocumentBuffer.Position e = tab.buffer().selectionEnd();
+			if (s.line() == e.line()) {
+				String selected = tab.buffer().getSelectedText();
+				if (!selected.isBlank()) {
+					findInput.setText(selected);
+					findInput.selectAll();
+				}
+			}
+		} else if (!findInput.text().isEmpty()) {
+			findInput.selectAll();
+		}
+		activeFindMatchIdx = 0;
+	}
+
+	public void closeFindBar() {
+		this.findBarOpen = false;
+		this.findBarFocused = false;
+		this.findInput.mouseReleased();
+		clearFindBarRects();
+	}
+
+	private void clearFindBarRects() {
+		findBarRect = new IdeLayout.Rect(0, 0, 0, 0);
+		findInputRect = new IdeLayout.Rect(0, 0, 0, 0);
+		findPrevBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+		findNextBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+		findCloseBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+	}
+
+	public List<FindMatch> findMatches(OpenTabState tab) {
+		if (tab == null) {
+			return List.of();
+		}
+		String query = findInput.text();
+		if (query == null || query.isEmpty()) {
+			return List.of();
+		}
+		String needle = query.toLowerCase(Locale.ROOT);
+		List<FindMatch> matches = new ArrayList<>();
+		TextDocumentBuffer buffer = tab.buffer();
+		int qLen = query.length();
+		for (int i = 0; i < buffer.lineCount(); i++) {
+			String lineLower = buffer.line(i).toLowerCase(Locale.ROOT);
+			int from = 0;
+			while (from <= lineLower.length() - qLen) {
+				int idx = lineLower.indexOf(needle, from);
+				if (idx < 0) {
+					break;
+				}
+				matches.add(new FindMatch(i, idx, idx + qLen));
+				from = idx + qLen;
+			}
+		}
+		return matches;
 	}
 
 	public boolean isAutocompleteOpen() {
@@ -117,7 +313,7 @@ public final class CodeEditorWidget {
 	}
 
 	boolean shouldDrawCaret(boolean focused) {
-		return focused && isCaretVisible();
+		return focused && !isFindBarFocused() && isCaretVisible();
 	}
 
 	public void render(
@@ -159,53 +355,79 @@ public final class CodeEditorWidget {
 		lastGutterRect = new IdeLayout.Rect(editorRect.x(), editorRect.y(), gutterWidth, codeH);
 		lastCodeViewport = new IdeLayout.Rect(codeX, editorRect.y(), codeW, codeH);
 
+		boolean wordWrap = QuillClientConfig.current().wordWrap();
+		int wrapMaxWidth = Math.max(40, codeW - CODE_LEFT_PADDING - 8);
+		cachedWrapWidth = wrapMaxWidth;
+		List<String> rawLines = new ArrayList<>(buffer.lineCount());
+		for (int i = 0; i < buffer.lineCount(); i++) {
+			rawLines.add(buffer.line(i));
+		}
+		List<WordWrapLayout.VisualRow> visualRows = WordWrapLayout.wrapLines(
+				rawLines, wordWrap, wrapMaxWidth, s -> QuillDraw.textWidth(font, s, scale));
+		cachedVisualRows = visualRows;
+
 		if (tab.consumeScrollToCaret()) {
 			ensureCaretVisible(font, tab);
 		}
 
 		int visibleLines = Math.max(1, codeH / lineHeight);
-		int maxScrollLine = Math.max(0, buffer.lineCount() - visibleLines);
+		int totalVisualRows = Math.max(1, visualRows.size());
+		int maxScrollLine = Math.max(0, totalVisualRows - visibleLines);
 		tab.setScrollLine(Math.min(maxScrollLine, tab.scrollLine()));
 
-		int maxLineWidth = Math.max(
-				computeMaxLineWidth(font, buffer, tab.scrollLine(), visibleLines, scale),
-				QuillDraw.textWidth(font, buffer.line(buffer.cursor().line()), scale)
-		);
-		int maxScrollX = Math.max(0, maxLineWidth - codeW + 24);
-		tab.setScrollX(Math.min(maxScrollX, tab.scrollX()));
+		int maxScrollX = 0;
+		if (wordWrap) {
+			tab.setScrollX(0);
+		} else {
+			int maxLineWidth = Math.max(
+					computeMaxLineWidth(font, buffer, tab.scrollLine(), visibleLines, scale),
+					QuillDraw.textWidth(font, buffer.line(buffer.cursor().line()), scale)
+			);
+			maxScrollX = Math.max(0, maxLineWidth - codeW + 24);
+			tab.setScrollX(Math.min(maxScrollX, tab.scrollX()));
+		}
 
 		// Gutter background
 		QuillDraw.fill(graphics, editorRect.x(), editorRect.y(), gutterWidth, editorRect.height(), QuillTheme.BG_GUTTER);
 		QuillDraw.vLine(graphics, codeX - 1, editorRect.y(), editorRect.height(), QuillTheme.BORDER_SUBTLE);
 
 		boolean hoveringPopup = isAutocompleteOpen() && lastPopupRect.contains(mouseX, mouseY);
-		if (lastCodeViewport.contains(mouseX, mouseY) && !hoveringPopup) {
+		boolean hoveringFind = findBarOpen && findBarRect.contains(mouseX, mouseY);
+		if (lastCodeViewport.contains(mouseX, mouseY) && !hoveringPopup && !hoveringFind) {
 			QuillDraw.requestCursor(graphics, CursorTypes.IBEAM);
-		} else if (lastGutterRect.contains(mouseX, mouseY) && !hoveringPopup) {
+		} else if (lastGutterRect.contains(mouseX, mouseY) && !hoveringPopup && !hoveringFind) {
 			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 		}
 
-		int firstLine = tab.scrollLine();
-		int lastLine = Math.min(buffer.lineCount() - 1, firstLine + visibleLines);
+		int firstRow = Math.min(Math.max(0, tab.scrollLine()), Math.max(0, visualRows.size() - 1));
+		int lastRow = Math.min(visualRows.size() - 1, firstRow + visibleLines);
 		TextDocumentBuffer.Position cursor = buffer.cursor();
 		boolean hasSel = buffer.hasSelection();
 		TextDocumentBuffer.Position selStart = buffer.selectionStart();
 		TextDocumentBuffer.Position selEnd = buffer.selectionEnd();
 		TextDocumentBuffer.BracketMatch bracketMatch = buffer.findMatchingBracket();
+		List<FindMatch> matches = findBarOpen ? findMatches(tab) : List.of();
+		if (activeFindMatchIdx >= matches.size()) {
+			activeFindMatchIdx = matches.isEmpty() ? 0 : matches.size() - 1;
+		}
+		int caretVisualRow = WordWrapLayout.visualRowFor(visualRows, cursor.line(), cursor.column());
 
 		QuillDraw.beginClip(graphics, new IdeLayout.Rect(editorRect.x(), editorRect.y(), editorRect.width(), codeH));
-		for (int i = firstLine; i <= lastLine; i++) {
-			int rowY = editorRect.y() + 4 + (i - firstLine) * lineHeight;
-			boolean isCurrentLine = i == cursor.line();
+		for (int v = firstRow; v <= lastRow; v++) {
+			WordWrapLayout.VisualRow vr = visualRows.get(v);
+			int rowY = editorRect.y() + 4 + (v - firstRow) * lineHeight;
+			boolean isCurrentLine = vr.logicalLine() == cursor.line();
 
 			if (isCurrentLine) {
 				QuillDraw.fill(graphics, codeX, rowY - 1, codeW, lineHeight, QuillTheme.LINE_HIGHLIGHT);
 			}
 
-			String lineNumStr = String.valueOf(i + 1);
-			int numX = codeX - 6 - QuillDraw.textWidth(font, lineNumStr, scale);
-			QuillDraw.textScaled(graphics, font, lineNumStr, numX, rowY,
-					isCurrentLine ? QuillTheme.TEXT_PRIMARY : QuillTheme.TEXT_MUTED, scale);
+			if (vr.firstSegment()) {
+				String lineNumStr = String.valueOf(vr.logicalLine() + 1);
+				int numX = codeX - 6 - QuillDraw.textWidth(font, lineNumStr, scale);
+				QuillDraw.textScaled(graphics, font, lineNumStr, numX, rowY,
+						isCurrentLine ? QuillTheme.TEXT_PRIMARY : QuillTheme.TEXT_MUTED, scale);
+			}
 		}
 		QuillDraw.endClip(graphics);
 
@@ -214,45 +436,78 @@ public final class CodeEditorWidget {
 		int caretScreenY = editorRect.y() + 4;
 
 		QuillDraw.beginClip(graphics, lastCodeViewport);
-		for (int i = firstLine; i <= lastLine; i++) {
-			int rowY = editorRect.y() + 4 + (i - firstLine) * lineHeight;
-			String lineText = buffer.line(i);
+		for (int v = firstRow; v <= lastRow; v++) {
+			WordWrapLayout.VisualRow vr = visualRows.get(v);
+			int i = vr.logicalLine();
+			int rowY = editorRect.y() + 4 + (v - firstRow) * lineHeight;
+			String fullLine = buffer.line(i);
+			int segStart = Math.min(vr.startCol(), fullLine.length());
+			int segEnd = Math.min(vr.endCol(), fullLine.length());
+			String segText = fullLine.substring(segStart, segEnd);
 			int drawX = codeX + CODE_LEFT_PADDING - tab.scrollX();
 
-			// Selection highlight for this line
-			if (hasSel && i >= selStart.line() && i <= selEnd.line()) {
-				int startCol = (i == selStart.line()) ? selStart.column() : 0;
-				int endCol = (i == selEnd.line()) ? selEnd.column() : lineText.length();
-				int x1 = drawX + QuillDraw.textWidth(font, lineText.substring(0, Math.min(startCol, lineText.length())), scale);
-				int x2 = drawX + QuillDraw.textWidth(font, lineText.substring(0, Math.min(endCol, lineText.length())), scale);
-				if (i < selEnd.line() && endCol == lineText.length()) {
-					x2 += Math.max(5, Math.round(6 * scale));
+			// Find matches highlight for this visual row
+			if (!matches.isEmpty()) {
+				for (int mIdx = 0; mIdx < matches.size(); mIdx++) {
+					FindMatch m = matches.get(mIdx);
+					if (m.line() != i) {
+						continue;
+					}
+					int ovStart = Math.max(segStart, m.startCol());
+					int ovEnd = Math.min(segEnd, m.endCol());
+					if (ovEnd > ovStart) {
+						int mx1 = drawX + QuillDraw.textWidth(font, segText.substring(0, ovStart - segStart), scale);
+						int mx2 = drawX + QuillDraw.textWidth(font, segText.substring(0, ovEnd - segStart), scale);
+						int fillColor = (mIdx == activeFindMatchIdx) ? 0x66EA5C00 : 0x33D19A66;
+						QuillDraw.fill(graphics, mx1, rowY - 1, Math.max(2, mx2 - mx1), lineHeight, fillColor);
+					}
 				}
-				if (x2 > x1) {
-					QuillDraw.fill(graphics, x1, rowY - 1, x2 - x1, lineHeight, QuillTheme.SELECTION_BG);
+			}
+
+			// Selection highlight for this visual row
+			if (hasSel && i >= selStart.line() && i <= selEnd.line()) {
+				int lineSelStart = (i == selStart.line()) ? selStart.column() : 0;
+				int lineSelEnd = (i == selEnd.line()) ? selEnd.column() : fullLine.length();
+				int ovStart = Math.max(segStart, lineSelStart);
+				int ovEnd = Math.min(segEnd, lineSelEnd);
+				boolean extendNewline = (i < selEnd.line()) && (segEnd == fullLine.length()) && (lineSelEnd >= fullLine.length());
+				if (ovEnd > ovStart || extendNewline) {
+					int x1 = drawX + QuillDraw.textWidth(font, segText.substring(0, Math.max(0, ovStart - segStart)), scale);
+					int x2 = drawX + QuillDraw.textWidth(font, segText.substring(0, Math.max(0, ovEnd - segStart)), scale);
+					if (extendNewline) {
+						x2 += Math.max(5, Math.round(6 * scale));
+					}
+					if (x2 > x1) {
+						QuillDraw.fill(graphics, x1, rowY - 1, x2 - x1, lineHeight, QuillTheme.SELECTION_BG);
+					}
 				}
 			}
 
 			// Matching bracket pair highlight
 			if (bracketMatch != null) {
-				drawBracketHighlightIfOnLine(graphics, font, lineText, i, drawX, rowY, lineHeight, scale, bracketMatch.open());
-				drawBracketHighlightIfOnLine(graphics, font, lineText, i, drawX, rowY, lineHeight, scale, bracketMatch.close());
+				drawBracketHighlightIfOnSegment(graphics, font, fullLine, segStart, segEnd, i, drawX, rowY, lineHeight, scale, bracketMatch.open());
+				drawBracketHighlightIfOnSegment(graphics, font, fullLine, segStart, segEnd, i, drawX, rowY, lineHeight, scale, bracketMatch.close());
 			}
 
-			if (language == SyntaxHighlighter.Language.PLAIN || lineText.isEmpty()) {
-				QuillDraw.textScaled(graphics, font, lineText, drawX, rowY, QuillTheme.SYNTAX_PLAIN, scale);
+			if (language == SyntaxHighlighter.Language.PLAIN || segText.isEmpty()) {
+				QuillDraw.textScaled(graphics, font, segText, drawX, rowY, QuillTheme.SYNTAX_PLAIN, scale);
 			} else {
-				List<SyntaxHighlighter.TokenSpan> spans = SyntaxHighlighter.tokenizeLine(lineText, language);
+				List<SyntaxHighlighter.TokenSpan> spans = SyntaxHighlighter.tokenizeLine(fullLine, language);
 				for (SyntaxHighlighter.TokenSpan span : spans) {
-					String segment = lineText.substring(span.start(), span.end());
-					int segX = drawX + (span.start() == 0 ? 0 : QuillDraw.textWidth(font, lineText.substring(0, span.start()), scale));
-					QuillDraw.textScaled(graphics, font, segment, segX, rowY, span.color(), scale);
+					int ovStart = Math.max(segStart, span.start());
+					int ovEnd = Math.min(segEnd, span.end());
+					if (ovEnd <= ovStart) {
+						continue;
+					}
+					String part = fullLine.substring(ovStart, ovEnd);
+					int segX = drawX + (ovStart == segStart ? 0 : QuillDraw.textWidth(font, fullLine.substring(segStart, ovStart), scale));
+					QuillDraw.textScaled(graphics, font, part, segX, rowY, span.color(), scale);
 				}
 			}
 
-			if (i == cursor.line()) {
-				int col = Math.min(cursor.column(), lineText.length());
-				caretScreenX = drawX + QuillDraw.textWidth(font, lineText.substring(0, col), scale);
+			if (v == caretVisualRow && i == cursor.line()) {
+				int col = Math.max(segStart, Math.min(cursor.column(), segEnd));
+				caretScreenX = drawX + QuillDraw.textWidth(font, segText.substring(0, col - segStart), scale);
 				caretScreenY = rowY;
 				if (shouldDrawCaret(focused)) {
 					QuillDraw.fill(graphics, caretScreenX, rowY - 1, 1, lineHeight, QuillTheme.CURSOR_COLOR);
@@ -264,7 +519,7 @@ public final class CodeEditorWidget {
 		// Vertical scrollbar
 		if (maxScrollLine > 0 && codeH > 12) {
 			int trackX = editorRect.right() - SCROLLBAR_SIZE;
-			int thumbH = Math.max(14, (int) ((long) codeH * visibleLines / buffer.lineCount()));
+			int thumbH = Math.max(14, (int) ((long) codeH * visibleLines / totalVisualRows));
 			int thumbY = editorRect.y() + (int) ((long) tab.scrollLine() * (codeH - thumbH) / maxScrollLine);
 			QuillDraw.fill(graphics, trackX, editorRect.y(), SCROLLBAR_SIZE, codeH, QuillTheme.BG_SIDEBAR);
 			QuillDraw.fill(graphics, trackX + 1, thumbY, SCROLLBAR_SIZE - 2, thumbH, QuillTheme.TEXT_MUTED);
@@ -280,6 +535,13 @@ public final class CodeEditorWidget {
 			QuillDraw.fill(graphics, thumbX, trackY + 1, thumbW, SCROLLBAR_SIZE - 2, QuillTheme.TEXT_MUTED);
 		}
 
+		// In-file Find bar overlay (top-right corner of editor)
+		if (findBarOpen) {
+			renderFindBar(graphics, font, editorRect, matches, mouseX, mouseY);
+		} else {
+			clearFindBarRects();
+		}
+
 		// Brigadier autocomplete popup & hover signature tooltips (.mcfunction only)
 		if (language == SyntaxHighlighter.Language.MCFUNCTION) {
 			if (isAutocompleteOpen()) {
@@ -287,7 +549,9 @@ public final class CodeEditorWidget {
 			} else {
 				lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
 				suggestionRowRects.clear();
-				renderHoverOrUsageTooltip(graphics, font, editorRect, tab, lineHeight, mouseX, mouseY);
+				if (!hoveringFind) {
+					renderHoverOrUsageTooltip(graphics, font, editorRect, tab, lineHeight, mouseX, mouseY);
+				}
 			}
 		} else {
 			lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
@@ -295,10 +559,79 @@ public final class CodeEditorWidget {
 		}
 	}
 
-	private static void drawBracketHighlightIfOnLine(
+	private void renderFindBar(
 			GuiGraphicsExtractor graphics,
 			Font font,
-			String lineText,
+			IdeLayout.Rect editorRect,
+			List<FindMatch> matches,
+			int mouseX,
+			int mouseY
+	) {
+		int barW = Math.min(230, Math.max(150, editorRect.width() - 24));
+		int barH = 22;
+		int bx = editorRect.right() - barW - 10;
+		int by = editorRect.y() + 4;
+		findBarRect = new IdeLayout.Rect(bx, by, barW, barH);
+
+		QuillDraw.fill(graphics, bx - 1, by + 1, barW + 3, barH + 3, QuillTheme.Metrics.SHADOW_OUTER);
+		QuillDraw.fill(graphics, bx, by, barW, barH, QuillTheme.BG_POPUP);
+		QuillDraw.outline(graphics, bx, by, barW, barH, findBarFocused ? QuillTheme.ACCENT_FOCUS : QuillTheme.BORDER_SUBTLE);
+
+		int btnSize = 14;
+		findCloseBtnRect = new IdeLayout.Rect(bx + barW - btnSize - 4, by + 4, btnSize, btnSize);
+		findNextBtnRect = new IdeLayout.Rect(findCloseBtnRect.x() - btnSize - 2, by + 4, btnSize, btnSize);
+		findPrevBtnRect = new IdeLayout.Rect(findNextBtnRect.x() - btnSize - 2, by + 4, btnSize, btnSize);
+
+		String countText = findInput.text().isEmpty()
+				? ""
+				: (matches.isEmpty() ? "0/0" : (activeFindMatchIdx + 1) + "/" + matches.size());
+		int countW = countText.isEmpty() ? 0 : QuillDraw.textWidth(font, countText) + 6;
+		int inputW = Math.max(48, findPrevBtnRect.x() - bx - 8 - countW);
+		findInputRect = new IdeLayout.Rect(bx + 4, by + 3, inputW, 16);
+		findInput.render(graphics, font, findInputRect, "Find", findBarFocused);
+
+		int ty = by + (barH - font.lineHeight) / 2;
+		if (!countText.isEmpty()) {
+			int countColor = matches.isEmpty() ? QuillTheme.TEXT_WARNING : QuillTheme.TEXT_MUTED;
+			QuillDraw.text(graphics, font, countText, findInputRect.right() + 4, ty, countColor);
+		}
+
+		drawFindButton(graphics, font, findPrevBtnRect, "^", !matches.isEmpty(), findPrevBtnRect.contains(mouseX, mouseY));
+		drawFindButton(graphics, font, findNextBtnRect, "v", !matches.isEmpty(), findNextBtnRect.contains(mouseX, mouseY));
+
+		boolean hoverClose = findCloseBtnRect.contains(mouseX, mouseY);
+		if (hoverClose) {
+			QuillDraw.fill(graphics, findCloseBtnRect.x(), findCloseBtnRect.y(), findCloseBtnRect.width(), findCloseBtnRect.height(), QuillTheme.BG_HOVER);
+			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
+		}
+		QuillDraw.drawCloseX(graphics, findCloseBtnRect.x() + 3, findCloseBtnRect.y() + 3, 7,
+				hoverClose ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
+	}
+
+	private static void drawFindButton(
+			GuiGraphicsExtractor graphics,
+			Font font,
+			IdeLayout.Rect rect,
+			String glyph,
+			boolean enabled,
+			boolean hovered
+	) {
+		if (enabled && hovered) {
+			QuillDraw.fill(graphics, rect.x(), rect.y(), rect.width(), rect.height(), QuillTheme.BG_HOVER);
+			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
+		}
+		int gx = rect.x() + (rect.width() - QuillDraw.textWidth(font, glyph)) / 2;
+		int gy = rect.y() + (rect.height() - font.lineHeight) / 2;
+		QuillDraw.text(graphics, font, glyph, gx, gy,
+				enabled ? (hovered ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY) : QuillTheme.TEXT_MUTED);
+	}
+
+	private static void drawBracketHighlightIfOnSegment(
+			GuiGraphicsExtractor graphics,
+			Font font,
+			String fullLine,
+			int segStart,
+			int segEnd,
 			int lineIndex,
 			int drawX,
 			int rowY,
@@ -306,13 +639,131 @@ public final class CodeEditorWidget {
 			float scale,
 			TextDocumentBuffer.Position pos
 	) {
-		if (pos == null || pos.line() != lineIndex || pos.column() < 0 || pos.column() >= lineText.length()) {
+		if (pos == null || pos.line() != lineIndex || pos.column() < segStart || pos.column() >= segEnd) {
 			return;
 		}
-		int bx = drawX + QuillDraw.textWidth(font, lineText.substring(0, pos.column()), scale);
-		int bw = Math.max(4, QuillDraw.textWidth(font, lineText.substring(pos.column(), pos.column() + 1), scale));
+		int bx = drawX + QuillDraw.textWidth(font, fullLine.substring(segStart, pos.column()), scale);
+		int bw = Math.max(4, QuillDraw.textWidth(font, fullLine.substring(pos.column(), pos.column() + 1), scale));
 		QuillDraw.fill(graphics, bx, rowY - 1, bw, lineHeight, QuillTheme.BRACKET_MATCH_BG);
 		QuillDraw.outline(graphics, bx, rowY - 1, bw, lineHeight, QuillTheme.BORDER_SUBTLE);
+	}
+
+	private void jumpToNearestFindMatch(Font font, OpenTabState tab) {
+		List<FindMatch> matches = findMatches(tab);
+		if (matches.isEmpty()) {
+			activeFindMatchIdx = 0;
+			return;
+		}
+		TextDocumentBuffer buffer = tab.buffer();
+		TextDocumentBuffer.Position anchor = buffer.hasSelection() ? buffer.selectionStart() : buffer.cursor();
+		int chosen = 0;
+		for (int i = 0; i < matches.size(); i++) {
+			FindMatch m = matches.get(i);
+			if (m.line() > anchor.line() || (m.line() == anchor.line() && m.startCol() >= anchor.column())) {
+				chosen = i;
+				break;
+			}
+		}
+		activeFindMatchIdx = chosen;
+		selectFindMatch(font, tab, matches.get(chosen));
+	}
+
+	private void jumpToFindMatch(Font font, OpenTabState tab, int delta) {
+		List<FindMatch> matches = findMatches(tab);
+		if (matches.isEmpty()) {
+			activeFindMatchIdx = 0;
+			return;
+		}
+		activeFindMatchIdx = Math.floorMod(activeFindMatchIdx + delta, matches.size());
+		selectFindMatch(font, tab, matches.get(activeFindMatchIdx));
+	}
+
+	private void selectFindMatch(Font font, OpenTabState tab, FindMatch match) {
+		tab.buffer().setCursor(match.line(), match.startCol(), false);
+		tab.buffer().setCursor(match.line(), match.endCol(), true);
+		touchCaret();
+		ensureCaretVisible(font, tab);
+	}
+
+	public static boolean isPositionWithinSelection(TextDocumentBuffer buffer, TextDocumentBuffer.Position pos) {
+		if (buffer == null || pos == null || !buffer.hasSelection()) {
+			return false;
+		}
+		TextDocumentBuffer.Position start = buffer.selectionStart();
+		TextDocumentBuffer.Position end = buffer.selectionEnd();
+		return pos.compareTo(start) >= 0 && pos.compareTo(end) <= 0;
+	}
+
+	public List<ContextMenuOverlay.MenuEntry> buildContextMenuEntries(Font font, OpenTabState tab) {
+		if (tab == null) {
+			return List.of();
+		}
+		TextDocumentBuffer buffer = tab.buffer();
+		boolean hasSelection = buffer.hasSelection();
+		String clip = getClipboardSafe();
+		boolean hasClipboard = clip != null && !clip.isEmpty();
+
+		List<ContextMenuOverlay.MenuEntry> items = new ArrayList<>();
+		items.add(new ContextMenuOverlay.ActionItem("Cut", "Ctrl+X", hasSelection, () -> {
+			String selected = buffer.getSelectedText();
+			if (!selected.isEmpty()) {
+				setClipboardSafe(selected);
+				buffer.deleteSelection();
+				dismissAutocomplete();
+				touchCaret();
+				ensureCaretVisible(font, tab);
+				onBufferEdited.accept(tab);
+			}
+		}));
+		items.add(new ContextMenuOverlay.ActionItem("Copy", "Ctrl+C", hasSelection, () -> {
+			String selected = buffer.getSelectedText();
+			if (!selected.isEmpty()) {
+				setClipboardSafe(selected);
+			}
+		}));
+		items.add(new ContextMenuOverlay.ActionItem("Paste", "Ctrl+V", hasClipboard, () -> {
+			String pasted = getClipboardSafe();
+			if (pasted != null && !pasted.isEmpty()) {
+				buffer.insertText(pasted);
+				dismissAutocomplete();
+				touchCaret();
+				ensureCaretVisible(font, tab);
+				onBufferEdited.accept(tab);
+			}
+		}));
+		items.add(new ContextMenuOverlay.Separator());
+		items.add(new ContextMenuOverlay.ActionItem("Select All", "Ctrl+A", true, () -> {
+			buffer.selectAll();
+			dismissAutocomplete();
+			touchCaret();
+		}));
+		items.add(new ContextMenuOverlay.ActionItem("Find in File", "Ctrl+F", true, () -> openFindBar(tab)));
+		items.add(new ContextMenuOverlay.Separator());
+		items.add(new ContextMenuOverlay.ActionItem("Go to Top", "Ctrl+Home", true, () -> {
+			buffer.moveHome(false, true);
+			dismissAutocomplete();
+			touchCaret();
+			ensureCaretVisible(font, tab);
+		}));
+		items.add(new ContextMenuOverlay.ActionItem("Go to Bottom", "Ctrl+End", true, () -> {
+			buffer.moveEnd(false, true);
+			dismissAutocomplete();
+			touchCaret();
+			ensureCaretVisible(font, tab);
+		}));
+		items.add(new ContextMenuOverlay.ActionItem("Go to Start of Line", "Home", true, () -> {
+			buffer.moveHome(false, false);
+			dismissAutocomplete();
+			touchCaret();
+			ensureCaretVisible(font, tab);
+		}));
+		items.add(new ContextMenuOverlay.ActionItem("Go to End of Line", "End", true, () -> {
+			buffer.moveEnd(false, false);
+			dismissAutocomplete();
+			touchCaret();
+			ensureCaretVisible(font, tab);
+		}));
+		return List.copyOf(items);
 	}
 
 	private void renderAutocompletePopup(
@@ -425,7 +876,7 @@ public final class CodeEditorWidget {
 			return;
 		}
 		TextDocumentBuffer buffer = tab.buffer();
-		int hoverLine = tab.scrollLine() + Math.max(0, (mouseY - (lastCodeViewport.y() + 4)) / lineHeight);
+		int hoverLine = hitTestLine(font, tab, mouseY);
 		if (hoverLine < 0 || hoverLine >= buffer.lineCount()) {
 			return;
 		}
@@ -466,9 +917,64 @@ public final class CodeEditorWidget {
 	}
 
 	public boolean mouseClicked(MouseButtonEvent event, Font font, OpenTabState tab) {
+		if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+			if (findBarOpen && findBarRect.contains(event.x(), event.y())) {
+				return true;
+			}
+			if (lastCodeViewport.contains(event.x(), event.y()) || lastGutterRect.contains(event.x(), event.y())) {
+				dismissAutocomplete();
+				findBarFocused = false;
+				if (lastCodeViewport.contains(event.x(), event.y())) {
+					TextDocumentBuffer.Position pos = hitTest(font, tab, event.x(), event.y());
+					if (!isPositionWithinSelection(tab.buffer(), pos)) {
+						tab.buffer().setCursor(pos.line(), pos.column(), false);
+					}
+				} else {
+					int lineIndex = hitTestLine(font, tab, event.y());
+					if (!isPositionWithinSelection(tab.buffer(), new TextDocumentBuffer.Position(lineIndex, 0))) {
+						tab.buffer().setCursor(lineIndex, 0, false);
+					}
+				}
+				touchCaret();
+				List<ContextMenuOverlay.MenuEntry> entries = buildContextMenuEntries(font, tab);
+				if (!entries.isEmpty()) {
+					contextMenuOpener.accept(new ContextMenuOverlay(
+							(int) Math.round(event.x()),
+							(int) Math.round(event.y()),
+							entries,
+							contextMenuDismisser
+					));
+				}
+				return true;
+			}
+			return false;
+		}
 		if (event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
 			return false;
 		}
+		if (findBarOpen && findBarRect.contains(event.x(), event.y())) {
+			dismissAutocomplete();
+			findBarFocused = true;
+			if (findCloseBtnRect.contains(event.x(), event.y())) {
+				closeFindBar();
+				touchCaret();
+				return true;
+			}
+			if (findPrevBtnRect.contains(event.x(), event.y())) {
+				jumpToFindMatch(font, tab, -1);
+				return true;
+			}
+			if (findNextBtnRect.contains(event.x(), event.y())) {
+				jumpToFindMatch(font, tab, 1);
+				return true;
+			}
+			if (findInputRect.contains(event.x(), event.y())) {
+				findInput.mouseClicked(event.x(), font, event.hasShiftDown());
+			}
+			return true;
+		}
+		findBarFocused = false;
+
 		if (isAutocompleteOpen() && lastPopupRect.contains(event.x(), event.y())) {
 			for (int i = 0; i < suggestionRowRects.size(); i++) {
 				if (suggestionRowRects.get(i).contains(event.x(), event.y())) {
@@ -535,6 +1041,9 @@ public final class CodeEditorWidget {
 	}
 
 	public boolean mouseDragged(MouseButtonEvent event, Font font, OpenTabState tab) {
+		if (findBarOpen && findInput.isDragging() && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+			return findInput.mouseDragged(event.x(), font);
+		}
 		if (dragMode == DragMode.NONE || event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
 			return false;
 		}
@@ -544,7 +1053,8 @@ public final class CodeEditorWidget {
 		} else if (event.y() > lastCodeViewport.bottom()) {
 			int lineHeight = scaledLineHeight(font, textScale());
 			int visibleLines = Math.max(1, lastCodeViewport.height() / lineHeight);
-			int maxScroll = Math.max(0, tab.buffer().lineCount() - visibleLines);
+			int totalRows = !cachedVisualRows.isEmpty() ? cachedVisualRows.size() : tab.buffer().lineCount();
+			int maxScroll = Math.max(0, totalRows - visibleLines);
 			tab.setScrollLine(Math.min(maxScroll, tab.scrollLine() + 1));
 		}
 
@@ -564,12 +1074,25 @@ public final class CodeEditorWidget {
 	}
 
 	public void mouseReleased(MouseButtonEvent event) {
+		findInput.mouseReleased();
 		if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 			dragMode = DragMode.NONE;
 		}
 	}
 
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY, Font font, OpenTabState tab) {
+		return mouseScrolled(mouseX, mouseY, scrollX, scrollY, font, tab, isShiftDownSafe());
+	}
+
+	public boolean mouseScrolled(
+			double mouseX,
+			double mouseY,
+			double scrollX,
+			double scrollY,
+			Font font,
+			OpenTabState tab,
+			boolean shiftDown
+	) {
 		if (isAutocompleteOpen() && lastPopupRect.contains(mouseX, mouseY)) {
 			int total = currentAssist.suggestions().size();
 			int maxScroll = Math.max(0, total - Math.min(MAX_VISIBLE_SUGGESTIONS, total));
@@ -581,13 +1104,25 @@ public final class CodeEditorWidget {
 		if (!lastEditorRect.contains(mouseX, mouseY)) {
 			return false;
 		}
+		boolean wordWrap = QuillClientConfig.current().wordWrap();
+		if (shiftDown && scrollY != 0) {
+			if (!wordWrap) {
+				int step = (int) Math.round(-scrollY * 28.0);
+				if (step == 0) {
+					step = scrollY > 0 ? -28 : 28;
+				}
+				tab.setScrollX(Math.max(0, tab.scrollX() + step));
+			}
+			return true;
+		}
 		int lineHeight = scaledLineHeight(font, textScale());
 		int visibleLines = Math.max(1, lastCodeViewport.height() / lineHeight);
-		int maxScrollLine = Math.max(0, tab.buffer().lineCount() - visibleLines);
+		int totalRows = !cachedVisualRows.isEmpty() ? cachedVisualRows.size() : tab.buffer().lineCount();
+		int maxScrollLine = Math.max(0, totalRows - visibleLines);
 		if (scrollY != 0) {
 			tab.setScrollLine(Math.min(maxScrollLine, tab.scrollLine() - (int) Math.signum(scrollY) * 3));
 		}
-		if (scrollX != 0) {
+		if (scrollX != 0 && !wordWrap) {
 			tab.setScrollX(tab.scrollX() - (int) (scrollX * 24));
 		}
 		return true;
@@ -597,6 +1132,49 @@ public final class CodeEditorWidget {
 		TextDocumentBuffer buffer = tab.buffer();
 		boolean shift = event.hasShiftDown();
 		boolean ctrl = event.hasControlDownWithQuirk();
+		boolean alt = event.hasAltDown();
+
+		// Ctrl+F opens/focuses in-file Find bar
+		if (ctrl && !alt && !shift && matchesLetter(event, InputConstants.KEY_F, 'f')) {
+			openFindBar(tab);
+			if (!findInput.text().isEmpty()) {
+				jumpToNearestFindMatch(font, tab);
+			}
+			return true;
+		}
+
+		// Alt+Z toggles soft word wrap
+		if (alt && !ctrl && !shift && matchesLetter(event, InputConstants.KEY_Z, 'z')) {
+			QuillClientConfig cfg = QuillClientConfig.current();
+			boolean wrapped = cfg.toggleWordWrap();
+			if (wrapped) {
+				tab.setScrollX(0);
+			}
+			cachedVisualRows = List.of();
+			QuillClientConfig.saveCurrent();
+			ensureCaretVisible(font, tab);
+			return true;
+		}
+
+		// In-file Find bar input handling takes precedence when focused
+		if (isFindBarFocused()) {
+			if (event.isEscape()) {
+				closeFindBar();
+				touchCaret();
+				return true;
+			}
+			if (event.isConfirmation()) {
+				jumpToFindMatch(font, tab, shift ? -1 : 1);
+				return true;
+			}
+			SingleLineTextInput.KeyActionResult res = findInput.keyPressed(event);
+			if (res.handled()) {
+				if (res.textChanged()) {
+					jumpToNearestFindMatch(font, tab);
+				}
+				return true;
+			}
+		}
 
 		// Configurable autocomplete shortcut (default Ctrl+Space)
 		if (QuillClientConfig.current().shortcut(QuillClientConfig.ShortcutAction.TRIGGER_AUTOCOMPLETE).matches(event)) {
@@ -675,7 +1253,7 @@ public final class CodeEditorWidget {
 			}
 			return true;
 		}
-		if (ctrl && !shift && !event.hasAltDown() && event.shortcutKey() == InputConstants.KEYCODE_Y) {
+		if (ctrl && !shift && !alt && event.shortcutKey() == InputConstants.KEYCODE_Y) {
 			if (buffer.redo()) {
 				dismissAutocomplete();
 				touchCaret();
@@ -799,6 +1377,13 @@ public final class CodeEditorWidget {
 		if (!event.isAllowedChatCharacter()) {
 			return false;
 		}
+		if (isFindBarFocused()) {
+			boolean changed = findInput.charTyped(event);
+			if (changed) {
+				jumpToNearestFindMatch(font, tab);
+			}
+			return changed;
+		}
 		String typed = event.codepointAsString();
 		tab.buffer().insertText(typed);
 		touchCaret();
@@ -897,6 +1482,22 @@ public final class CodeEditorWidget {
 		);
 	}
 
+	private List<WordWrapLayout.VisualRow> visualRowsFor(Font font, OpenTabState tab, float scale) {
+		if (!cachedVisualRows.isEmpty()) {
+			return cachedVisualRows;
+		}
+		TextDocumentBuffer buffer = tab.buffer();
+		int wrapMaxWidth = Math.max(40, lastCodeViewport.width() - CODE_LEFT_PADDING - 8);
+		List<String> rawLines = new ArrayList<>(buffer.lineCount());
+		for (int i = 0; i < buffer.lineCount(); i++) {
+			rawLines.add(buffer.line(i));
+		}
+		ToIntFunction<String> measurer = font != null
+				? s -> QuillDraw.textWidth(font, s, scale)
+				: s -> s.length() * 6;
+		return WordWrapLayout.wrapLines(rawLines, QuillClientConfig.current().wordWrap(), wrapMaxWidth, measurer);
+	}
+
 	public void ensureCaretVisible(Font font, OpenTabState tab) {
 		if (lastCodeViewport.width() <= 0 || lastCodeViewport.height() <= 0) {
 			return;
@@ -907,6 +1508,18 @@ public final class CodeEditorWidget {
 		int lineHeight = scaledLineHeight(font, scale);
 		int visibleLines = Math.max(1, (lastCodeViewport.height() - 6) / lineHeight);
 
+		if (QuillClientConfig.current().wordWrap()) {
+			List<WordWrapLayout.VisualRow> rows = visualRowsFor(font, tab, scale);
+			int caretRow = WordWrapLayout.visualRowFor(rows, cursor.line(), cursor.column());
+			if (caretRow < tab.scrollLine()) {
+				tab.setScrollLine(caretRow);
+			} else if (caretRow >= tab.scrollLine() + visibleLines) {
+				tab.setScrollLine(caretRow - visibleLines + 1);
+			}
+			tab.setScrollX(0);
+			return;
+		}
+
 		if (cursor.line() < tab.scrollLine()) {
 			tab.setScrollLine(cursor.line());
 		} else if (cursor.line() >= tab.scrollLine() + visibleLines) {
@@ -914,7 +1527,8 @@ public final class CodeEditorWidget {
 		}
 
 		String lineText = buffer.line(cursor.line());
-		int caretPixelX = QuillDraw.textWidth(font, lineText.substring(0, Math.min(cursor.column(), lineText.length())), scale);
+		String prefix = lineText.substring(0, Math.min(cursor.column(), lineText.length()));
+		int caretPixelX = font != null ? QuillDraw.textWidth(font, prefix, scale) : prefix.length() * 6;
 		int viewW = Math.max(20, lastCodeViewport.width() - CODE_LEFT_PADDING - 12);
 		if (caretPixelX < tab.scrollX()) {
 			tab.setScrollX(Math.max(0, caretPixelX - 16));
@@ -925,16 +1539,33 @@ public final class CodeEditorWidget {
 
 	private int hitTestLine(Font font, OpenTabState tab, double mouseY) {
 		int lineHeight = scaledLineHeight(font, textScale());
-		int lineIndex = tab.scrollLine() + Math.max(0, ((int) mouseY - (lastCodeViewport.y() + 4)) / lineHeight);
-		return Math.max(0, Math.min(tab.buffer().lineCount() - 1, lineIndex));
+		int rowIdx = tab.scrollLine() + Math.max(0, ((int) mouseY - (lastCodeViewport.y() + 4)) / lineHeight);
+		if (QuillClientConfig.current().wordWrap() && !cachedVisualRows.isEmpty()) {
+			int v = Math.max(0, Math.min(cachedVisualRows.size() - 1, rowIdx));
+			return cachedVisualRows.get(v).logicalLine();
+		}
+		return Math.max(0, Math.min(tab.buffer().lineCount() - 1, rowIdx));
 	}
 
 	private TextDocumentBuffer.Position hitTest(Font font, OpenTabState tab, double mouseX, double mouseY) {
 		float scale = textScale();
-		int lineIndex = hitTestLine(font, tab, mouseY);
+		int lineHeight = scaledLineHeight(font, scale);
+		int rowIdx = tab.scrollLine() + Math.max(0, ((int) mouseY - (lastCodeViewport.y() + 4)) / lineHeight);
+		if (QuillClientConfig.current().wordWrap() && !cachedVisualRows.isEmpty()) {
+			int v = Math.max(0, Math.min(cachedVisualRows.size() - 1, rowIdx));
+			WordWrapLayout.VisualRow vr = cachedVisualRows.get(v);
+			String fullLine = tab.buffer().line(vr.logicalLine());
+			int segStart = Math.min(vr.startCol(), fullLine.length());
+			int segEnd = Math.min(vr.endCol(), fullLine.length());
+			String segText = fullLine.substring(segStart, segEnd);
+			int relX = Math.max(0, (int) mouseX - (lastCodeViewport.x() + CODE_LEFT_PADDING));
+			int localCol = font != null ? QuillDraw.charIndexAtPixel(font, segText, relX, scale) : Math.min(segText.length(), relX / 6);
+			return new TextDocumentBuffer.Position(vr.logicalLine(), segStart + localCol);
+		}
+		int lineIndex = Math.max(0, Math.min(tab.buffer().lineCount() - 1, rowIdx));
 		String lineText = tab.buffer().line(lineIndex);
 		int relX = Math.max(0, (int) mouseX - (lastCodeViewport.x() + CODE_LEFT_PADDING - tab.scrollX()));
-		int col = QuillDraw.charIndexAtPixel(font, lineText, relX, scale);
+		int col = font != null ? QuillDraw.charIndexAtPixel(font, lineText, relX, scale) : Math.min(lineText.length(), relX / 6);
 		return new TextDocumentBuffer.Position(lineIndex, col);
 	}
 
@@ -947,15 +1578,35 @@ public final class CodeEditorWidget {
 		return max;
 	}
 
-	private static String getClipboardSafe() {
+	private static boolean matchesLetter(KeyEvent event, int keyCode, char lower) {
+		return event.key() == keyCode
+				|| event.shortcutKey() == keyCode
+				|| Character.toLowerCase((char) event.shortcutKey()) == lower;
+	}
+
+	private String getClipboardSafe() {
+		String val = clipboardGetter.get();
+		return val != null ? val : "";
+	}
+
+	private void setClipboardSafe(String value) {
+		clipboardSetter.accept(value != null ? value : "");
+	}
+
+	private static String readMinecraftClipboard() {
 		Minecraft mc = Minecraft.getInstance();
 		return (mc != null && mc.keyboardHandler != null) ? mc.keyboardHandler.getClipboard() : "";
 	}
 
-	private static void setClipboardSafe(String value) {
+	private static void writeMinecraftClipboard(String value) {
 		Minecraft mc = Minecraft.getInstance();
 		if (mc != null && mc.keyboardHandler != null) {
 			mc.keyboardHandler.setClipboard(value);
 		}
+	}
+
+	private static boolean isShiftDownSafe() {
+		Minecraft mc = Minecraft.getInstance();
+		return mc != null && mc.hasShiftDown();
 	}
 }

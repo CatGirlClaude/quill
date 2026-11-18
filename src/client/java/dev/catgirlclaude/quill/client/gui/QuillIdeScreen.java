@@ -139,10 +139,13 @@ public class QuillIdeScreen extends Screen {
 		this.inspectorSidebar = new InspectorSidebarWidget(session, workspaceFileCache);
 		this.quickActions = new QuickActionsAndPresetsWidget(session, this::openModal, this::closeModal);
 		this.tabBarWidget = new EditorTabBarWidget(session, this::openModal, this::closeModal);
+		this.tabBarWidget.setTabActionHooks(this::openContextMenu, this::closeContextMenu, null, this::openSearchWithQuery, this::renameEntryFromTab);
 		this.codeEditorWidget = new CodeEditorWidget();
 		this.codeEditorWidget.setOnBufferEdited(session::notifyTabBufferEdited);
+		this.codeEditorWidget.setContextMenuHooks(this::openContextMenu, this::closeContextMenu);
 		this.secondaryCodeEditorWidget = new CodeEditorWidget();
 		this.secondaryCodeEditorWidget.setOnBufferEdited(session::notifyTabBufferEdited);
+		this.secondaryCodeEditorWidget.setContextMenuHooks(this::openContextMenu, this::closeContextMenu);
 		this.settingsPanel = new SettingsPanelWidget(this::closeSettings, this::onResetWindowBounds);
 		this.bottomPanelWidget = new BottomPanelWidget(session);
 		this.notificationBanner = new QuillNotificationBanner(session);
@@ -153,6 +156,19 @@ public class QuillIdeScreen extends Screen {
 				this::closeSettings,
 				this::closeSettings
 		);
+	}
+
+	private void renameEntryFromTab(String relativePath) {
+		if (relativePath == null || relativePath.isEmpty()) {
+			return;
+		}
+		closeSettings();
+		session.setSidebarView(ClientEditorSession.SidebarView.EXPLORER);
+		session.expandAncestors(relativePath);
+		session.setSelectedTreePath(relativePath);
+		sidebarFocused = true;
+		explorerTree.beginInlineRename();
+		syncTextInputState();
 	}
 
 	public ClientEditorSession session() {
@@ -1373,6 +1389,16 @@ public class QuillIdeScreen extends Screen {
 				"view_presets", "View: Show Presets & Quick Actions", "Focus Presets sidebar", "",
 				"View: Show Presets Quick Actions templates", () -> session.setSidebarView(ClientEditorSession.SidebarView.PRESETS)));
 		items.add(new QuickPickOverlay.PickItem(
+				"toggle_word_wrap", "View: Toggle Word Wrap", "Wrap long lines inside the code editor", "Alt+Z",
+				"View: Toggle Word Wrap line wrap", () -> {
+					boolean wrapped = cfg.toggleWordWrap();
+					OpenTabState cur = focusedEditorTab();
+					if (wrapped && cur != null) {
+						cur.setScrollX(0);
+					}
+					QuillClientConfig.saveCurrent();
+				}));
+		items.add(new QuickPickOverlay.PickItem(
 				"toggle_maximize", "View: Toggle Maximize IDE Window", "Switch floating vs full-screen mode", "",
 				"View: Toggle Maximize IDE Window fullscreen", session::toggleMaximized));
 		items.add(new QuickPickOverlay.PickItem(
@@ -1529,6 +1555,25 @@ public class QuillIdeScreen extends Screen {
 			boolean handled = explorerTree.mouseClicked(ev);
 			syncTextInputState();
 			return handled;
+		}
+		if (ev.button() == InputConstants.MOUSE_BUTTON_RIGHT && !settingsOpen) {
+			OpenTabState active = session.activeTab();
+			if (active != null) {
+				OpenTabState secondary = session.secondaryTab();
+				if (secondary != null && secondaryEditorPaneRect.contains(mx, my)
+						&& secondaryCodeEditorWidget.mouseClicked(ev, font, secondary)) {
+					sidebarFocused = false;
+					secondaryEditorFocused = true;
+					syncTextInputState();
+					return true;
+				}
+				if (codeEditorWidget.mouseClicked(ev, font, active)) {
+					sidebarFocused = false;
+					secondaryEditorFocused = false;
+					syncTextInputState();
+					return true;
+				}
+			}
 		}
 		if (ev.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 			if (closeBtnRect.contains(mx, my)) {

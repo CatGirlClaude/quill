@@ -1052,6 +1052,46 @@ class QuillIdeScreenTextInputTest {
 		assertTrue(screen.isCodeEditorFocused());
 	}
 
+	@Test
+	void ctrlFFindBarInScreenKeepsSdlTextInputAndRightClickOpensEditorContextMenu() {
+		StubEditorBackend backend = new StubEditorBackend();
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.openOrFocusDocument(new FileDocument(
+				"pack/data/demo/function/find_screen.mcfunction",
+				"say first\nsay second",
+				"sha",
+				0L
+		));
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+		assertTrue(bridge.isActiveFor(screen));
+
+		int ctrl = net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER;
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_F, 'f', ctrl)));
+		assertTrue(screen.codeEditorWidget().isFindBarOpen());
+		assertTrue(bridge.isActiveFor(screen), "Ctrl+F Find bar must keep SDL text input active.");
+
+		simulateSdlTextInput(screen, bridge, "second");
+		assertEquals(1, session.activeTab().buffer().cursor().line());
+
+		// Right-clicking inside the primary code viewport opens ContextMenuOverlay cleanly via QuillIdeScreen
+		screen.codeEditorWidget().setViewportBoundsForTest(
+				new IdeLayout.Rect(100, 50, 400, 200),
+				new IdeLayout.Rect(100, 50, 32, 195),
+				new IdeLayout.Rect(132, 50, 363, 195)
+		);
+		assertTrue(screen.mouseClicked(
+				new net.minecraft.client.input.MouseButtonEvent(160, 60, new net.minecraft.client.input.MouseButtonInfo(InputConstants.MOUSE_BUTTON_RIGHT, 0)),
+				false
+		));
+		assertTrue(screen.activeContextMenu() != null, "Right-click over code editor in QuillIdeScreen must open ContextMenuOverlay.");
+		assertFalse(bridge.isActiveFor(screen), "Open context menu pauses SDL text input until dismissed.");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0));
+		assertEquals(null, screen.activeContextMenu());
+		assertTrue(bridge.isActiveFor(screen), "Dismissing context menu restores SDL text input.");
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

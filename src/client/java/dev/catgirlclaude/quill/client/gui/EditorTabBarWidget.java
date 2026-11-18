@@ -1,13 +1,16 @@
 package dev.catgirlclaude.quill.client.gui;
 
+import com.mojang.blaze3d.Blaze3D;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
 import dev.catgirlclaude.quill.client.session.ClientEditorSession;
 import dev.catgirlclaude.quill.client.session.OpenTabState;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.input.MouseButtonEvent;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
@@ -15,7 +18,7 @@ import java.util.function.Consumer;
 
 /**
  * Horizontal VS Code-style scrollable tab strip with colored file-type badges,
- * dirty dot-to-close hover transition, active top accent bar, and integrated Settings tab.
+ * pinned-tab indicators, dirty indicator, right-click context menu, and integrated Settings tab.
  */
 public final class EditorTabBarWidget {
 	private record TabBounds(int index, IdeLayout.Rect tabRect, IdeLayout.Rect closeRect) {
@@ -38,6 +41,17 @@ public final class EditorTabBarWidget {
 	};
 	private Runnable onSelectFileTab = () -> {
 	};
+
+	private Consumer<ContextMenuOverlay> contextMenuOpener = menu -> {
+	};
+	private Runnable contextMenuDismisser = () -> {
+	};
+	private Consumer<String> revealPathHandler = null;
+	private Consumer<String> findReferencesHandler = query -> {
+	};
+	private Consumer<String> renamePathHandler = path -> {
+	};
+	private Consumer<String> systemClipboardCopier = EditorTabBarWidget::copyToMinecraftClipboard;
 
 	public EditorTabBarWidget(
 			ClientEditorSession session,
@@ -62,6 +76,30 @@ public final class EditorTabBarWidget {
 		};
 		this.onSelectFileTab = onSelectFileTab != null ? onSelectFileTab : () -> {
 		};
+	}
+
+	public void setTabActionHooks(
+			Consumer<ContextMenuOverlay> contextMenuOpener,
+			Runnable contextMenuDismisser,
+			Consumer<String> revealPathHandler,
+			Consumer<String> findReferencesHandler,
+			Consumer<String> renamePathHandler
+	) {
+		this.contextMenuOpener = contextMenuOpener != null ? contextMenuOpener : menu -> {
+		};
+		this.contextMenuDismisser = contextMenuDismisser != null ? contextMenuDismisser : () -> {
+		};
+		this.revealPathHandler = revealPathHandler;
+		this.findReferencesHandler = findReferencesHandler != null ? findReferencesHandler : q -> {
+		};
+		this.renamePathHandler = renamePathHandler != null ? renamePathHandler : p -> {
+		};
+	}
+
+	void setSystemClipboardCopier(Consumer<String> systemClipboardCopier) {
+		this.systemClipboardCopier = systemClipboardCopier != null
+				? systemClipboardCopier
+				: EditorTabBarWidget::copyToMinecraftClipboard;
 	}
 
 	public void render(GuiGraphicsExtractor graphics, Font font, IdeLayout.Rect bar, int mouseX, int mouseY) {
@@ -130,6 +168,8 @@ public final class EditorTabBarWidget {
 			QuillDraw.vLine(graphics, tabRect.right() - 1, tabRect.y(), tabRect.height(), QuillTheme.BORDER_SUBTLE);
 			if (active) {
 				QuillDraw.fill(graphics, tabRect.x(), tabRect.y(), tabRect.width(), 2, QuillTheme.ACCENT_BLUE);
+			} else if (tab.isPinned()) {
+				QuillDraw.fill(graphics, tabRect.x(), tabRect.y(), tabRect.width(), 1, QuillTheme.TEXT_MUTED);
 			}
 
 			int iconW = QuillDraw.drawFileTypeIcon(graphics, font, tab.fileName(), tabRect.x() + 7, bar.y(), bar.height() - 1);
@@ -138,11 +178,13 @@ public final class EditorTabBarWidget {
 			int titleColor = active ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY;
 			QuillDraw.text(graphics, font, title, titleX, textY, titleColor);
 
-			// Neutral '*' dirty indicator -> geometric close X on hover
+			// Pinned diamond/dot mark or dirty '*' indicator -> geometric close X on hover
 			if (tab.isDirty() && !hovered && !closeHovered) {
 				String glyph = dirtyIndicatorGlyph();
 				int glyphX = closeRect.x() + (closeRect.width() - QuillDraw.textWidth(font, glyph)) / 2;
 				QuillDraw.text(graphics, font, glyph, glyphX, textY, active ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY);
+			} else if (tab.isPinned() && !hovered && !closeHovered) {
+				drawPinMark(graphics, closeRect.x() + 4, closeRect.y() + (closeRect.height() - 6) / 2, QuillTheme.ACCENT_BLUE);
 			} else if (active || hovered || closeHovered) {
 				if (closeHovered) {
 					QuillDraw.fill(graphics, closeRect.x(), closeRect.y(), closeRect.width(), closeRect.height(), QuillTheme.BG_BUTTON_SECONDARY);
@@ -188,6 +230,13 @@ public final class EditorTabBarWidget {
 		QuillDraw.endClip(graphics);
 	}
 
+	private static void drawPinMark(GuiGraphicsExtractor graphics, int x, int y, int color) {
+		QuillDraw.fill(graphics, x + 1, y, 4, 1, color);
+		QuillDraw.fill(graphics, x + 2, y + 1, 2, 3, color);
+		QuillDraw.fill(graphics, x, y + 3, 6, 1, color);
+		QuillDraw.fill(graphics, x + 2, y + 4, 1, 2, color);
+	}
+
 	public boolean mouseClicked(MouseButtonEvent event) {
 		if (!lastBarRect.contains(event.x(), event.y())) {
 			return false;
@@ -205,6 +254,12 @@ public final class EditorTabBarWidget {
 		}
 		for (TabBounds tb : renderedTabs) {
 			if (tb.tabRect().contains(event.x(), event.y())) {
+				if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+					onSelectFileTab.run();
+					session.setActiveTab(tb.index());
+					openTabContextMenu((int) Math.round(event.x()), (int) Math.round(event.y()), tb.index());
+					return true;
+				}
 				if (event.button() == InputConstants.MOUSE_BUTTON_MIDDLE) {
 					requestCloseTab(tb.index());
 					return true;
@@ -221,6 +276,90 @@ public final class EditorTabBarWidget {
 			}
 		}
 		return false;
+	}
+
+	private void openTabContextMenu(int anchorX, int anchorY, int tabIndex) {
+		List<ContextMenuOverlay.MenuEntry> entries = buildTabContextMenuEntries(tabIndex);
+		if (!entries.isEmpty()) {
+			contextMenuOpener.accept(new ContextMenuOverlay(anchorX, anchorY, entries, contextMenuDismisser));
+		}
+	}
+
+	public List<ContextMenuOverlay.MenuEntry> buildTabContextMenuEntries(int tabIndex) {
+		if (tabIndex < 0 || tabIndex >= session.openTabs().size()) {
+			return List.of();
+		}
+		OpenTabState tab = session.openTabs().get(tabIndex);
+		String path = tab.relativePath();
+		boolean pinned = tab.isPinned();
+		boolean anyOtherUnpinned = false;
+		for (int i = 0; i < session.openTabs().size(); i++) {
+			if (i != tabIndex && !session.openTabs().get(i).isPinned()) {
+				anyOtherUnpinned = true;
+				break;
+			}
+		}
+
+		List<ContextMenuOverlay.MenuEntry> items = new ArrayList<>();
+		items.add(new ContextMenuOverlay.ActionItem(
+				pinned ? "Unpin" : "Pin", "", true,
+				() -> session.setTabPinned(tabIndex, !pinned)));
+		items.add(new ContextMenuOverlay.Separator());
+		items.add(new ContextMenuOverlay.ActionItem(
+				"Close", "", true,
+				() -> requestCloseTab(tabIndex)));
+		items.add(new ContextMenuOverlay.ActionItem(
+				"Close All But This", "", anyOtherUnpinned,
+				() -> requestCloseOtherTabs(tabIndex)));
+		items.add(new ContextMenuOverlay.ActionItem(
+				"Close All", "", !session.openTabs().isEmpty(),
+				this::requestCloseAllTabs));
+		items.add(new ContextMenuOverlay.Separator());
+		items.add(new ContextMenuOverlay.ActionItem(
+				"Open to Side", "", true,
+				() -> session.openFileToSide(path)));
+		items.add(new ContextMenuOverlay.ActionItem(
+				"Reveal in File Explorer", "", session.isLocalWorkspace(),
+				() -> revealPath(path)));
+		items.add(new ContextMenuOverlay.ActionItem(
+				"Find File References", "", true,
+				() -> findReferencesHandler.accept(FileExplorerTreeWidget.inferReferenceQuery(path))));
+		items.add(new ContextMenuOverlay.ActionItem(
+				"Copy", "", true,
+				() -> session.copyTreeEntryToClipboard(path)));
+		items.add(new ContextMenuOverlay.ActionItem(
+				"Copy Path", "", true,
+				() -> copyPath(path)));
+		items.add(new ContextMenuOverlay.ActionItem(
+				"Rename", "", true,
+				() -> renamePathHandler.accept(path)));
+		return List.copyOf(items);
+	}
+
+	private void revealPath(String relativePath) {
+		if (revealPathHandler != null) {
+			revealPathHandler.accept(relativePath);
+			return;
+		}
+		Path path = session.resolveLocalPathForReveal(relativePath);
+		if (path == null) {
+			session.setStatus("Reveal in file explorer is only available in singleplayer.", true);
+			return;
+		}
+		try {
+			Blaze3D.openPath(path);
+			session.setStatus("Revealed in file explorer", false);
+		} catch (Exception e) {
+			session.setStatus("Could not open file explorer: " + e.getMessage(), true);
+		}
+	}
+
+	private void copyPath(String relativePath) {
+		if (relativePath == null || relativePath.isEmpty()) {
+			return;
+		}
+		systemClipboardCopier.accept(relativePath);
+		session.setStatus("Copied path: " + relativePath, false);
 	}
 
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
@@ -251,6 +390,68 @@ public final class EditorTabBarWidget {
 				},
 				modalCloser
 		));
+	}
+
+	public void requestCloseOtherTabs(int keepIndex) {
+		if (keepIndex < 0 || keepIndex >= session.openTabs().size()) {
+			return;
+		}
+		int dirtyCount = 0;
+		for (int i = 0; i < session.openTabs().size(); i++) {
+			OpenTabState tab = session.openTabs().get(i);
+			if (i != keepIndex && !tab.isPinned() && tab.isDirty()) {
+				dirtyCount++;
+			}
+		}
+		if (dirtyCount == 0) {
+			session.closeOtherUnpinnedTabs(keepIndex);
+			return;
+		}
+		modalOpener.accept(ModalPromptOverlay.confirm(
+				"Unsaved Changes",
+				"Discard unsaved changes in " + dirtyCount + " tab(s)?",
+				"Discard",
+				true,
+				() -> {
+					modalCloser.run();
+					session.closeOtherUnpinnedTabs(keepIndex);
+				},
+				modalCloser
+		));
+	}
+
+	public void requestCloseAllTabs() {
+		if (session.openTabs().isEmpty()) {
+			return;
+		}
+		int dirtyCount = 0;
+		for (OpenTabState tab : session.openTabs()) {
+			if (tab.isDirty()) {
+				dirtyCount++;
+			}
+		}
+		if (dirtyCount == 0) {
+			session.closeAllTabs();
+			return;
+		}
+		modalOpener.accept(ModalPromptOverlay.confirm(
+				"Unsaved Changes",
+				"Discard unsaved changes in " + dirtyCount + " tab(s)?",
+				"Discard",
+				true,
+				() -> {
+					modalCloser.run();
+					session.closeAllTabs();
+				},
+				modalCloser
+		));
+	}
+
+	private static void copyToMinecraftClipboard(String text) {
+		Minecraft mc = Minecraft.getInstance();
+		if (mc != null && mc.keyboardHandler != null) {
+			mc.keyboardHandler.setClipboard(text);
+		}
 	}
 
 	private static int computeTabWidth(Font font, OpenTabState tab) {

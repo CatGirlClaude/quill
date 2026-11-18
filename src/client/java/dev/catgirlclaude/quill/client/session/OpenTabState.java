@@ -15,6 +15,7 @@ public final class OpenTabState {
 	private int scrollLine = 0;
 	private int scrollX = 0;
 	private boolean pendingScrollToCaret = false;
+	private boolean pinned = false;
 
 	public OpenTabState(FileDocument document) {
 		Objects.requireNonNull(document, "document");
@@ -42,6 +43,14 @@ public final class OpenTabState {
 
 	public boolean isDirty() {
 		return buffer.isDirty();
+	}
+
+	public boolean isPinned() {
+		return pinned;
+	}
+
+	public void setPinned(boolean pinned) {
+		this.pinned = pinned;
 	}
 
 	public void applySavedDocument(FileDocument document) {

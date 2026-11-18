@@ -117,18 +117,18 @@ odtwarzającym błąd przed poprawką.
 - [x] Najechanie na plik nie chowa drzewa (patrz P0).
 
 ### P1: edytor kodu
-- [ ] Prawy klik w edytorze: cut, copy, paste oraz podstawowa nawigacja.
-- [ ] Prawy klik w edytorze działa także na tekście.
-- [ ] Ctrl+F: wyszukiwanie w aktywnym pliku, wzorem VS Code.
-- [ ] Shift + kółko myszy: przewijanie poziome.
-- [ ] Zawijanie tekstu w edytorze: Alt+Z.
+- [x] Prawy klik w edytorze: cut, copy, paste oraz podstawowa nawigacja.
+- [x] Prawy klik w edytorze działa także na tekście.
+- [x] Ctrl+F: wyszukiwanie w aktywnym pliku, wzorem VS Code.
+- [x] Shift + kółko myszy: przewijanie poziome.
+- [x] Zawijanie tekstu w edytorze: Alt+Z.
 - [ ] Ctrl+klik na tekst przenosi do definicji (osobny punkt, wymaga źródeł danych):
   - scoreboard, tag, storage itd.: lista wszystkich miejsc użycia,
   - zwykła komenda: link do dokumentacji.
 
 ### P1: zakładki (tabs)
-- [ ] Prawy klik na zakładce: Pin, Close, Close all but this, Close all oraz standardowe opcje z menu pliku.
-- [ ] Z menu zakładki wykluczyć Cut i Delete. Copy path zostaje.
+- [x] Prawy klik na zakładce: Pin, Close, Close all but this, Close all oraz standardowe opcje z menu pliku.
+- [x] Z menu zakładki wykluczyć Cut i Delete. Copy path zostaje.
 
 ### P2: wyszukiwanie w folderze
 - [ ] Search w folderze z polami include i exclude.

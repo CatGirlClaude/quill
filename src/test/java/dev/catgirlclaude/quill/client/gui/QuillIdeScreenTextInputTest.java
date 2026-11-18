@@ -690,6 +690,48 @@ class QuillIdeScreenTextInputTest {
 		assertEquals(QuillClientConfig.DEFAULT_TEXT_SIZE + 1, cfg.textSize());
 	}
 
+	@Test
+	void editorCaretHidesWhileTypingInExplorerOrSearchInput() {
+		StubEditorBackend backend = new StubEditorBackend() {
+			@Override
+			public CompletableFuture<FileTreeNode> listTree() {
+				FileTreeNode file = new FileTreeNode("a.mcfunction", "pack/data/demo/function/a.mcfunction", EntryKind.FILE, List.of());
+				FileTreeNode dir = new FileTreeNode("function", "pack/data/demo/function", EntryKind.DIRECTORY, List.of(file));
+				FileTreeNode pack = new FileTreeNode("pack", "pack", EntryKind.DATAPACK, List.of(dir));
+				return CompletableFuture.completedFuture(new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of(pack)));
+			}
+		};
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.refreshTree();
+		session.openOrFocusDocument(new FileDocument("pack/data/demo/function/a.mcfunction", "say hi", "sha1", 0L));
+
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		assertTrue(screen.isCodeEditorFocused());
+		assertTrue(screen.codeEditorWidget().shouldDrawCaret(screen.isCodeEditorFocused()));
+
+		// Starting inline file creation in Explorer must steal caret focus from code editor
+		screen.explorerTree().beginInlineCreateFile();
+		screen.tick();
+		assertTrue(screen.explorerTree().hasActiveInlineInput());
+		assertFalse(screen.isCodeEditorFocused(), "Code editor must not be considered focused while Explorer inline input is active.");
+		assertFalse(screen.codeEditorWidget().shouldDrawCaret(screen.isCodeEditorFocused()),
+				"Code editor must never draw its caret when unfocused.");
+
+		// Canceling inline input returns focus/caret back to the code editor
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0));
+		assertFalse(screen.explorerTree().hasActiveInlineInput());
+		assertTrue(screen.isCodeEditorFocused());
+		assertTrue(screen.codeEditorWidget().shouldDrawCaret(screen.isCodeEditorFocused()));
+
+		// Focusing Search sidebar input must also hide code editor caret
+		screen.openSearchSidebar();
+		assertFalse(screen.isCodeEditorFocused());
+		assertFalse(screen.codeEditorWidget().shouldDrawCaret(screen.isCodeEditorFocused()));
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

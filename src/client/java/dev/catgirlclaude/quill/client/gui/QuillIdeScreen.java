@@ -283,6 +283,19 @@ public class QuillIdeScreen extends Screen {
 				&& explorerTree.hasActiveInlineInput();
 	}
 
+	CodeEditorWidget codeEditorWidget() {
+		return codeEditorWidget;
+	}
+
+	boolean isCodeEditorFocused() {
+		return activeModal == null
+				&& activeQuickPick == null
+				&& !settingsOpen
+				&& !isExplorerInlineInputActive()
+				&& !isSearchInputFocused()
+				&& session.activeTab() != null;
+	}
+
 	private boolean wantsTextInput() {
 		if (activeModal != null) {
 			return activeModal.hasTextFields();
@@ -944,7 +957,7 @@ public class QuillIdeScreen extends Screen {
 			welcomeNewPackRect = new IdeLayout.Rect(0, 0, 0, 0);
 			welcomeNewFnRect = new IdeLayout.Rect(0, 0, 0, 0);
 			welcomeSettingsRect = new IdeLayout.Rect(0, 0, 0, 0);
-			codeEditorWidget.render(graphics, font, editor, active, mouseX, mouseY);
+			codeEditorWidget.render(graphics, font, editor, active, mouseX, mouseY, isCodeEditorFocused());
 		}
 	}
 

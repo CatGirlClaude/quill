@@ -112,6 +112,10 @@ public final class CodeEditorWidget {
 		return ((elapsed / 500L) % 2L) == 0L;
 	}
 
+	boolean shouldDrawCaret(boolean focused) {
+		return focused && isCaretVisible();
+	}
+
 	public void render(
 			GuiGraphicsExtractor graphics,
 			Font font,
@@ -119,6 +123,18 @@ public final class CodeEditorWidget {
 			OpenTabState tab,
 			int mouseX,
 			int mouseY
+	) {
+		render(graphics, font, editorRect, tab, mouseX, mouseY, true);
+	}
+
+	public void render(
+			GuiGraphicsExtractor graphics,
+			Font font,
+			IdeLayout.Rect editorRect,
+			OpenTabState tab,
+			int mouseX,
+			int mouseY,
+			boolean focused
 	) {
 		lastEditorRect = editorRect;
 		if (!tab.relativePath().equals(lastCaretTabPath)) {
@@ -234,7 +250,7 @@ public final class CodeEditorWidget {
 				int col = Math.min(cursor.column(), lineText.length());
 				caretScreenX = drawX + QuillDraw.textWidth(font, lineText.substring(0, col), scale);
 				caretScreenY = rowY;
-				if (isCaretVisible()) {
+				if (shouldDrawCaret(focused)) {
 					QuillDraw.fill(graphics, caretScreenX, rowY - 1, 1, lineHeight, QuillTheme.CURSOR_COLOR);
 				}
 			}

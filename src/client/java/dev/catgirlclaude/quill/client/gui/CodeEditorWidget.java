@@ -3,6 +3,7 @@ package dev.catgirlclaude.quill.client.gui;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
 import com.mojang.brigadier.CommandDispatcher;
+import dev.catgirlclaude.quill.client.config.QuillClientConfig;
 import dev.catgirlclaude.quill.client.editor.BrigadierAssistService;
 import dev.catgirlclaude.quill.client.editor.SyntaxHighlighter;
 import dev.catgirlclaude.quill.client.editor.TextDocumentBuffer;
@@ -18,11 +19,14 @@ import net.minecraft.client.multiplayer.ClientSuggestionProvider;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
- * Multi-line code editor widget with VS Code Dark+ syntax highlighting, live Brigadier
- * command autocomplete & hover signatures, proportional {@link Font} caret/selection math,
- * mouse click/drag selection, clipboard, undo/redo, and 2D scrolling.
+ * Multi-line code editor widget with dynamic VS Code syntax highlighting, customizable font
+ * and text size scaling, live Brigadier command autocomplete &amp; hover signatures,
+ * bracket-pair matching, mouse click/double-click/triple-click/gutter/drag selection,
+ * {@code Shift+Arrows}, {@code Ctrl+Shift+Arrows}, {@code Ctrl+Backspace/Delete},
+ * {@code Tab}/{@code Shift+Tab} indent/unindent, clipboard, undo/redo, and 2D scrolling.
  */
 public final class CodeEditorWidget {
 	private static final int LINE_PADDING_Y = 2;
@@ -30,12 +34,33 @@ public final class CodeEditorWidget {
 	private static final int SCROLLBAR_SIZE = 5;
 	private static final int MAX_VISIBLE_SUGGESTIONS = 8;
 	private static final int SUGGESTION_ROW_HEIGHT = 13;
+	private static final long MULTI_CLICK_WINDOW_MS = 400L;
+
+	private enum DragMode {
+		NONE,
+		CHAR,
+		WORD,
+		LINE
+	}
 
 	private IdeLayout.Rect lastEditorRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect lastGutterRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect lastCodeViewport = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private final List<IdeLayout.Rect> suggestionRowRects = new ArrayList<>();
-	private boolean draggingSelection = false;
+
+	private DragMode dragMode = DragMode.NONE;
+	private long lastClickMs = 0L;
+	private TextDocumentBuffer.Position lastClickPos = null;
+	private int clickCount = 0;
+	private int wordAnchorLine = 0;
+	private int wordAnchorStartCol = 0;
+	private int wordAnchorEndCol = 0;
+	private int lineAnchor = 0;
+	private long lastCaretActivityMs = System.currentTimeMillis();
+
+	private Consumer<OpenTabState> onBufferEdited = tab -> {
+	};
 
 	// Brigadier autocomplete & hover state
 	private boolean autocompleteOpen = false;
@@ -49,6 +74,11 @@ public final class CodeEditorWidget {
 	private List<String> cachedHoverSignatures = List.of();
 	private int lastHoverLine = -1;
 
+	public void setOnBufferEdited(Consumer<OpenTabState> onBufferEdited) {
+		this.onBufferEdited = onBufferEdited != null ? onBufferEdited : tab -> {
+		};
+	}
+
 	public boolean isAutocompleteOpen() {
 		return autocompleteOpen && !currentAssist.suggestions().isEmpty();
 	}
@@ -59,6 +89,27 @@ public final class CodeEditorWidget {
 		suggestionScroll = 0;
 		lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
 		suggestionRowRects.clear();
+	}
+
+	private static float textScale() {
+		return QuillClientConfig.current().editorTextScale();
+	}
+
+	private static int scaledLineHeight(Font font, float scale) {
+		int base = font != null ? font.lineHeight : 9;
+		return Math.max(8, Math.round((base + LINE_PADDING_Y) * scale));
+	}
+
+	private void touchCaret() {
+		lastCaretActivityMs = System.currentTimeMillis();
+	}
+
+	private boolean isCaretVisible() {
+		long elapsed = System.currentTimeMillis() - lastCaretActivityMs;
+		if (elapsed < 450L) {
+			return true;
+		}
+		return ((elapsed / 500L) % 2L) == 0L;
 	}
 
 	public void render(
@@ -78,12 +129,14 @@ public final class CodeEditorWidget {
 			cachedHoverSignatures = List.of();
 		}
 
+		float scale = textScale();
 		TextDocumentBuffer buffer = tab.buffer();
-		int lineHeight = font.lineHeight + LINE_PADDING_Y;
-		int gutterWidth = Math.max(30, font.width(String.valueOf(Math.max(1, buffer.lineCount()))) + 14);
+		int lineHeight = scaledLineHeight(font, scale);
+		int gutterWidth = Math.max(30, QuillDraw.textWidth(font, String.valueOf(Math.max(1, buffer.lineCount())), scale) + 14);
 		int codeX = editorRect.x() + gutterWidth;
 		int codeW = Math.max(1, editorRect.width() - gutterWidth - SCROLLBAR_SIZE);
 		int codeH = Math.max(1, editorRect.height() - SCROLLBAR_SIZE);
+		lastGutterRect = new IdeLayout.Rect(editorRect.x(), editorRect.y(), gutterWidth, codeH);
 		lastCodeViewport = new IdeLayout.Rect(codeX, editorRect.y(), codeW, codeH);
 
 		if (tab.consumeScrollToCaret()) {
@@ -95,8 +148,8 @@ public final class CodeEditorWidget {
 		tab.setScrollLine(Math.min(maxScrollLine, tab.scrollLine()));
 
 		int maxLineWidth = Math.max(
-				computeMaxLineWidth(font, buffer, tab.scrollLine(), visibleLines),
-				font.width(buffer.line(buffer.cursor().line()))
+				computeMaxLineWidth(font, buffer, tab.scrollLine(), visibleLines, scale),
+				QuillDraw.textWidth(font, buffer.line(buffer.cursor().line()), scale)
 		);
 		int maxScrollX = Math.max(0, maxLineWidth - codeW + 24);
 		tab.setScrollX(Math.min(maxScrollX, tab.scrollX()));
@@ -108,6 +161,8 @@ public final class CodeEditorWidget {
 		boolean hoveringPopup = isAutocompleteOpen() && lastPopupRect.contains(mouseX, mouseY);
 		if (lastCodeViewport.contains(mouseX, mouseY) && !hoveringPopup) {
 			QuillDraw.requestCursor(graphics, CursorTypes.IBEAM);
+		} else if (lastGutterRect.contains(mouseX, mouseY) && !hoveringPopup) {
+			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 		}
 
 		int firstLine = tab.scrollLine();
@@ -116,6 +171,7 @@ public final class CodeEditorWidget {
 		boolean hasSel = buffer.hasSelection();
 		TextDocumentBuffer.Position selStart = buffer.selectionStart();
 		TextDocumentBuffer.Position selEnd = buffer.selectionEnd();
+		TextDocumentBuffer.BracketMatch bracketMatch = buffer.findMatchingBracket();
 
 		QuillDraw.beginClip(graphics, new IdeLayout.Rect(editorRect.x(), editorRect.y(), editorRect.width(), codeH));
 		for (int i = firstLine; i <= lastLine; i++) {
@@ -127,9 +183,9 @@ public final class CodeEditorWidget {
 			}
 
 			String lineNumStr = String.valueOf(i + 1);
-			int numX = codeX - 6 - font.width(lineNumStr);
-			QuillDraw.text(graphics, font, lineNumStr, numX, rowY,
-					isCurrentLine ? QuillTheme.TEXT_PRIMARY : QuillTheme.TEXT_MUTED);
+			int numX = codeX - 6 - QuillDraw.textWidth(font, lineNumStr, scale);
+			QuillDraw.textScaled(graphics, font, lineNumStr, numX, rowY,
+					isCurrentLine ? QuillTheme.TEXT_PRIMARY : QuillTheme.TEXT_MUTED, scale);
 		}
 		QuillDraw.endClip(graphics);
 
@@ -147,32 +203,38 @@ public final class CodeEditorWidget {
 			if (hasSel && i >= selStart.line() && i <= selEnd.line()) {
 				int startCol = (i == selStart.line()) ? selStart.column() : 0;
 				int endCol = (i == selEnd.line()) ? selEnd.column() : lineText.length();
-				int x1 = drawX + font.width(lineText.substring(0, Math.min(startCol, lineText.length())));
-				int x2 = drawX + font.width(lineText.substring(0, Math.min(endCol, lineText.length())));
+				int x1 = drawX + QuillDraw.textWidth(font, lineText.substring(0, Math.min(startCol, lineText.length())), scale);
+				int x2 = drawX + QuillDraw.textWidth(font, lineText.substring(0, Math.min(endCol, lineText.length())), scale);
 				if (i < selEnd.line() && endCol == lineText.length()) {
-					x2 += 6;
+					x2 += Math.max(5, Math.round(6 * scale));
 				}
 				if (x2 > x1) {
 					QuillDraw.fill(graphics, x1, rowY - 1, x2 - x1, lineHeight, QuillTheme.SELECTION_BG);
 				}
 			}
 
+			// Matching bracket pair highlight
+			if (bracketMatch != null) {
+				drawBracketHighlightIfOnLine(graphics, font, lineText, i, drawX, rowY, lineHeight, scale, bracketMatch.open());
+				drawBracketHighlightIfOnLine(graphics, font, lineText, i, drawX, rowY, lineHeight, scale, bracketMatch.close());
+			}
+
 			if (language == SyntaxHighlighter.Language.PLAIN || lineText.isEmpty()) {
-				QuillDraw.text(graphics, font, lineText, drawX, rowY, QuillTheme.SYNTAX_PLAIN);
+				QuillDraw.textScaled(graphics, font, lineText, drawX, rowY, QuillTheme.SYNTAX_PLAIN, scale);
 			} else {
 				List<SyntaxHighlighter.TokenSpan> spans = SyntaxHighlighter.tokenizeLine(lineText, language);
 				for (SyntaxHighlighter.TokenSpan span : spans) {
 					String segment = lineText.substring(span.start(), span.end());
-					int segX = drawX + (span.start() == 0 ? 0 : font.width(lineText.substring(0, span.start())));
-					QuillDraw.text(graphics, font, segment, segX, rowY, span.color());
+					int segX = drawX + (span.start() == 0 ? 0 : QuillDraw.textWidth(font, lineText.substring(0, span.start()), scale));
+					QuillDraw.textScaled(graphics, font, segment, segX, rowY, span.color(), scale);
 				}
 			}
 
 			if (i == cursor.line()) {
 				int col = Math.min(cursor.column(), lineText.length());
-				caretScreenX = drawX + font.width(lineText.substring(0, col));
+				caretScreenX = drawX + QuillDraw.textWidth(font, lineText.substring(0, col), scale);
 				caretScreenY = rowY;
-				if ((System.currentTimeMillis() / 500L) % 2L == 0L) {
+				if (isCaretVisible()) {
 					QuillDraw.fill(graphics, caretScreenX, rowY - 1, 1, lineHeight, QuillTheme.CURSOR_COLOR);
 				}
 			}
@@ -213,6 +275,26 @@ public final class CodeEditorWidget {
 		}
 	}
 
+	private static void drawBracketHighlightIfOnLine(
+			GuiGraphicsExtractor graphics,
+			Font font,
+			String lineText,
+			int lineIndex,
+			int drawX,
+			int rowY,
+			int lineHeight,
+			float scale,
+			TextDocumentBuffer.Position pos
+	) {
+		if (pos == null || pos.line() != lineIndex || pos.column() < 0 || pos.column() >= lineText.length()) {
+			return;
+		}
+		int bx = drawX + QuillDraw.textWidth(font, lineText.substring(0, pos.column()), scale);
+		int bw = Math.max(4, QuillDraw.textWidth(font, lineText.substring(pos.column(), pos.column() + 1), scale));
+		QuillDraw.fill(graphics, bx, rowY - 1, bw, lineHeight, QuillTheme.BRACKET_MATCH_BG);
+		QuillDraw.outline(graphics, bx, rowY - 1, bw, lineHeight, QuillTheme.BORDER_SUBTLE);
+	}
+
 	private void renderAutocompletePopup(
 			GuiGraphicsExtractor graphics,
 			Font font,
@@ -246,14 +328,14 @@ public final class CodeEditorWidget {
 		int contentW = 140;
 		for (int i = suggestionScroll; i < Math.min(list.size(), suggestionScroll + visibleCount); i++) {
 			BrigadierAssistService.SuggestionEntry e = list.get(i);
-			int rowW = font.width(e.text()) + 16;
+			int rowW = QuillDraw.textWidth(font, e.text()) + 16;
 			if (e.tooltip() != null && !e.tooltip().isBlank()) {
-				rowW += Math.min(120, font.width(" - " + e.tooltip()));
+				rowW += Math.min(120, QuillDraw.textWidth(font, " - " + e.tooltip()));
 			}
 			contentW = Math.max(contentW, rowW);
 		}
 		if (showUsageHeader) {
-			contentW = Math.max(contentW, Math.min(280, font.width(usages.getFirst()) + 14));
+			contentW = Math.max(contentW, Math.min(280, QuillDraw.textWidth(font, usages.getFirst()) + 14));
 		}
 		int popupW = Math.min(Math.max(120, editorRect.width() - 16), Math.min(300, contentW));
 		int popupH = usageHeaderH + visibleCount * SUGGESTION_ROW_HEIGHT + 4;
@@ -298,7 +380,7 @@ public final class CodeEditorWidget {
 			int ty = rowRect.y() + (SUGGESTION_ROW_HEIGHT - font.lineHeight) / 2;
 			String label = entry.text();
 			String tip = (entry.tooltip() != null && !entry.tooltip().isBlank()) ? "  " + entry.tooltip() : "";
-			int labelW = font.width(label);
+			int labelW = QuillDraw.textWidth(font, label);
 			int maxLabelW = rowRect.width() - 8;
 			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, label, maxLabelW),
 					rowRect.x() + 4, ty, isSelected ? QuillTheme.TEXT_BRIGHT : QuillTheme.SYNTAX_COMMAND);
@@ -345,7 +427,7 @@ public final class CodeEditorWidget {
 		int maxLines = Math.min(2, cachedHoverSignatures.size());
 		int maxW = 0;
 		for (int i = 0; i < maxLines; i++) {
-			maxW = Math.max(maxW, font.width(cachedHoverSignatures.get(i)));
+			maxW = Math.max(maxW, QuillDraw.textWidth(font, cachedHoverSignatures.get(i)));
 		}
 		int boxW = Math.min(Math.max(80, editorRect.width() - 20), maxW + 12);
 		int boxH = maxLines * 11 + 6;
@@ -378,29 +460,92 @@ public final class CodeEditorWidget {
 			return true;
 		}
 		dismissAutocomplete();
+
+		// Gutter click selects entire line
+		if (lastGutterRect.contains(event.x(), event.y())) {
+			int lineIndex = hitTestLine(font, tab, event.y());
+			if (event.hasShiftDown()) {
+				tab.buffer().extendLineSelection(tab.buffer().cursor().line(), lineIndex);
+			} else {
+				tab.buffer().selectLine(lineIndex);
+			}
+			lineAnchor = lineIndex;
+			dragMode = DragMode.LINE;
+			touchCaret();
+			ensureCaretVisible(font, tab);
+			return true;
+		}
+
 		if (!lastCodeViewport.contains(event.x(), event.y())) {
 			return false;
 		}
 		TextDocumentBuffer.Position pos = hitTest(font, tab, event.x(), event.y());
-		tab.buffer().setCursor(pos.line(), pos.column(), event.hasShiftDown());
-		draggingSelection = true;
+		long now = System.currentTimeMillis();
+		boolean shift = event.hasShiftDown();
+		if (!shift && lastClickPos != null && now - lastClickMs <= MULTI_CLICK_WINDOW_MS
+				&& lastClickPos.line() == pos.line() && Math.abs(lastClickPos.column() - pos.column()) <= 1) {
+			clickCount = (clickCount % 3) + 1;
+		} else {
+			clickCount = 1;
+		}
+		lastClickMs = now;
+		lastClickPos = pos;
+
+		if (shift) {
+			tab.buffer().setCursor(pos.line(), pos.column(), true);
+			dragMode = DragMode.CHAR;
+		} else if (clickCount == 2) {
+			int[] bounds = tab.buffer().wordBoundsAt(pos.line(), pos.column());
+			wordAnchorLine = pos.line();
+			wordAnchorStartCol = bounds[0];
+			wordAnchorEndCol = bounds[1];
+			tab.buffer().selectWordAt(pos.line(), pos.column());
+			dragMode = DragMode.WORD;
+		} else if (clickCount == 3) {
+			lineAnchor = pos.line();
+			tab.buffer().selectLine(pos.line());
+			dragMode = DragMode.LINE;
+		} else {
+			tab.buffer().setCursor(pos.line(), pos.column(), false);
+			dragMode = DragMode.CHAR;
+		}
+		touchCaret();
 		ensureCaretVisible(font, tab);
 		return true;
 	}
 
 	public boolean mouseDragged(MouseButtonEvent event, Font font, OpenTabState tab) {
-		if (!draggingSelection || event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
+		if (dragMode == DragMode.NONE || event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
 			return false;
 		}
-		TextDocumentBuffer.Position pos = hitTest(font, tab, event.x(), event.y());
-		tab.buffer().setCursor(pos.line(), pos.column(), true);
+		// Auto-scroll gently when dragging outside viewport edges
+		if (event.y() < lastCodeViewport.y()) {
+			tab.setScrollLine(Math.max(0, tab.scrollLine() - 1));
+		} else if (event.y() > lastCodeViewport.bottom()) {
+			int lineHeight = scaledLineHeight(font, textScale());
+			int visibleLines = Math.max(1, lastCodeViewport.height() / lineHeight);
+			int maxScroll = Math.max(0, tab.buffer().lineCount() - visibleLines);
+			tab.setScrollLine(Math.min(maxScroll, tab.scrollLine() + 1));
+		}
+
+		if (dragMode == DragMode.LINE) {
+			int lineIndex = hitTestLine(font, tab, event.y());
+			tab.buffer().extendLineSelection(lineAnchor, lineIndex);
+		} else if (dragMode == DragMode.WORD) {
+			TextDocumentBuffer.Position pos = hitTest(font, tab, event.x(), event.y());
+			tab.buffer().extendWordSelection(wordAnchorLine, wordAnchorStartCol, wordAnchorEndCol, pos.line(), pos.column());
+		} else {
+			TextDocumentBuffer.Position pos = hitTest(font, tab, event.x(), event.y());
+			tab.buffer().setCursor(pos.line(), pos.column(), true);
+		}
+		touchCaret();
 		ensureCaretVisible(font, tab);
 		return true;
 	}
 
 	public void mouseReleased(MouseButtonEvent event) {
 		if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-			draggingSelection = false;
+			dragMode = DragMode.NONE;
 		}
 	}
 
@@ -416,7 +561,7 @@ public final class CodeEditorWidget {
 		if (!lastEditorRect.contains(mouseX, mouseY)) {
 			return false;
 		}
-		int lineHeight = font.lineHeight + LINE_PADDING_Y;
+		int lineHeight = scaledLineHeight(font, textScale());
 		int visibleLines = Math.max(1, lastCodeViewport.height() / lineHeight);
 		int maxScrollLine = Math.max(0, tab.buffer().lineCount() - visibleLines);
 		if (scrollY != 0) {
@@ -433,9 +578,8 @@ public final class CodeEditorWidget {
 		boolean shift = event.hasShiftDown();
 		boolean ctrl = event.hasControlDownWithQuirk();
 
-		// Ctrl+Space explicitly invokes Brigadier autocomplete
-		if (ctrl && !event.hasAltDown()
-				&& (event.shortcutKey() == InputConstants.KEYCODE_SPACE || event.key() == InputConstants.KEY_SPACE)) {
+		// Configurable autocomplete shortcut (default Ctrl+Space)
+		if (QuillClientConfig.current().shortcut(QuillClientConfig.ShortcutAction.TRIGGER_AUTOCOMPLETE).matches(event)) {
 			triggerAutocomplete(tab, true);
 			return true;
 		}
@@ -465,31 +609,36 @@ public final class CodeEditorWidget {
 		if (event.isSelectAll()) {
 			buffer.selectAll();
 			dismissAutocomplete();
+			touchCaret();
 			return true;
 		}
 		if (event.isCopy()) {
 			String selected = buffer.getSelectedText();
 			if (!selected.isEmpty()) {
-				Minecraft.getInstance().keyboardHandler.setClipboard(selected);
+				setClipboardSafe(selected);
 			}
 			return true;
 		}
 		if (event.isCut()) {
 			String selected = buffer.getSelectedText();
 			if (!selected.isEmpty()) {
-				Minecraft.getInstance().keyboardHandler.setClipboard(selected);
+				setClipboardSafe(selected);
 				buffer.deleteSelection();
 				dismissAutocomplete();
+				touchCaret();
 				ensureCaretVisible(font, tab);
+				onBufferEdited.accept(tab);
 			}
 			return true;
 		}
 		if (event.isPaste()) {
-			String clip = Minecraft.getInstance().keyboardHandler.getClipboard();
+			String clip = getClipboardSafe();
 			if (clip != null && !clip.isEmpty()) {
 				buffer.insertText(clip);
 				dismissAutocomplete();
+				touchCaret();
 				ensureCaretVisible(font, tab);
+				onBufferEdited.accept(tab);
 			}
 			return true;
 		}
@@ -497,14 +646,18 @@ public final class CodeEditorWidget {
 			boolean changed = shift ? buffer.redo() : buffer.undo();
 			if (changed) {
 				dismissAutocomplete();
+				touchCaret();
 				ensureCaretVisible(font, tab);
+				onBufferEdited.accept(tab);
 			}
 			return true;
 		}
 		if (ctrl && !shift && !event.hasAltDown() && event.shortcutKey() == InputConstants.KEYCODE_Y) {
 			if (buffer.redo()) {
 				dismissAutocomplete();
+				touchCaret();
 				ensureCaretVisible(font, tab);
+				onBufferEdited.accept(tab);
 			}
 			return true;
 		}
@@ -512,78 +665,106 @@ public final class CodeEditorWidget {
 		if (event.isConfirmation()) {
 			buffer.insertNewline();
 			dismissAutocomplete();
+			touchCaret();
 			ensureCaretVisible(font, tab);
+			onBufferEdited.accept(tab);
 			return true;
 		}
 		if (event.isCycleFocus()) {
-			buffer.insertTab();
+			if (shift) {
+				buffer.unindentSelection();
+			} else {
+				buffer.insertTab();
+			}
 			dismissAutocomplete();
+			touchCaret();
 			ensureCaretVisible(font, tab);
+			onBufferEdited.accept(tab);
 			return true;
 		}
 		if (event.shortcutKey() == InputConstants.KEYCODE_BACKSPACE || event.key() == InputConstants.KEY_BACKSPACE) {
-			buffer.backspace();
+			if (ctrl) {
+				buffer.deleteWordBackward();
+			} else {
+				buffer.backspace();
+			}
+			touchCaret();
 			ensureCaretVisible(font, tab);
 			if (autocompleteOpen) {
 				triggerAutocomplete(tab, false);
 			}
+			onBufferEdited.accept(tab);
 			return true;
 		}
 		if (event.shortcutKey() == InputConstants.KEYCODE_DELETE || event.key() == InputConstants.KEY_DELETE) {
-			buffer.deleteForward();
+			if (ctrl) {
+				buffer.deleteWordForward();
+			} else {
+				buffer.deleteForward();
+			}
+			touchCaret();
 			ensureCaretVisible(font, tab);
 			if (autocompleteOpen) {
 				triggerAutocomplete(tab, false);
 			}
+			onBufferEdited.accept(tab);
 			return true;
 		}
 
 		if (event.isLeft()) {
 			buffer.moveLeft(shift, ctrl);
 			dismissAutocomplete();
+			touchCaret();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.isRight()) {
 			buffer.moveRight(shift, ctrl);
 			dismissAutocomplete();
+			touchCaret();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.isUp()) {
 			buffer.moveVertical(-1, shift);
 			dismissAutocomplete();
+			touchCaret();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.isDown()) {
 			buffer.moveVertical(1, shift);
 			dismissAutocomplete();
+			touchCaret();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.shortcutKey() == InputConstants.KEYCODE_HOME || event.key() == InputConstants.KEY_HOME) {
 			buffer.moveHome(shift, ctrl);
 			dismissAutocomplete();
+			touchCaret();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.shortcutKey() == InputConstants.KEYCODE_END || event.key() == InputConstants.KEY_END) {
 			buffer.moveEnd(shift, ctrl);
 			dismissAutocomplete();
+			touchCaret();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
-		int pageLines = Math.max(1, lastCodeViewport.height() / Math.max(1, font.lineHeight + LINE_PADDING_Y));
+		int pageLines = Math.max(1, lastCodeViewport.height() / scaledLineHeight(font, textScale()));
 		if (event.shortcutKey() == InputConstants.KEYCODE_PAGEUP || event.key() == InputConstants.KEY_PAGEUP) {
 			buffer.moveVertical(-pageLines, shift);
 			dismissAutocomplete();
+			touchCaret();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
 		if (event.shortcutKey() == InputConstants.KEYCODE_PAGEDOWN || event.key() == InputConstants.KEY_PAGEDOWN) {
 			buffer.moveVertical(pageLines, shift);
 			dismissAutocomplete();
+			touchCaret();
 			ensureCaretVisible(font, tab);
 			return true;
 		}
@@ -597,7 +778,9 @@ public final class CodeEditorWidget {
 		}
 		String typed = event.codepointAsString();
 		tab.buffer().insertText(typed);
+		touchCaret();
 		ensureCaretVisible(font, tab);
+		onBufferEdited.accept(tab);
 
 		if (SyntaxHighlighter.languageForPath(tab.relativePath()) == SyntaxHighlighter.Language.MCFUNCTION) {
 			String currentLine = tab.buffer().line(tab.buffer().cursor().line());
@@ -621,7 +804,9 @@ public final class CodeEditorWidget {
 		TextDocumentBuffer buffer = tab.buffer();
 		buffer.replaceRange(buffer.cursor().line(), entry.replaceStartCol(), entry.replaceEndCol(), entry.text());
 		dismissAutocomplete();
+		touchCaret();
 		ensureCaretVisible(font, tab);
+		onBufferEdited.accept(tab);
 	}
 
 	private void triggerAutocomplete(OpenTabState tab, boolean explicit) {
@@ -693,9 +878,10 @@ public final class CodeEditorWidget {
 		if (lastCodeViewport.width() <= 0 || lastCodeViewport.height() <= 0) {
 			return;
 		}
+		float scale = textScale();
 		TextDocumentBuffer buffer = tab.buffer();
 		TextDocumentBuffer.Position cursor = buffer.cursor();
-		int lineHeight = font.lineHeight + LINE_PADDING_Y;
+		int lineHeight = scaledLineHeight(font, scale);
 		int visibleLines = Math.max(1, (lastCodeViewport.height() - 6) / lineHeight);
 
 		if (cursor.line() < tab.scrollLine()) {
@@ -705,7 +891,7 @@ public final class CodeEditorWidget {
 		}
 
 		String lineText = buffer.line(cursor.line());
-		int caretPixelX = font.width(lineText.substring(0, Math.min(cursor.column(), lineText.length())));
+		int caretPixelX = QuillDraw.textWidth(font, lineText.substring(0, Math.min(cursor.column(), lineText.length())), scale);
 		int viewW = Math.max(20, lastCodeViewport.width() - CODE_LEFT_PADDING - 12);
 		if (caretPixelX < tab.scrollX()) {
 			tab.setScrollX(Math.max(0, caretPixelX - 16));
@@ -714,32 +900,39 @@ public final class CodeEditorWidget {
 		}
 	}
 
-	private TextDocumentBuffer.Position hitTest(Font font, OpenTabState tab, double mouseX, double mouseY) {
-		TextDocumentBuffer buffer = tab.buffer();
-		int lineHeight = font.lineHeight + LINE_PADDING_Y;
+	private int hitTestLine(Font font, OpenTabState tab, double mouseY) {
+		int lineHeight = scaledLineHeight(font, textScale());
 		int lineIndex = tab.scrollLine() + Math.max(0, ((int) mouseY - (lastCodeViewport.y() + 4)) / lineHeight);
-		lineIndex = Math.max(0, Math.min(buffer.lineCount() - 1, lineIndex));
+		return Math.max(0, Math.min(tab.buffer().lineCount() - 1, lineIndex));
+	}
 
-		String lineText = buffer.line(lineIndex);
+	private TextDocumentBuffer.Position hitTest(Font font, OpenTabState tab, double mouseX, double mouseY) {
+		float scale = textScale();
+		int lineIndex = hitTestLine(font, tab, mouseY);
+		String lineText = tab.buffer().line(lineIndex);
 		int relX = Math.max(0, (int) mouseX - (lastCodeViewport.x() + CODE_LEFT_PADDING - tab.scrollX()));
-		String sub = font.plainSubstrByWidth(lineText, relX);
-		int col = sub.length();
-		if (col < lineText.length()) {
-			int wBefore = font.width(sub);
-			int wAfter = font.width(lineText.substring(0, col + 1));
-			if (relX - wBefore > wAfter - relX) {
-				col++;
-			}
-		}
+		int col = QuillDraw.charIndexAtPixel(font, lineText, relX, scale);
 		return new TextDocumentBuffer.Position(lineIndex, col);
 	}
 
-	private static int computeMaxLineWidth(Font font, TextDocumentBuffer buffer, int firstLine, int visibleLines) {
+	private static int computeMaxLineWidth(Font font, TextDocumentBuffer buffer, int firstLine, int visibleLines, float scale) {
 		int max = 0;
 		int end = Math.min(buffer.lineCount(), firstLine + visibleLines + 1);
 		for (int i = firstLine; i < end; i++) {
-			max = Math.max(max, font.width(buffer.line(i)));
+			max = Math.max(max, QuillDraw.textWidth(font, buffer.line(i), scale));
 		}
 		return max;
+	}
+
+	private static String getClipboardSafe() {
+		Minecraft mc = Minecraft.getInstance();
+		return (mc != null && mc.keyboardHandler != null) ? mc.keyboardHandler.getClipboard() : "";
+	}
+
+	private static void setClipboardSafe(String value) {
+		Minecraft mc = Minecraft.getInstance();
+		if (mc != null && mc.keyboardHandler != null) {
+			mc.keyboardHandler.setClipboard(value);
+		}
 	}
 }

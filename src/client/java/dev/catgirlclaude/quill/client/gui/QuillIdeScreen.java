@@ -92,6 +92,7 @@ public class QuillIdeScreen extends Screen {
 		this.quickActions = new QuickActionsAndPresetsWidget(session, this::openModal, this::closeModal);
 		this.tabBarWidget = new EditorTabBarWidget(session, this::openModal, this::closeModal);
 		this.codeEditorWidget = new CodeEditorWidget();
+		this.codeEditorWidget.setOnBufferEdited(session::notifyTabBufferEdited);
 		this.bottomPanelWidget = new BottomPanelWidget(session);
 	}
 
@@ -763,7 +764,13 @@ public class QuillIdeScreen extends Screen {
 
 	@Override
 	public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
-		if (activeModal != null || activeQuickPick != null) {
+		if (activeModal != null) {
+			return activeModal.mouseDragged(event);
+		}
+		if (activeQuickPick != null) {
+			return activeQuickPick.mouseDragged(event);
+		}
+		if (isSearchInputFocused() && searchSidebar.mouseDragged(event)) {
 			return true;
 		}
 		OpenTabState active = session.activeTab();
@@ -776,7 +783,13 @@ public class QuillIdeScreen extends Screen {
 	@Override
 	public boolean mouseReleased(MouseButtonEvent event) {
 		codeEditorWidget.mouseReleased(event);
-		if (activeModal != null || activeQuickPick != null) {
+		searchSidebar.mouseReleased(event);
+		if (activeModal != null) {
+			activeModal.mouseReleased(event);
+			return true;
+		}
+		if (activeQuickPick != null) {
+			activeQuickPick.mouseReleased(event);
 			return true;
 		}
 		return super.mouseReleased(event);

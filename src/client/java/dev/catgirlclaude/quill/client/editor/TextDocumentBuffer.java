@@ -30,12 +30,16 @@ public final class TextDocumentBuffer {
 	) {
 	}
 
+	public record BracketMatch(Position open, Position close) {
+	}
+
 	private final List<String> lines = new ArrayList<>();
 	private final Deque<Snapshot> undoStack = new ArrayDeque<>();
 	private final Deque<Snapshot> redoStack = new ArrayDeque<>();
 
 	private Position cursor = new Position(0, 0);
 	private Position selectionAnchor = null;
+	private int preferredColumn = -1;
 	private String savedContent;
 	private boolean lastActionWasCharInsert = false;
 
@@ -62,6 +66,7 @@ public final class TextDocumentBuffer {
 		}
 		cursor = new Position(0, 0);
 		selectionAnchor = null;
+		preferredColumn = -1;
 	}
 
 	public void resetFromDisk(String content) {
@@ -124,6 +129,13 @@ public final class TextDocumentBuffer {
 		return selectionAnchor.compareTo(cursor) >= 0 ? selectionAnchor : cursor;
 	}
 
+	public int selectedCharCount() {
+		if (!hasSelection()) {
+			return 0;
+		}
+		return getSelectedText().length();
+	}
+
 	public String getSelectedText() {
 		if (!hasSelection()) {
 			return "";
@@ -143,6 +155,10 @@ public final class TextDocumentBuffer {
 	}
 
 	public void setCursor(int line, int column, boolean extendSelection) {
+		setCursorInternal(line, column, extendSelection, true);
+	}
+
+	private void setCursorInternal(int line, int column, boolean extendSelection, boolean resetPreferredColumn) {
 		Position clamped = clampPosition(line, column);
 		if (extendSelection) {
 			if (selectionAnchor == null) {
@@ -152,6 +168,9 @@ public final class TextDocumentBuffer {
 			selectionAnchor = null;
 		}
 		cursor = clamped;
+		if (resetPreferredColumn) {
+			preferredColumn = -1;
+		}
 		lastActionWasCharInsert = false;
 	}
 
@@ -159,6 +178,7 @@ public final class TextDocumentBuffer {
 		int targetLine = Math.max(0, Math.min(lines.size() - 1, oneBasedLine - 1));
 		cursor = new Position(targetLine, 0);
 		selectionAnchor = null;
+		preferredColumn = -1;
 		lastActionWasCharInsert = false;
 	}
 
@@ -166,11 +186,98 @@ public final class TextDocumentBuffer {
 		selectionAnchor = new Position(0, 0);
 		int lastLine = lines.size() - 1;
 		cursor = new Position(lastLine, lines.get(lastLine).length());
+		preferredColumn = -1;
 		lastActionWasCharInsert = false;
 	}
 
 	public void clearSelection() {
 		selectionAnchor = null;
+	}
+
+	/**
+	 * Computes the {@code [startCol, endCol]} token bounds at {@code (line, col)} for double-click word selection.
+	 */
+	public int[] wordBoundsAt(int line, int col) {
+		Position clamped = clampPosition(line, col);
+		String text = lines.get(clamped.line());
+		int len = text.length();
+		if (len == 0) {
+			return new int[]{0, 0};
+		}
+		int probe = clamped.column();
+		if (probe >= len) {
+			probe = len - 1;
+		} else if (probe > 0 && charClass(text.charAt(probe)) == 0 && charClass(text.charAt(probe - 1)) != 0) {
+			probe--;
+		}
+		int cls = charClass(text.charAt(probe));
+		int start = probe;
+		while (start > 0 && charClass(text.charAt(start - 1)) == cls) {
+			start--;
+		}
+		int end = probe + 1;
+		while (end < len && charClass(text.charAt(end)) == cls) {
+			end++;
+		}
+		return new int[]{start, end};
+	}
+
+	public void selectWordAt(int line, int col) {
+		Position clamped = clampPosition(line, col);
+		int[] bounds = wordBoundsAt(clamped.line(), clamped.column());
+		selectionAnchor = new Position(clamped.line(), bounds[0]);
+		cursor = new Position(clamped.line(), bounds[1]);
+		preferredColumn = -1;
+		lastActionWasCharInsert = false;
+	}
+
+	public void extendWordSelection(int anchorLine, int anchorStartCol, int anchorEndCol, int targetLine, int targetCol) {
+		Position aStart = clampPosition(anchorLine, anchorStartCol);
+		Position aEnd = clampPosition(anchorLine, anchorEndCol);
+		Position target = clampPosition(targetLine, targetCol);
+		int[] tBounds = wordBoundsAt(target.line(), target.column());
+		Position tStart = new Position(target.line(), tBounds[0]);
+		Position tEnd = new Position(target.line(), tBounds[1]);
+
+		if (tStart.compareTo(aStart) < 0) {
+			selectionAnchor = aEnd;
+			cursor = tStart;
+		} else {
+			selectionAnchor = aStart;
+			cursor = tEnd;
+		}
+		preferredColumn = -1;
+		lastActionWasCharInsert = false;
+	}
+
+	public void selectLine(int line) {
+		int clampedLine = Math.max(0, Math.min(lines.size() - 1, line));
+		selectionAnchor = new Position(clampedLine, 0);
+		if (clampedLine < lines.size() - 1) {
+			cursor = new Position(clampedLine + 1, 0);
+		} else {
+			cursor = new Position(clampedLine, lines.get(clampedLine).length());
+		}
+		preferredColumn = -1;
+		lastActionWasCharInsert = false;
+	}
+
+	public void extendLineSelection(int anchorLine, int targetLine) {
+		int a = Math.max(0, Math.min(lines.size() - 1, anchorLine));
+		int t = Math.max(0, Math.min(lines.size() - 1, targetLine));
+		if (t < a) {
+			selectionAnchor = (a < lines.size() - 1)
+					? new Position(a + 1, 0)
+					: new Position(a, lines.get(a).length());
+			cursor = new Position(t, 0);
+		} else {
+			selectionAnchor = new Position(a, 0);
+			cursor = (t < lines.size() - 1)
+					? new Position(t + 1, 0)
+					: new Position(t, lines.get(t).length());
+		}
+		preferredColumn = -1;
+		lastActionWasCharInsert = false;
 	}
 
 	public void insertText(String rawText) {
@@ -210,6 +317,7 @@ public final class TextDocumentBuffer {
 			lastActionWasCharInsert = false;
 		}
 		selectionAnchor = null;
+		preferredColumn = -1;
 	}
 
 	public void insertNewline() {
@@ -217,7 +325,85 @@ public final class TextDocumentBuffer {
 	}
 
 	public void insertTab() {
+		if (hasSelection() && selectionStart().line() != selectionEnd().line()) {
+			indentSelection();
+			return;
+		}
 		insertText(TAB_SPACES);
+	}
+
+	/**
+	 * Indents the current line or all lines spanned by the active selection by 4 spaces.
+	 */
+	public void indentSelection() {
+		Position start = selectionStart();
+		Position end = selectionEnd();
+		int firstLine = start.line();
+		int lastLine = (hasSelection() && end.column() == 0 && end.line() > firstLine) ? end.line() - 1 : end.line();
+		pushUndoSnapshot();
+		for (int i = firstLine; i <= lastLine; i++) {
+			lines.set(i, TAB_SPACES + lines.get(i));
+		}
+		if (hasSelection()) {
+			int shiftAnchor = (selectionAnchor.line() >= firstLine && selectionAnchor.line() <= lastLine) ? TAB_SPACES.length() : 0;
+			int shiftCursor = (cursor.line() >= firstLine && cursor.line() <= lastLine) ? TAB_SPACES.length() : 0;
+			selectionAnchor = clampPosition(selectionAnchor.line(), selectionAnchor.column() + shiftAnchor);
+			cursor = clampPosition(cursor.line(), cursor.column() + shiftCursor);
+		} else {
+			cursor = new Position(cursor.line(), cursor.column() + TAB_SPACES.length());
+		}
+		preferredColumn = -1;
+		lastActionWasCharInsert = false;
+	}
+
+	/**
+	 * Unindents the current line or all lines spanned by the active selection by up to 4 spaces (or 1 tab).
+	 */
+	public void unindentSelection() {
+		Position start = selectionStart();
+		Position end = selectionEnd();
+		int firstLine = start.line();
+		int lastLine = (hasSelection() && end.column() == 0 && end.line() > firstLine) ? end.line() - 1 : end.line();
+
+		int[] removed = new int[lastLine - firstLine + 1];
+		boolean anyRemoved = false;
+		for (int i = firstLine; i <= lastLine; i++) {
+			String lineText = lines.get(i);
+			int count = 0;
+			if (!lineText.isEmpty() && lineText.charAt(0) == '\t') {
+				count = 1;
+			} else {
+				while (count < TAB_SPACES.length() && count < lineText.length() && lineText.charAt(count) == ' ') {
+					count++;
+				}
+			}
+			removed[i - firstLine] = count;
+			if (count > 0) {
+				anyRemoved = true;
+			}
+		}
+		if (!anyRemoved) {
+			return;
+		}
+		pushUndoSnapshot();
+		for (int i = firstLine; i <= lastLine; i++) {
+			int r = removed[i - firstLine];
+			if (r > 0) {
+				lines.set(i, lines.get(i).substring(r));
+			}
+		}
+		if (hasSelection()) {
+			int anchorDel = (selectionAnchor.line() >= firstLine && selectionAnchor.line() <= lastLine)
+					? removed[selectionAnchor.line() - firstLine] : 0;
+			int cursorDel = (cursor.line() >= firstLine && cursor.line() <= lastLine)
+					? removed[cursor.line() - firstLine] : 0;
+			selectionAnchor = clampPosition(selectionAnchor.line(), Math.max(0, selectionAnchor.column() - anchorDel));
+			cursor = clampPosition(cursor.line(), Math.max(0, cursor.column() - cursorDel));
+		} else {
+			cursor = clampPosition(cursor.line(), Math.max(0, cursor.column() - removed[0]));
+		}
+		preferredColumn = -1;
+		lastActionWasCharInsert = false;
 	}
 
 	/**
@@ -254,6 +440,7 @@ public final class TextDocumentBuffer {
 			cursor = new Position(endLine, lastPart.length());
 		}
 		selectionAnchor = null;
+		preferredColumn = -1;
 		lastActionWasCharInsert = false;
 	}
 
@@ -270,6 +457,7 @@ public final class TextDocumentBuffer {
 		loadLines(normalized);
 		cursor = clampPosition(previousCursor.line(), previousCursor.column());
 		selectionAnchor = null;
+		preferredColumn = -1;
 		lastActionWasCharInsert = false;
 	}
 
@@ -277,6 +465,7 @@ public final class TextDocumentBuffer {
 		if (hasSelection()) {
 			pushUndoSnapshot();
 			deleteSelectionInternal();
+			preferredColumn = -1;
 			lastActionWasCharInsert = false;
 			return;
 		}
@@ -296,6 +485,24 @@ public final class TextDocumentBuffer {
 			cursor = new Position(prevLineIdx, prev.length());
 		}
 		selectionAnchor = null;
+		preferredColumn = -1;
+		lastActionWasCharInsert = false;
+	}
+
+	public void deleteWordBackward() {
+		if (hasSelection()) {
+			deleteSelection();
+			return;
+		}
+		Position target = findPreviousWordBoundary(cursor);
+		if (target.equals(cursor)) {
+			return;
+		}
+		pushUndoSnapshot();
+		selectionAnchor = cursor;
+		cursor = target;
+		deleteSelectionInternal();
+		preferredColumn = -1;
 		lastActionWasCharInsert = false;
 	}
 
@@ -303,6 +510,7 @@ public final class TextDocumentBuffer {
 		if (hasSelection()) {
 			pushUndoSnapshot();
 			deleteSelectionInternal();
+			preferredColumn = -1;
 			lastActionWasCharInsert = false;
 			return;
 		}
@@ -318,6 +526,24 @@ public final class TextDocumentBuffer {
 			lines.set(cursor.line(), current + next);
 		}
 		selectionAnchor = null;
+		preferredColumn = -1;
+		lastActionWasCharInsert = false;
+	}
+
+	public void deleteWordForward() {
+		if (hasSelection()) {
+			deleteSelection();
+			return;
+		}
+		Position target = findNextWordBoundary(cursor);
+		if (target.equals(cursor)) {
+			return;
+		}
+		pushUndoSnapshot();
+		selectionAnchor = cursor;
+		cursor = target;
+		deleteSelectionInternal();
+		preferredColumn = -1;
 		lastActionWasCharInsert = false;
 	}
 
@@ -327,6 +553,7 @@ public final class TextDocumentBuffer {
 		}
 		pushUndoSnapshot();
 		deleteSelectionInternal();
+		preferredColumn = -1;
 		lastActionWasCharInsert = false;
 	}
 
@@ -373,15 +600,30 @@ public final class TextDocumentBuffer {
 	}
 
 	public void moveVertical(int deltaLines, boolean extendSelection) {
+		if (!extendSelection && hasSelection()) {
+			Position edge = deltaLines < 0 ? selectionStart() : selectionEnd();
+			cursor = edge;
+			selectionAnchor = null;
+			preferredColumn = edge.column();
+		}
+		if (preferredColumn < 0) {
+			preferredColumn = cursor.column();
+		}
 		int targetLine = Math.max(0, Math.min(lines.size() - 1, cursor.line() + deltaLines));
-		setCursor(targetLine, cursor.column(), extendSelection);
+		setCursorInternal(targetLine, preferredColumn, extendSelection, false);
 	}
 
 	public void moveHome(boolean extendSelection, boolean toDocumentStart) {
 		if (toDocumentStart) {
 			setCursor(0, 0, extendSelection);
 		} else {
-			setCursor(cursor.line(), 0, extendSelection);
+			String text = lines.get(cursor.line());
+			int firstNonWs = 0;
+			while (firstNonWs < text.length() && (text.charAt(firstNonWs) == ' ' || text.charAt(firstNonWs) == '\t')) {
+				firstNonWs++;
+			}
+			int targetCol = (cursor.column() == firstNonWs || firstNonWs == text.length()) ? 0 : firstNonWs;
+			setCursor(cursor.line(), targetCol, extendSelection);
 		}
 	}
 
@@ -392,6 +634,76 @@ public final class TextDocumentBuffer {
 		} else {
 			setCursor(cursor.line(), lines.get(cursor.line()).length(), extendSelection);
 		}
+	}
+
+	/**
+	 * Finds matching {@code ()}, {@code []}, or {@code {}} bracket pair adjacent to the caret.
+	 */
+	public BracketMatch findMatchingBracket() {
+		String lineText = lines.get(cursor.line());
+		int col = cursor.column();
+		int probeCol = -1;
+		if (col < lineText.length() && isBracket(lineText.charAt(col))) {
+			probeCol = col;
+		} else if (col > 0 && isBracket(lineText.charAt(col - 1))) {
+			probeCol = col - 1;
+		}
+		if (probeCol < 0) {
+			return null;
+		}
+		char ch = lineText.charAt(probeCol);
+		boolean forward = (ch == '(' || ch == '[' || ch == '{');
+		char target = switch (ch) {
+			case '(' -> ')';
+			case '[' -> ']';
+			case '{' -> '}';
+			case ')' -> '(';
+			case ']' -> '[';
+			case '}' -> '{';
+			default -> 0;
+		};
+		int depth = 0;
+		int maxScanLines = 400;
+		if (forward) {
+			int endLine = Math.min(lines.size() - 1, cursor.line() + maxScanLines);
+			for (int l = cursor.line(); l <= endLine; l++) {
+				String s = lines.get(l);
+				int startC = (l == cursor.line()) ? probeCol : 0;
+				for (int c = startC; c < s.length(); c++) {
+					char cur = s.charAt(c);
+					if (cur == ch) {
+						depth++;
+					} else if (cur == target) {
+						depth--;
+						if (depth == 0) {
+							return new BracketMatch(new Position(cursor.line(), probeCol), new Position(l, c));
+						}
+					}
+				}
+			}
+		} else {
+			int startLine = Math.max(0, cursor.line() - maxScanLines);
+			for (int l = cursor.line(); l >= startLine; l--) {
+				String s = lines.get(l);
+				int startC = (l == cursor.line()) ? probeCol : s.length() - 1;
+				for (int c = startC; c >= 0; c--) {
+					char cur = s.charAt(c);
+					if (cur == ch) {
+						depth++;
+					} else if (cur == target) {
+						depth--;
+						if (depth == 0) {
+							return new BracketMatch(new Position(l, c), new Position(cursor.line(), probeCol));
+						}
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	private static boolean isBracket(char c) {
+		return c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}';
 	}
 
 	public boolean undo() {
@@ -420,6 +732,7 @@ public final class TextDocumentBuffer {
 		selectionAnchor = snapshot.selectionAnchor() == null
 				? null
 				: clampPosition(snapshot.selectionAnchor().line(), snapshot.selectionAnchor().column());
+		preferredColumn = -1;
 		lastActionWasCharInsert = false;
 	}
 
@@ -463,11 +776,14 @@ public final class TextDocumentBuffer {
 			return new Position(line - 1, lines.get(line - 1).length());
 		}
 		String text = lines.get(line);
-		while (col > 0 && Character.isWhitespace(text.charAt(col - 1))) {
+		while (col > 0 && charClass(text.charAt(col - 1)) == 0) {
 			col--;
 		}
-		while (col > 0 && !Character.isWhitespace(text.charAt(col - 1))) {
-			col--;
+		if (col > 0) {
+			int cls = charClass(text.charAt(col - 1));
+			while (col > 0 && charClass(text.charAt(col - 1)) == cls) {
+				col--;
+			}
 		}
 		return new Position(line, col);
 	}
@@ -482,12 +798,25 @@ public final class TextDocumentBuffer {
 			}
 			return new Position(line + 1, 0);
 		}
-		while (col < text.length() && !Character.isWhitespace(text.charAt(col))) {
+		while (col < text.length() && charClass(text.charAt(col)) == 0) {
 			col++;
 		}
-		while (col < text.length() && Character.isWhitespace(text.charAt(col))) {
-			col++;
+		if (col < text.length()) {
+			int cls = charClass(text.charAt(col));
+			while (col < text.length() && charClass(text.charAt(col)) == cls) {
+				col++;
+			}
 		}
 		return new Position(line, col);
+	}
+
+	public static int charClass(char c) {
+		if (Character.isWhitespace(c)) {
+			return 0;
+		}
+		if (Character.isLetterOrDigit(c) || c == '_') {
+			return 1;
+		}
+		return 2;
 	}
 }

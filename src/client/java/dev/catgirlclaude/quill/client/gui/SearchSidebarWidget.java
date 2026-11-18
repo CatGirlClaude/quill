@@ -2,6 +2,7 @@ package dev.catgirlclaude.quill.client.gui;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
+import dev.catgirlclaude.quill.client.editor.SingleLineTextInput;
 import dev.catgirlclaude.quill.client.editor.WorkspaceFileCache;
 import dev.catgirlclaude.quill.client.editor.WorkspaceSearchEngine;
 import dev.catgirlclaude.quill.client.session.ClientEditorSession;
@@ -20,7 +21,8 @@ import java.util.function.Consumer;
 
 /**
  * VS Code-style Search &amp; Replace sidebar panel ({@code Ctrl+Shift+F}) scanning across all
- * datapack text files via {@link WorkspaceSearchEngine}.
+ * datapack text files via {@link WorkspaceSearchEngine}, backed by {@link SingleLineTextInput}
+ * for full text selection in query and replace boxes.
  */
 public final class SearchSidebarWidget {
 	private static final int ROW_HEIGHT = 15;
@@ -45,10 +47,8 @@ public final class SearchSidebarWidget {
 	private final Consumer<ModalPromptOverlay> modalOpener;
 	private final Runnable modalCloser;
 
-	private final StringBuilder queryInput = new StringBuilder();
-	private final StringBuilder replaceInput = new StringBuilder();
-	private int queryCursor = 0;
-	private int replaceCursor = 0;
+	private final SingleLineTextInput queryInput = new SingleLineTextInput();
+	private final SingleLineTextInput replaceInput = new SingleLineTextInput();
 	private boolean caseSensitive = false;
 	private boolean regexMode = false;
 	private FocusedField focusedField = FocusedField.NONE;
@@ -89,11 +89,11 @@ public final class SearchSidebarWidget {
 	}
 
 	public String queryText() {
-		return queryInput.toString();
+		return queryInput.text();
 	}
 
 	public String replaceText() {
-		return replaceInput.toString();
+		return replaceInput.text();
 	}
 
 	public WorkspaceSearchEngine.SearchOutcome lastOutcome() {
@@ -102,16 +102,18 @@ public final class SearchSidebarWidget {
 
 	public void unfocus() {
 		this.focusedField = FocusedField.NONE;
+		queryInput.mouseReleased();
+		replaceInput.mouseReleased();
 	}
 
 	public void focusSearchInput(String initialSelection) {
 		this.focusedField = FocusedField.QUERY;
 		if (initialSelection != null && !initialSelection.isEmpty() && !initialSelection.contains("\n")) {
-			queryInput.setLength(0);
-			queryInput.append(initialSelection);
-			queryCursor = queryInput.length();
+			queryInput.setText(initialSelection);
+			queryInput.selectAll();
 			runSearch();
 		} else if (!queryInput.isEmpty()) {
+			queryInput.selectAll();
 			runSearch();
 		}
 	}
@@ -122,7 +124,7 @@ public final class SearchSidebarWidget {
 	}
 
 	public void runSearch() {
-		String q = queryInput.toString();
+		String q = queryInput.text();
 		long gen = ++searchGeneration;
 		if (q.isEmpty()) {
 			searching = false;
@@ -147,14 +149,14 @@ public final class SearchSidebarWidget {
 	}
 
 	private WorkspaceSearchEngine.SearchOptions currentOptions() {
-		return new WorkspaceSearchEngine.SearchOptions(queryInput.toString(), caseSensitive, regexMode);
+		return new WorkspaceSearchEngine.SearchOptions(queryInput.text(), caseSensitive, regexMode);
 	}
 
 	public void render(GuiGraphicsExtractor graphics, Font font, IdeLayout.Rect area, int mouseX, int mouseY) {
 		// Header
 		QuillDraw.text(graphics, font, "SEARCH", area.x() + 6, area.y() + 5, QuillTheme.TEXT_MUTED);
 		String refLabel = "Refresh";
-		int refW = font.width(refLabel) + 8;
+		int refW = QuillDraw.textWidth(font, refLabel) + 8;
 		refreshBtnRect = new IdeLayout.Rect(area.right() - refW - 5, area.y() + 2, refW, 14);
 		boolean hoverRef = refreshBtnRect.contains(mouseX, mouseY);
 		if (hoverRef) {
@@ -173,24 +175,24 @@ public final class SearchSidebarWidget {
 		int queryW = Math.max(40, caseBtnRect.x() - 3 - (area.x() + pad));
 		queryBoxRect = new IdeLayout.Rect(area.x() + pad, row1Y, queryW, 16);
 
-		drawInputBox(graphics, font, queryBoxRect, queryInput.toString(), "Search...", queryCursor, focusedField == FocusedField.QUERY);
+		queryInput.render(graphics, font, queryBoxRect, "Search...", focusedField == FocusedField.QUERY);
 		drawToggleBtn(graphics, font, caseBtnRect, "Aa", caseSensitive, caseBtnRect.contains(mouseX, mouseY));
 		drawToggleBtn(graphics, font, regexBtnRect, ".*", regexMode, regexBtnRect.contains(mouseX, mouseY));
 
 		int row2Y = row1Y + 20;
 		String allLabel = "All";
-		int allW = Math.max(24, font.width(allLabel) + 8);
+		int allW = Math.max(24, QuillDraw.textWidth(font, allLabel) + 8);
 		replaceAllBtnRect = new IdeLayout.Rect(area.right() - pad - allW - 1, row2Y, allW, 16);
 		int replaceW = Math.max(40, replaceAllBtnRect.x() - 3 - (area.x() + pad));
 		replaceBoxRect = new IdeLayout.Rect(area.x() + pad, row2Y, replaceW, 16);
 
-		drawInputBox(graphics, font, replaceBoxRect, replaceInput.toString(), "Replace...", replaceCursor, focusedField == FocusedField.REPLACE);
+		replaceInput.render(graphics, font, replaceBoxRect, "Replace...", focusedField == FocusedField.REPLACE);
 		boolean canReplace = !searching && !lastOutcome.hasError() && lastOutcome.totalMatches() > 0;
 		boolean hoverAll = canReplace && replaceAllBtnRect.contains(mouseX, mouseY);
 		QuillDraw.fill(graphics, replaceAllBtnRect.x(), replaceAllBtnRect.y(), replaceAllBtnRect.width(), replaceAllBtnRect.height(),
 				canReplace ? (hoverAll ? QuillTheme.BG_BUTTON_HOVER : QuillTheme.BG_BUTTON) : QuillTheme.BG_BUTTON_SECONDARY);
 		QuillDraw.text(graphics, font, allLabel,
-				replaceAllBtnRect.x() + (replaceAllBtnRect.width() - font.width(allLabel)) / 2,
+				replaceAllBtnRect.x() + (replaceAllBtnRect.width() - QuillDraw.textWidth(font, allLabel)) / 2,
 				replaceAllBtnRect.y() + (replaceAllBtnRect.height() - font.lineHeight) / 2,
 				canReplace ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
 
@@ -226,40 +228,10 @@ public final class SearchSidebarWidget {
 		renderResults(graphics, font, mouseX, mouseY);
 	}
 
-	private void drawInputBox(
-			GuiGraphicsExtractor graphics,
-			Font font,
-			IdeLayout.Rect rect,
-			String text,
-			String placeholder,
-			int cursor,
-			boolean focused
-	) {
-		QuillDraw.fill(graphics, rect.x(), rect.y(), rect.width(), rect.height(), QuillTheme.BG_INPUT);
-		QuillDraw.outline(graphics, rect.x(), rect.y(), rect.width(), rect.height(),
-				focused ? QuillTheme.ACCENT_FOCUS : QuillTheme.BORDER_SUBTLE);
-		int textY = rect.y() + (rect.height() - font.lineHeight) / 2;
-		int clampedCursor = Math.max(0, Math.min(text.length(), cursor));
-		int innerW = Math.max(4, rect.width() - 8);
-		int cursorPx = font.width(text.substring(0, clampedCursor));
-		int scrollX = cursorPx > innerW - 4 ? cursorPx - (innerW - 4) : 0;
-
-		QuillDraw.beginClip(graphics, new IdeLayout.Rect(rect.x() + 2, rect.y() + 1, rect.width() - 4, rect.height() - 2));
-		if (text.isEmpty()) {
-			QuillDraw.text(graphics, font, placeholder, rect.x() + 4, textY, QuillTheme.TEXT_MUTED);
-		} else {
-			QuillDraw.text(graphics, font, text, rect.x() + 4 - scrollX, textY, QuillTheme.TEXT_BRIGHT);
-		}
-		if (focused && (System.currentTimeMillis() / 500L) % 2L == 0L) {
-			QuillDraw.fill(graphics, rect.x() + 4 + cursorPx - scrollX, rect.y() + 3, 1, rect.height() - 6, QuillTheme.TEXT_BRIGHT);
-		}
-		QuillDraw.endClip(graphics);
-	}
-
 	private void drawToggleBtn(GuiGraphicsExtractor graphics, Font font, IdeLayout.Rect rect, String label, boolean active, boolean hovered) {
 		int bg = active ? QuillTheme.ACCENT_BLUE : (hovered ? QuillTheme.BG_HOVER : QuillTheme.BG_BUTTON_SECONDARY);
 		QuillDraw.fill(graphics, rect.x(), rect.y(), rect.width(), rect.height(), bg);
-		int tx = rect.x() + (rect.width() - font.width(label)) / 2;
+		int tx = rect.x() + (rect.width() - QuillDraw.textWidth(font, label)) / 2;
 		int ty = rect.y() + (rect.height() - font.lineHeight) / 2;
 		QuillDraw.text(graphics, font, label, tx, ty, active ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
 	}
@@ -270,7 +242,6 @@ public final class SearchSidebarWidget {
 			return;
 		}
 
-		// Count total logical rows for scroll clamping
 		int totalRows = 0;
 		for (WorkspaceSearchEngine.FileSearchResult file : lastOutcome.files()) {
 			totalRows++;
@@ -312,7 +283,7 @@ public final class SearchSidebarWidget {
 					QuillDraw.fill(graphics, replaceBtn.x(), replaceBtn.y(), replaceBtn.width(), replaceBtn.height(),
 							hoverRep ? QuillTheme.BG_BUTTON_HOVER : QuillTheme.BG_BUTTON_SECONDARY);
 					QuillDraw.text(graphics, font, "R",
-							replaceBtn.x() + (replaceBtn.width() - font.width("R")) / 2, textY, QuillTheme.TEXT_BRIGHT);
+							replaceBtn.x() + (replaceBtn.width() - QuillDraw.textWidth(font, "R")) / 2, textY, QuillTheme.TEXT_BRIGHT);
 				}
 			}
 			y += ROW_HEIGHT;
@@ -346,7 +317,7 @@ public final class SearchSidebarWidget {
 		String linePrefix = match.oneBasedLine() + ": ";
 		int prefixX = rect.x() + 10;
 		QuillDraw.text(graphics, font, linePrefix, prefixX, textY, QuillTheme.TEXT_MUTED);
-		int snippetX = prefixX + font.width(linePrefix);
+		int snippetX = prefixX + QuillDraw.textWidth(font, linePrefix);
 		int availW = Math.max(10, rect.right() - snippetX - 4);
 
 		String rawLine = match.lineText();
@@ -358,7 +329,6 @@ public final class SearchSidebarWidget {
 		int matchEnd = Math.max(matchStart, match.endCol() - trimLead);
 		String trimmed = rawLine.substring(trimLead);
 
-		// Center window around the match if the match starts far right
 		int windowStart = 0;
 		if (matchStart > 14) {
 			windowStart = Math.max(0, matchStart - 10);
@@ -372,8 +342,8 @@ public final class SearchSidebarWidget {
 		if (adjStart < clipped.length()) {
 			int hlEnd = Math.min(clipped.length(), adjEnd);
 			if (hlEnd > adjStart) {
-				int hx = snippetX + font.width(clipped.substring(0, adjStart));
-				int hw = Math.max(2, font.width(clipped.substring(adjStart, hlEnd)));
+				int hx = snippetX + QuillDraw.textWidth(font, clipped.substring(0, adjStart));
+				int hw = Math.max(2, QuillDraw.textWidth(font, clipped.substring(adjStart, hlEnd)));
 				QuillDraw.fill(graphics, hx, rect.y() + 2, hw, ROW_HEIGHT - 4, QuillTheme.MATCH_HIGHLIGHT);
 			}
 		}
@@ -393,12 +363,12 @@ public final class SearchSidebarWidget {
 		}
 		if (queryBoxRect.contains(mx, my)) {
 			focusedField = FocusedField.QUERY;
-			queryCursor = queryInput.length();
+			queryInput.mouseClicked(mx, safeFont(), event.hasShiftDown());
 			return true;
 		}
 		if (replaceBoxRect.contains(mx, my)) {
 			focusedField = FocusedField.REPLACE;
-			replaceCursor = replaceInput.length();
+			replaceInput.mouseClicked(mx, safeFont(), event.hasShiftDown());
 			return true;
 		}
 		if (caseBtnRect.contains(mx, my)) {
@@ -439,6 +409,24 @@ public final class SearchSidebarWidget {
 		return false;
 	}
 
+	public boolean mouseDragged(MouseButtonEvent event) {
+		if (event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
+			return false;
+		}
+		if (focusedField == FocusedField.QUERY && queryInput.isDragging()) {
+			return queryInput.mouseDragged(event.x(), safeFont());
+		}
+		if (focusedField == FocusedField.REPLACE && replaceInput.isDragging()) {
+			return replaceInput.mouseDragged(event.x(), safeFont());
+		}
+		return false;
+	}
+
+	public void mouseReleased(MouseButtonEvent event) {
+		queryInput.mouseReleased();
+		replaceInput.mouseReleased();
+	}
+
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
 		if (!resultsRect.contains(mouseX, mouseY) || scrollY == 0) {
 			return false;
@@ -468,83 +456,23 @@ public final class SearchSidebarWidget {
 			return true;
 		}
 
-		StringBuilder active = activeBuilder();
-		int cursor = activeCursor();
-
-		if (event.shortcutKey() == InputConstants.KEYCODE_BACKSPACE || event.key() == InputConstants.KEY_BACKSPACE) {
-			if (cursor > 0) {
-				active.deleteCharAt(cursor - 1);
-				setActiveCursor(cursor - 1);
-				if (focusedField == FocusedField.QUERY) {
-					runSearch();
-				}
-			}
-			return true;
+		SingleLineTextInput active = activeInput();
+		SingleLineTextInput.KeyActionResult res = active.keyPressed(event);
+		if (res.textChanged() && focusedField == FocusedField.QUERY) {
+			runSearch();
 		}
-		if (event.shortcutKey() == InputConstants.KEYCODE_DELETE || event.key() == InputConstants.KEY_DELETE) {
-			if (cursor < active.length()) {
-				active.deleteCharAt(cursor);
-				if (focusedField == FocusedField.QUERY) {
-					runSearch();
-				}
-			}
-			return true;
-		}
-		if (event.isLeft()) {
-			setActiveCursor(Math.max(0, cursor - 1));
-			return true;
-		}
-		if (event.isRight()) {
-			setActiveCursor(Math.min(active.length(), cursor + 1));
-			return true;
-		}
-		if (event.shortcutKey() == InputConstants.KEYCODE_HOME || event.key() == InputConstants.KEY_HOME) {
-			setActiveCursor(0);
-			return true;
-		}
-		if (event.shortcutKey() == InputConstants.KEYCODE_END || event.key() == InputConstants.KEY_END) {
-			setActiveCursor(active.length());
-			return true;
-		}
-		if (event.isSelectAll()) {
-			active.setLength(0);
-			setActiveCursor(0);
-			if (focusedField == FocusedField.QUERY) {
-				runSearch();
-			}
-			return true;
-		}
-		if (event.isPaste()) {
-			Minecraft mc = Minecraft.getInstance();
-			if (mc != null) {
-				String clip = mc.keyboardHandler.getClipboard();
-				if (clip != null && !clip.isEmpty()) {
-					String clean = clip.replace("\r", "").replace("\n", "");
-					active.insert(cursor, clean);
-					setActiveCursor(cursor + clean.length());
-					if (focusedField == FocusedField.QUERY) {
-						runSearch();
-					}
-				}
-			}
-			return true;
-		}
-		return false;
+		return res.handled();
 	}
 
 	public boolean charTyped(CharacterEvent event) {
-		if (focusedField == FocusedField.NONE || !event.isAllowedChatCharacter()) {
+		if (focusedField == FocusedField.NONE) {
 			return false;
 		}
-		StringBuilder active = activeBuilder();
-		int cursor = activeCursor();
-		String s = event.codepointAsString();
-		active.insert(cursor, s);
-		setActiveCursor(cursor + s.length());
-		if (focusedField == FocusedField.QUERY) {
+		boolean changed = activeInput().charTyped(event);
+		if (changed && focusedField == FocusedField.QUERY) {
 			runSearch();
 		}
-		return true;
+		return changed;
 	}
 
 	private void promptReplaceAll() {
@@ -554,7 +482,7 @@ public final class SearchSidebarWidget {
 				.map(WorkspaceSearchEngine.FileSearchResult::relativePath)
 				.toList();
 		WorkspaceSearchEngine.SearchOptions opts = currentOptions();
-		String rep = replaceInput.toString();
+		String rep = replaceInput.text();
 
 		modalOpener.accept(ModalPromptOverlay.confirm(
 				"Replace Across Files",
@@ -572,7 +500,7 @@ public final class SearchSidebarWidget {
 
 	private void promptReplaceInFile(WorkspaceSearchEngine.FileSearchResult file) {
 		WorkspaceSearchEngine.SearchOptions opts = currentOptions();
-		String rep = replaceInput.toString();
+		String rep = replaceInput.text();
 		modalOpener.accept(ModalPromptOverlay.confirm(
 				"Replace In File",
 				"Replace " + file.matches().size() + " occurrence(s) in '" + file.relativePath() + "'?",
@@ -587,19 +515,12 @@ public final class SearchSidebarWidget {
 		));
 	}
 
-	private StringBuilder activeBuilder() {
+	private SingleLineTextInput activeInput() {
 		return focusedField == FocusedField.REPLACE ? replaceInput : queryInput;
 	}
 
-	private int activeCursor() {
-		return focusedField == FocusedField.REPLACE ? replaceCursor : queryCursor;
-	}
-
-	private void setActiveCursor(int pos) {
-		if (focusedField == FocusedField.REPLACE) {
-			replaceCursor = pos;
-		} else {
-			queryCursor = pos;
-		}
+	private static Font safeFont() {
+		Minecraft mc = Minecraft.getInstance();
+		return mc != null ? mc.font : null;
 	}
 }

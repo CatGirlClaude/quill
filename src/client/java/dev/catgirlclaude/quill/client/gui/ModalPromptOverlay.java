@@ -2,6 +2,7 @@ package dev.catgirlclaude.quill.client.gui;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
+import dev.catgirlclaude.quill.client.editor.SingleLineTextInput;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -17,7 +18,8 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
- * Reusable modal dialog overlay supporting confirmation prompts and multi-field validated inputs.
+ * Reusable modal dialog overlay supporting confirmation prompts and multi-field validated inputs
+ * with full text selection via {@link SingleLineTextInput}.
  */
 public final class ModalPromptOverlay {
 	public record FieldSpec(
@@ -31,16 +33,12 @@ public final class ModalPromptOverlay {
 
 	private static final class FieldState {
 		final FieldSpec spec;
-		final StringBuilder text = new StringBuilder();
-		int cursor;
+		final SingleLineTextInput input;
 		IdeLayout.Rect boxRect = new IdeLayout.Rect(0, 0, 0, 0);
 
 		FieldState(FieldSpec spec) {
 			this.spec = spec;
-			if (spec.initialValue() != null) {
-				this.text.append(spec.initialValue());
-			}
-			this.cursor = this.text.length();
+			this.input = new SingleLineTextInput(spec.initialValue());
 		}
 	}
 
@@ -177,24 +175,7 @@ public final class ModalPromptOverlay {
 			QuillDraw.text(graphics, font, field.spec.label(), dx + 8, curY, QuillTheme.TEXT_MUTED);
 			int boxY = curY + 11;
 			field.boxRect = new IdeLayout.Rect(dx + 8, boxY, dialogW - 16, 18);
-
-			QuillDraw.fill(graphics, field.boxRect.x(), field.boxRect.y(), field.boxRect.width(), field.boxRect.height(), QuillTheme.BG_INPUT);
-			QuillDraw.outline(graphics, field.boxRect.x(), field.boxRect.y(), field.boxRect.width(), field.boxRect.height(),
-					focused ? QuillTheme.ACCENT_FOCUS : QuillTheme.BORDER_SUBTLE);
-
-			QuillDraw.beginClip(graphics, field.boxRect);
-			String value = field.text.toString();
-			int textY = boxY + (18 - font.lineHeight) / 2;
-			if (value.isEmpty() && field.spec.placeholder() != null && !focused) {
-				QuillDraw.text(graphics, font, field.spec.placeholder(), field.boxRect.x() + 5, textY, QuillTheme.TEXT_MUTED);
-			} else {
-				QuillDraw.text(graphics, font, value, field.boxRect.x() + 5, textY, QuillTheme.TEXT_BRIGHT);
-			}
-			if (focused && (System.currentTimeMillis() / 500L) % 2L == 0L) {
-				int cursorX = field.boxRect.x() + 5 + font.width(value.substring(0, Math.min(field.cursor, value.length())));
-				QuillDraw.fill(graphics, cursorX, boxY + 3, 1, 12, QuillTheme.CURSOR_COLOR);
-			}
-			QuillDraw.endClip(graphics);
+			field.input.render(graphics, font, field.boxRect, field.spec.placeholder(), focused);
 
 			if (field.boxRect.contains(mouseX, mouseY)) {
 				QuillDraw.requestCursor(graphics, CursorTypes.IBEAM);
@@ -233,13 +214,13 @@ public final class ModalPromptOverlay {
 
 		int labelY = btnY + (btnH - font.lineHeight) / 2;
 		QuillDraw.text(graphics, font, confirmLabel,
-				confirmBtnRect.x() + (btnW - font.width(confirmLabel)) / 2, labelY, QuillTheme.TEXT_BRIGHT);
+				confirmBtnRect.x() + (btnW - QuillDraw.textWidth(font, confirmLabel)) / 2, labelY, QuillTheme.TEXT_BRIGHT);
 		if (secondaryBtnRect.width() > 0) {
 			QuillDraw.text(graphics, font, secondaryLabel,
-					secondaryBtnRect.x() + (btnW - font.width(secondaryLabel)) / 2, labelY, QuillTheme.TEXT_BRIGHT);
+					secondaryBtnRect.x() + (btnW - QuillDraw.textWidth(font, secondaryLabel)) / 2, labelY, QuillTheme.TEXT_BRIGHT);
 		}
 		QuillDraw.text(graphics, font, "Cancel",
-				cancelBtnRect.x() + (btnW - font.width("Cancel")) / 2, labelY, QuillTheme.TEXT_PRIMARY);
+				cancelBtnRect.x() + (btnW - QuillDraw.textWidth(font, "Cancel")) / 2, labelY, QuillTheme.TEXT_PRIMARY);
 
 		if (hoverConfirm || hoverSecondary || hoverCancel) {
 			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
@@ -265,14 +246,12 @@ public final class ModalPromptOverlay {
 			onCancel.run();
 			return true;
 		}
+		Font font = safeFont();
 		for (int i = 0; i < fields.size(); i++) {
 			FieldState field = fields.get(i);
 			if (field.boxRect.contains(mx, my)) {
 				focusedFieldIndex = i;
-				Font font = Minecraft.getInstance().font;
-				int relX = (int) mx - (field.boxRect.x() + 5);
-				String sub = font.plainSubstrByWidth(field.text.toString(), Math.max(0, relX));
-				field.cursor = sub.length();
+				field.input.mouseClicked(mx, font, event.hasShiftDown());
 				return true;
 			}
 		}
@@ -280,6 +259,23 @@ public final class ModalPromptOverlay {
 			onCancel.run();
 		}
 		return true;
+	}
+
+	public boolean mouseDragged(MouseButtonEvent event) {
+		if (event.button() != InputConstants.MOUSE_BUTTON_LEFT || fields.isEmpty()) {
+			return true;
+		}
+		FieldState field = fields.get(focusedFieldIndex);
+		if (field.input.isDragging()) {
+			field.input.mouseDragged(event.x(), safeFont());
+		}
+		return true;
+	}
+
+	public void mouseReleased(MouseButtonEvent event) {
+		for (FieldState field : fields) {
+			field.input.mouseReleased();
+		}
 	}
 
 	public boolean keyPressed(KeyEvent event) {
@@ -301,63 +297,21 @@ public final class ModalPromptOverlay {
 		}
 
 		FieldState field = fields.get(focusedFieldIndex);
-		if (event.isPaste()) {
-			String clip = Minecraft.getInstance().keyboardHandler.getClipboard();
-			if (clip != null && !clip.isEmpty()) {
-				String singleLine = clip.replace("\r", "").replace("\n", "");
-				field.text.insert(field.cursor, singleLine);
-				field.cursor += singleLine.length();
-				validationError = null;
-			}
-			return true;
-		}
-		if (event.isCopy()) {
-			Minecraft.getInstance().keyboardHandler.setClipboard(field.text.toString());
-			return true;
-		}
-		if (event.shortcutKey() == InputConstants.KEYCODE_BACKSPACE || event.key() == InputConstants.KEY_BACKSPACE) {
-			if (field.cursor > 0) {
-				field.text.deleteCharAt(field.cursor - 1);
-				field.cursor--;
-				validationError = null;
-			}
-			return true;
-		}
-		if (event.shortcutKey() == InputConstants.KEYCODE_DELETE || event.key() == InputConstants.KEY_DELETE) {
-			if (field.cursor < field.text.length()) {
-				field.text.deleteCharAt(field.cursor);
-				validationError = null;
-			}
-			return true;
-		}
-		if (event.isLeft()) {
-			field.cursor = Math.max(0, field.cursor - 1);
-			return true;
-		}
-		if (event.isRight()) {
-			field.cursor = Math.min(field.text.length(), field.cursor + 1);
-			return true;
-		}
-		if (event.shortcutKey() == InputConstants.KEYCODE_HOME || event.key() == InputConstants.KEY_HOME) {
-			field.cursor = 0;
-			return true;
-		}
-		if (event.shortcutKey() == InputConstants.KEYCODE_END || event.key() == InputConstants.KEY_END) {
-			field.cursor = field.text.length();
-			return true;
+		SingleLineTextInput.KeyActionResult res = field.input.keyPressed(event);
+		if (res.textChanged()) {
+			validationError = null;
 		}
 		return true;
 	}
 
 	public boolean charTyped(CharacterEvent event) {
-		if (fields.isEmpty() || !event.isAllowedChatCharacter()) {
+		if (fields.isEmpty()) {
 			return true;
 		}
 		FieldState field = fields.get(focusedFieldIndex);
-		String ch = event.codepointAsString();
-		field.text.insert(field.cursor, ch);
-		field.cursor += ch.length();
-		validationError = null;
+		if (field.input.charTyped(event)) {
+			validationError = null;
+		}
 		return true;
 	}
 
@@ -365,7 +319,7 @@ public final class ModalPromptOverlay {
 		Map<String, String> values = new LinkedHashMap<>();
 		for (int i = 0; i < fields.size(); i++) {
 			FieldState field = fields.get(i);
-			String val = field.text.toString().trim();
+			String val = field.input.text().trim();
 			if (field.spec.validator() != null) {
 				String error = field.spec.validator().apply(val);
 				if (error != null && !error.isBlank()) {
@@ -377,5 +331,10 @@ public final class ModalPromptOverlay {
 			values.put(field.spec.key(), val);
 		}
 		onConfirm.accept(values);
+	}
+
+	private static Font safeFont() {
+		Minecraft mc = Minecraft.getInstance();
+		return mc != null ? mc.font : null;
 	}
 }

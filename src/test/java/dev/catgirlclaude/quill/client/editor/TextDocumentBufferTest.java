@@ -104,4 +104,68 @@ class TextDocumentBufferTest {
 		assertEquals("abcsay init", buffer.getText());
 		assertTrue(buffer.isDirty());
 	}
+
+	@Test
+	void supportsCtrlShiftWordSelectionWordDeleteAndPreferredColumn() {
+		TextDocumentBuffer buffer = new TextDocumentBuffer("execute as @a run foo.bar\nshort\nlong third line here");
+		buffer.setCursor(0, 0, false);
+
+		// Ctrl+Shift+Right selects word by word cleanly
+		buffer.moveRight(true, true);
+		assertEquals("execute", buffer.getSelectedText());
+		buffer.moveRight(true, true);
+		assertEquals("execute as", buffer.getSelectedText());
+
+		// Word selection & word drag extension
+		buffer.selectWordAt(0, 20);
+		assertEquals("foo", buffer.getSelectedText());
+		int[] wb = buffer.wordBoundsAt(0, 20);
+		buffer.extendWordSelection(0, wb[0], wb[1], 0, 23);
+		assertEquals("foo.bar", buffer.getSelectedText());
+
+		// Preferred column preserved across short middle line
+		buffer.setCursor(0, 18, false);
+		buffer.moveVertical(1, false);
+		assertEquals(new TextDocumentBuffer.Position(1, 5), buffer.cursor());
+		buffer.moveVertical(1, false);
+		assertEquals(new TextDocumentBuffer.Position(2, 18), buffer.cursor());
+
+		// Ctrl+Backspace and Ctrl+Delete
+		buffer.setCursor(2, 10, false);
+		buffer.deleteWordBackward();
+		assertEquals("long  line here", buffer.line(2));
+		buffer.deleteWordForward();
+		assertEquals("long  here", buffer.line(2));
+	}
+
+	@Test
+	void supportsLineSelectionMultiLineIndentUnindentAndBracketMatching() {
+		TextDocumentBuffer buffer = new TextDocumentBuffer("{\n  \"pack\": [1, 2]\n}");
+		buffer.selectLine(1);
+		assertEquals("  \"pack\": [1, 2]\n", buffer.getSelectedText());
+
+		buffer.extendLineSelection(0, 1);
+		assertEquals("{\n  \"pack\": [1, 2]\n", buffer.getSelectedText());
+
+		// Indent and unindent multi-line selection
+		buffer.indentSelection();
+		assertEquals("    {", buffer.line(0));
+		assertEquals("      \"pack\": [1, 2]", buffer.line(1));
+		assertEquals("}", buffer.line(2));
+
+		buffer.unindentSelection();
+		assertEquals("{", buffer.line(0));
+		assertEquals("  \"pack\": [1, 2]", buffer.line(1));
+
+		// Bracket matching
+		buffer.setCursor(0, 0, false);
+		TextDocumentBuffer.BracketMatch outer = buffer.findMatchingBracket();
+		assertEquals(new TextDocumentBuffer.Position(0, 0), outer.open());
+		assertEquals(new TextDocumentBuffer.Position(2, 0), outer.close());
+
+		buffer.setCursor(1, 16, false);
+		TextDocumentBuffer.BracketMatch inner = buffer.findMatchingBracket();
+		assertEquals(new TextDocumentBuffer.Position(1, 10), inner.open());
+		assertEquals(new TextDocumentBuffer.Position(1, 15), inner.close());
+	}
 }

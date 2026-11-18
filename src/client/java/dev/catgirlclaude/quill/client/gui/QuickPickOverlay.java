@@ -3,6 +3,7 @@ package dev.catgirlclaude.quill.client.gui;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
 import dev.catgirlclaude.quill.client.editor.FuzzyMatcher;
+import dev.catgirlclaude.quill.client.editor.SingleLineTextInput;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -21,7 +22,8 @@ import java.util.function.Supplier;
 
 /**
  * VS Code-style top-center quick pick overlay backing both the Command Palette
- * ({@code Ctrl+Shift+P} / {@code F1}, prefixed with {@code >}) and Quick Open File Switcher ({@code Ctrl+P}).
+ * ({@code Ctrl+Shift+P} / {@code F1}, prefixed with {@code >}) and Quick Open File Switcher ({@code Ctrl+P}),
+ * with full text selection in the search input via {@link SingleLineTextInput}.
  */
 public final class QuickPickOverlay {
 	public enum Mode {
@@ -49,13 +51,13 @@ public final class QuickPickOverlay {
 	private final Supplier<List<PickItem>> fileSupplier;
 	private final Runnable onClose;
 
-	private final StringBuilder input = new StringBuilder();
-	private int cursorPos = 0;
+	private final SingleLineTextInput input = new SingleLineTextInput();
 	private int selectedIndex = 0;
 	private int scrollOffset = 0;
 
 	private List<ScoredItem> filtered = List.of();
 	private IdeLayout.Rect panelRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect inputRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private final List<IdeLayout.Rect> rowRects = new ArrayList<>();
 
 	public QuickPickOverlay(
@@ -68,18 +70,18 @@ public final class QuickPickOverlay {
 		this.fileSupplier = Objects.requireNonNull(fileSupplier, "fileSupplier");
 		this.onClose = Objects.requireNonNull(onClose, "onClose");
 		if (initialMode == Mode.COMMANDS) {
-			input.append(">");
-			cursorPos = 1;
+			input.setText(">");
 		}
 		rebuildFiltered();
 	}
 
 	public Mode activeMode() {
-		return input.length() > 0 && input.charAt(0) == '>' ? Mode.COMMANDS : Mode.FILES;
+		String raw = input.text();
+		return !raw.isEmpty() && raw.charAt(0) == '>' ? Mode.COMMANDS : Mode.FILES;
 	}
 
 	public String queryText() {
-		String raw = input.toString();
+		String raw = input.text();
 		return raw.startsWith(">") ? raw.substring(1).trim() : raw.trim();
 	}
 
@@ -105,24 +107,12 @@ public final class QuickPickOverlay {
 				: "Quick Open File  (type filename, or '>' for commands)";
 		QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, title, panelW - 16), px + 8, py + 4, QuillTheme.TEXT_MUTED);
 
-		// Input box
-		IdeLayout.Rect inputRect = new IdeLayout.Rect(px + 8, py + 16, panelW - 16, 17);
-		QuillDraw.fill(graphics, inputRect.x(), inputRect.y(), inputRect.width(), inputRect.height(), QuillTheme.BG_INPUT);
-		QuillDraw.outline(graphics, inputRect.x(), inputRect.y(), inputRect.width(), inputRect.height(), QuillTheme.ACCENT_FOCUS);
-
-		String raw = input.toString();
-		int textY = inputRect.y() + (inputRect.height() - font.lineHeight) / 2;
-		QuillDraw.beginClip(graphics, new IdeLayout.Rect(inputRect.x() + 2, inputRect.y() + 1, inputRect.width() - 4, inputRect.height() - 2));
-		if (raw.isEmpty()) {
-			QuillDraw.text(graphics, font, "Search files by name...", inputRect.x() + 5, textY, QuillTheme.TEXT_MUTED);
-		} else {
-			QuillDraw.text(graphics, font, raw, inputRect.x() + 5, textY, QuillTheme.TEXT_BRIGHT);
+		// Input box with full selection
+		inputRect = new IdeLayout.Rect(px + 8, py + 16, panelW - 16, 17);
+		input.render(graphics, font, inputRect, "Search files by name...", true);
+		if (inputRect.contains(mouseX, mouseY)) {
+			QuillDraw.requestCursor(graphics, CursorTypes.IBEAM);
 		}
-		if ((System.currentTimeMillis() / 500L) % 2L == 0L) {
-			int cx = inputRect.x() + 5 + font.width(raw.substring(0, Math.min(cursorPos, raw.length())));
-			QuillDraw.fill(graphics, cx, inputRect.y() + 3, 1, inputRect.height() - 6, QuillTheme.TEXT_BRIGHT);
-		}
-		QuillDraw.endClip(graphics);
 
 		QuillDraw.hLine(graphics, px + 1, panelW - 2, py + headerH - 1, QuillTheme.BORDER_SUBTLE);
 
@@ -168,7 +158,7 @@ public final class QuickPickOverlay {
 				// Shortcut badge on right
 				String shortcut = entry.item().shortcut();
 				if (shortcut != null && !shortcut.isBlank()) {
-					int sw = font.width(shortcut) + 6;
+					int sw = QuillDraw.textWidth(font, shortcut) + 6;
 					int sx = rightLimit - sw;
 					QuillDraw.fill(graphics, sx, rowRect.y() + 3, sw, ROW_HEIGHT - 6, QuillTheme.BG_BUTTON_SECONDARY);
 					QuillDraw.text(graphics, font, shortcut, sx + 3, ty, QuillTheme.TEXT_MUTED);
@@ -186,7 +176,7 @@ public final class QuickPickOverlay {
 				// Detail / parent path
 				String detail = entry.item().detail();
 				if (detail != null && !detail.isBlank()) {
-					int dx = rowRect.x() + 6 + font.width(clippedLabel) + 8;
+					int dx = rowRect.x() + 6 + QuillDraw.textWidth(font, clippedLabel) + 8;
 					int detailMaxW = rightLimit - dx;
 					if (detailMaxW > 24) {
 						QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, detail, detailMaxW),
@@ -220,7 +210,7 @@ public final class QuickPickOverlay {
 			while (i < text.length() && highlightIndices.contains(i) == hl) {
 				i++;
 			}
-			int segX = x + (start == 0 ? 0 : font.width(text.substring(0, start)));
+			int segX = x + (start == 0 ? 0 : QuillDraw.textWidth(font, text.substring(0, start)));
 			QuillDraw.text(graphics, font, text.substring(start, i), segX, y, hl ? highlightColor : baseColor);
 		}
 	}
@@ -233,6 +223,10 @@ public final class QuickPickOverlay {
 			onClose.run();
 			return true;
 		}
+		if (inputRect.contains(event.x(), event.y())) {
+			input.mouseClicked(event.x(), safeFont(), event.hasShiftDown());
+			return true;
+		}
 		for (int i = 0; i < rowRects.size(); i++) {
 			if (rowRects.get(i).contains(event.x(), event.y())) {
 				selectedIndex = scrollOffset + i;
@@ -241,6 +235,17 @@ public final class QuickPickOverlay {
 			}
 		}
 		return true;
+	}
+
+	public boolean mouseDragged(MouseButtonEvent event) {
+		if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && input.isDragging()) {
+			input.mouseDragged(event.x(), safeFont());
+		}
+		return true;
+	}
+
+	public void mouseReleased(MouseButtonEvent event) {
+		input.mouseReleased();
 	}
 
 	public boolean mouseScrolled(double scrollY) {
@@ -283,60 +288,18 @@ public final class QuickPickOverlay {
 			}
 			return true;
 		}
-		if (event.shortcutKey() == InputConstants.KEYCODE_BACKSPACE || event.key() == InputConstants.KEY_BACKSPACE) {
-			if (cursorPos > 0) {
-				input.deleteCharAt(cursorPos - 1);
-				cursorPos--;
-				rebuildFiltered();
-			}
-			return true;
-		}
-		if (event.shortcutKey() == InputConstants.KEYCODE_DELETE || event.key() == InputConstants.KEY_DELETE) {
-			if (cursorPos < input.length()) {
-				input.deleteCharAt(cursorPos);
-				rebuildFiltered();
-			}
-			return true;
-		}
-		if (event.isLeft()) {
-			cursorPos = Math.max(0, cursorPos - 1);
-			return true;
-		}
-		if (event.isRight()) {
-			cursorPos = Math.min(input.length(), cursorPos + 1);
-			return true;
-		}
-		if (event.shortcutKey() == InputConstants.KEYCODE_HOME || event.key() == InputConstants.KEY_HOME) {
-			cursorPos = 0;
-			return true;
-		}
-		if (event.shortcutKey() == InputConstants.KEYCODE_END || event.key() == InputConstants.KEY_END) {
-			cursorPos = input.length();
-			return true;
-		}
-		if (event.isPaste()) {
-			Minecraft mc = Minecraft.getInstance();
-			if (mc != null) {
-				String clip = mc.keyboardHandler.getClipboard();
-				if (clip != null && !clip.isEmpty()) {
-					String clean = clip.replace("\r", "").replace("\n", "");
-					input.insert(cursorPos, clean);
-					cursorPos += clean.length();
-					rebuildFiltered();
-				}
-			}
-			return true;
+
+		SingleLineTextInput.KeyActionResult res = input.keyPressed(event);
+		if (res.textChanged()) {
+			rebuildFiltered();
 		}
 		return true;
 	}
 
 	public boolean charTyped(CharacterEvent event) {
-		if (!event.isAllowedChatCharacter()) {
+		if (!input.charTyped(event)) {
 			return false;
 		}
-		String s = event.codepointAsString();
-		input.insert(cursorPos, s);
-		cursorPos += s.length();
 		rebuildFiltered();
 		return true;
 	}
@@ -364,7 +327,6 @@ public final class QuickPickOverlay {
 			if (searchMatch.isEmpty()) {
 				continue;
 			}
-			// Compute highlight indices directly against label when label matches query
 			Set<Integer> labelHighlights = Set.of();
 			if (!query.isEmpty()) {
 				Optional<FuzzyMatcher.MatchResult> labelMatch = FuzzyMatcher.match(query, item.label());
@@ -382,5 +344,10 @@ public final class QuickPickOverlay {
 		this.filtered = results;
 		this.selectedIndex = 0;
 		this.scrollOffset = 0;
+	}
+
+	private static Font safeFont() {
+		Minecraft mc = Minecraft.getInstance();
+		return mc != null ? mc.font : null;
 	}
 }

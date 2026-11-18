@@ -827,6 +827,136 @@ class QuillIdeScreenTextInputTest {
 		assertEquals("Not Bound", reloaded.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL).displayLabel());
 	}
 
+	@Test
+	void ctrlZAndCtrlShiftZSplitBetweenCodeEditorAndFileOperations() {
+		java.util.Map<String, String> files = new java.util.LinkedHashMap<>();
+		java.util.Set<String> dirs = new java.util.LinkedHashSet<>();
+		files.put("pack/data/demo/function/main.mcfunction", "say main");
+		files.put("pack/data/demo/function/victim.mcfunction", "say victim");
+		dirs.add("pack");
+		dirs.add("pack/data");
+		dirs.add("pack/data/demo");
+		dirs.add("pack/data/demo/function");
+
+		StubEditorBackend backend = new StubEditorBackend() {
+			@Override
+			public CompletableFuture<FileTreeNode> listTree() {
+				List<FileTreeNode> fnChildren = new java.util.ArrayList<>();
+				for (String path : files.keySet()) {
+					if (path.startsWith("pack/data/demo/function/")) {
+						String name = path.substring("pack/data/demo/function/".length());
+						fnChildren.add(new FileTreeNode(name, path, EntryKind.FILE, List.of()));
+					}
+				}
+				FileTreeNode fnDir = new FileTreeNode("function", "pack/data/demo/function", EntryKind.DIRECTORY, fnChildren);
+				FileTreeNode pack = new FileTreeNode("pack", "pack", EntryKind.DATAPACK, List.of(fnDir));
+				return CompletableFuture.completedFuture(new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of(pack)));
+			}
+
+			@Override
+			public CompletableFuture<FileDocument> readFile(String relativePath) {
+				String content = files.get(relativePath);
+				if (content == null) {
+					return CompletableFuture.failedFuture(new IllegalArgumentException("Missing: " + relativePath));
+				}
+				return CompletableFuture.completedFuture(new FileDocument(relativePath, content, "sha", 0L));
+			}
+
+			@Override
+			public CompletableFuture<SaveResult> writeFile(String relativePath, String content, String expectedBaseSha256, boolean reloadAfterSave) {
+				files.put(relativePath, content);
+				return CompletableFuture.completedFuture(new SaveResult(new FileDocument(relativePath, content, "sha2", 0L), null));
+			}
+
+			@Override
+			public CompletableFuture<Void> createEntry(String relativePath, EntryKind kind) {
+				if (kind == EntryKind.FILE) {
+					files.putIfAbsent(relativePath, "");
+				} else {
+					dirs.add(relativePath);
+				}
+				return CompletableFuture.completedFuture(null);
+			}
+
+			@Override
+			public CompletableFuture<Void> renameEntry(String sourceRelativePath, String targetRelativePath) {
+				String content = files.remove(sourceRelativePath);
+				if (content != null) {
+					files.put(targetRelativePath, content);
+				}
+				return CompletableFuture.completedFuture(null);
+			}
+
+			@Override
+			public CompletableFuture<Void> deleteEntry(String relativePath) {
+				files.entrySet().removeIf(e -> e.getKey().equals(relativePath) || e.getKey().startsWith(relativePath + "/"));
+				dirs.removeIf(d -> d.equals(relativePath) || d.startsWith(relativePath + "/"));
+				return CompletableFuture.completedFuture(null);
+			}
+		};
+
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.refreshTree();
+		session.openFile("pack/data/demo/function/main.mcfunction");
+
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		// 1. Delete victim file via session (file-ops stack), and edit main.mcfunction (editor stack)
+		session.deleteEntry("pack/data/demo/function/victim.mcfunction").join();
+		assertFalse(files.containsKey("pack/data/demo/function/victim.mcfunction"));
+
+		assertTrue(screen.isCodeEditorFocused());
+		session.activeTab().buffer().setCursor(0, "say main".length(), false);
+		simulateSdlTextInput(screen, bridge, "_edited");
+		assertEquals("say main_edited", session.activeTab().buffer().getText());
+
+		int ctrl = net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER;
+		int ctrlShift = ctrl | 1;
+
+		// 2. While editor is focused, Ctrl+Z undoes CODE edit only, leaving deleted file deleted
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_Z, InputConstants.KEYCODE_Z, ctrl));
+		assertEquals("say main", session.activeTab().buffer().getText());
+		assertFalse(files.containsKey("pack/data/demo/function/victim.mcfunction"));
+
+		// 3. Focus Explorer / outside editor: Ctrl+Z silently undoes file deletion & restores content, without affecting editor buffer or opening modal
+		screen.setSidebarFocused(true);
+		assertFalse(screen.isCodeEditorFocused());
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_Z, InputConstants.KEYCODE_Z, ctrl));
+		assertEquals(null, screen.activeModal(), "Undoing file operation via Ctrl+Z must be silent without confirmation modal.");
+		assertEquals("say victim", files.get("pack/data/demo/function/victim.mcfunction"));
+		assertEquals("say main", session.activeTab().buffer().getText());
+
+		// 4. Ctrl+Shift+Z outside editor redoes the file deletion silently
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_Z, InputConstants.KEYCODE_Z, ctrlShift));
+		assertFalse(files.containsKey("pack/data/demo/function/victim.mcfunction"));
+
+		// 5. Undo again so victim exists, then test rename + create undo/redo outside editor
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_Z, InputConstants.KEYCODE_Z, ctrl));
+		assertTrue(files.containsKey("pack/data/demo/function/victim.mcfunction"));
+
+		session.renameEntry("pack/data/demo/function/victim.mcfunction", "pack/data/demo/function/renamed.mcfunction").join();
+		assertTrue(files.containsKey("pack/data/demo/function/renamed.mcfunction"));
+		assertFalse(files.containsKey("pack/data/demo/function/victim.mcfunction"));
+
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_Z, InputConstants.KEYCODE_Z, ctrl));
+		assertTrue(files.containsKey("pack/data/demo/function/victim.mcfunction"));
+		assertFalse(files.containsKey("pack/data/demo/function/renamed.mcfunction"));
+
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_Z, InputConstants.KEYCODE_Z, ctrlShift));
+		assertTrue(files.containsKey("pack/data/demo/function/renamed.mcfunction"));
+		assertFalse(files.containsKey("pack/data/demo/function/victim.mcfunction"));
+
+		// 6. Create folder + file, then Ctrl+Z deletes created folder cleanly and Ctrl+Shift+Z recreates it
+		session.createEntry("pack/data/demo/function/extra", EntryKind.DIRECTORY).join();
+		assertTrue(dirs.contains("pack/data/demo/function/extra"));
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_Z, InputConstants.KEYCODE_Z, ctrl));
+		assertFalse(dirs.contains("pack/data/demo/function/extra"));
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_Z, InputConstants.KEYCODE_Z, ctrlShift));
+		assertTrue(dirs.contains("pack/data/demo/function/extra"));
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

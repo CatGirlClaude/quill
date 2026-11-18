@@ -15,8 +15,10 @@ import net.minecraft.client.multiplayer.ClientPacketListener;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -35,8 +37,32 @@ import java.util.function.Consumer;
  */
 public final class ClientEditorSession {
 	private static final int MAX_OUTPUT_LOG_ENTRIES = 400;
+	private static final int MAX_FILE_UNDO_HISTORY = 50;
 	private static final long GAME_MESSAGE_CAPTURE_WINDOW_MS = 3_500L;
 	private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
+
+	public record FileSnapshotEntry(String path, EntryKind kind, String content) {
+	}
+
+	private sealed interface FileUndoAction permits CreateFileOp, RenameFileOp, DeleteFileOp {
+	}
+
+	private static final class CreateFileOp implements FileUndoAction {
+		final String rootPath;
+		final EntryKind kind;
+		List<FileSnapshotEntry> snapshot = List.of();
+
+		CreateFileOp(String rootPath, EntryKind kind) {
+			this.rootPath = rootPath;
+			this.kind = kind;
+		}
+	}
+
+	private record RenameFileOp(String sourcePath, String targetPath) implements FileUndoAction {
+	}
+
+	private record DeleteFileOp(String rootPath, List<FileSnapshotEntry> snapshot) implements FileUndoAction {
+	}
 
 	public enum SidebarView {
 		EXPLORER,
@@ -76,6 +102,8 @@ public final class ClientEditorSession {
 	private final List<OutputLogEntry> outputLog = new ArrayList<>();
 	private final Set<String> autosaveInFlight = new HashSet<>();
 	private final Set<String> autosaveQueued = new HashSet<>();
+	private final Deque<FileUndoAction> fileUndoStack = new ArrayDeque<>();
+	private final Deque<FileUndoAction> fileRedoStack = new ArrayDeque<>();
 	private Consumer<String> commandDispatcher = ClientEditorSession::sendDefaultMinecraftCommand;
 
 	private FileTreeNode rootTree = new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of());
@@ -966,6 +994,7 @@ public final class ClientEditorSession {
 				setError("Create failed: " + unwrapMessage(error));
 				return;
 			}
+			pushFileUndo(new CreateFileOp(relativePath, kind));
 			expandAncestors(relativePath);
 			if (kind != EntryKind.FILE) {
 				expandedPaths.add(relativePath);
@@ -988,6 +1017,7 @@ public final class ClientEditorSession {
 				setError("Rename failed: " + unwrapMessage(error));
 				return;
 			}
+			pushFileUndo(new RenameFileOp(sourceRelativePath, targetRelativePath));
 			closeTabsUnderPrefix(sourceRelativePath);
 			selectedTreePath = targetRelativePath;
 			expandAncestors(targetRelativePath);
@@ -999,20 +1029,244 @@ public final class ClientEditorSession {
 
 	public CompletableFuture<Void> deleteEntry(String relativePath) {
 		busy = true;
-		return backend.deleteEntry(relativePath).whenComplete((ignored, error) -> runOnClient(() -> {
+		return snapshotSubtree(relativePath).thenCompose(snapshot ->
+				backend.deleteEntry(relativePath).whenComplete((ignored, error) -> runOnClient(() -> {
+					busy = false;
+					if (error != null) {
+						setError("Delete failed: " + unwrapMessage(error));
+						return;
+					}
+					pushFileUndo(new DeleteFileOp(relativePath, snapshot));
+					closeTabsUnderPrefix(relativePath);
+					if (selectedTreePath.equals(relativePath) || selectedTreePath.startsWith(relativePath + "/")) {
+						selectedTreePath = "";
+					}
+					refreshTree();
+					setStatus("Deleted " + relativePath, false);
+					appendOutput(LogLevel.WARN, "Deleted " + relativePath);
+				}))
+		);
+	}
+
+	public boolean canUndoFileOperation() {
+		return !fileUndoStack.isEmpty();
+	}
+
+	public boolean canRedoFileOperation() {
+		return !fileRedoStack.isEmpty();
+	}
+
+	public boolean undoFileOperation() {
+		FileUndoAction action = fileUndoStack.pollLast();
+		if (action == null) {
+			return false;
+		}
+		fileRedoStack.addLast(action);
+		trimStack(fileRedoStack);
+		switch (action) {
+			case CreateFileOp op -> {
+				busy = true;
+				snapshotSubtree(op.rootPath).thenCompose(snapshot -> {
+					op.snapshot = snapshot;
+					return backend.deleteEntry(op.rootPath);
+				}).whenComplete((ignored, error) -> runOnClient(() -> {
+					busy = false;
+					if (error != null) {
+						setError("Undo create failed: " + unwrapMessage(error));
+						return;
+					}
+					closeTabsUnderPrefix(op.rootPath);
+					if (selectedTreePath.equals(op.rootPath) || selectedTreePath.startsWith(op.rootPath + "/")) {
+						selectedTreePath = "";
+					}
+					refreshTree();
+					setStatus("Undid create " + op.rootPath, false);
+					appendOutput(LogLevel.INFO, "Undid create " + op.rootPath);
+				}));
+			}
+			case RenameFileOp op -> {
+				busy = true;
+				backend.renameEntry(op.targetPath(), op.sourcePath()).whenComplete((ignored, error) -> runOnClient(() -> {
+					busy = false;
+					if (error != null) {
+						setError("Undo rename failed: " + unwrapMessage(error));
+						return;
+					}
+					closeTabsUnderPrefix(op.targetPath());
+					selectedTreePath = op.sourcePath();
+					expandAncestors(op.sourcePath());
+					refreshTree();
+					setStatus("Undid rename -> " + op.sourcePath(), false);
+					appendOutput(LogLevel.INFO, "Undid rename " + op.targetPath() + " -> " + op.sourcePath());
+				}));
+			}
+			case DeleteFileOp op -> {
+				busy = true;
+				restoreSubtree(op.snapshot(), op.rootPath(), "Restored " + op.rootPath());
+			}
+		}
+		return true;
+	}
+
+	public boolean redoFileOperation() {
+		FileUndoAction action = fileRedoStack.pollLast();
+		if (action == null) {
+			return false;
+		}
+		fileUndoStack.addLast(action);
+		trimStack(fileUndoStack);
+		switch (action) {
+			case CreateFileOp op -> {
+				busy = true;
+				List<FileSnapshotEntry> entries = (op.snapshot == null || op.snapshot.isEmpty())
+						? List.of(new FileSnapshotEntry(op.rootPath, op.kind, ""))
+						: op.snapshot;
+				restoreSubtree(entries, op.rootPath, "Redid create " + op.rootPath);
+			}
+			case RenameFileOp op -> {
+				busy = true;
+				backend.renameEntry(op.sourcePath(), op.targetPath()).whenComplete((ignored, error) -> runOnClient(() -> {
+					busy = false;
+					if (error != null) {
+						setError("Redo rename failed: " + unwrapMessage(error));
+						return;
+					}
+					closeTabsUnderPrefix(op.sourcePath());
+					selectedTreePath = op.targetPath();
+					expandAncestors(op.targetPath());
+					refreshTree();
+					setStatus("Redid rename -> " + op.targetPath(), false);
+					appendOutput(LogLevel.INFO, "Redid rename " + op.sourcePath() + " -> " + op.targetPath());
+				}));
+			}
+			case DeleteFileOp op -> {
+				busy = true;
+				backend.deleteEntry(op.rootPath()).whenComplete((ignored, error) -> runOnClient(() -> {
+					busy = false;
+					if (error != null) {
+						setError("Redo delete failed: " + unwrapMessage(error));
+						return;
+					}
+					closeTabsUnderPrefix(op.rootPath());
+					if (selectedTreePath.equals(op.rootPath()) || selectedTreePath.startsWith(op.rootPath() + "/")) {
+						selectedTreePath = "";
+					}
+					refreshTree();
+					setStatus("Redid delete " + op.rootPath(), false);
+					appendOutput(LogLevel.WARN, "Redid delete " + op.rootPath());
+				}));
+			}
+		}
+		return true;
+	}
+
+	private void pushFileUndo(FileUndoAction action) {
+		fileUndoStack.addLast(action);
+		trimStack(fileUndoStack);
+		fileRedoStack.clear();
+	}
+
+	private static void trimStack(Deque<FileUndoAction> stack) {
+		while (stack.size() > MAX_FILE_UNDO_HISTORY) {
+			stack.pollFirst();
+		}
+	}
+
+	private CompletableFuture<List<FileSnapshotEntry>> snapshotSubtree(String relativePath) {
+		FileTreeNode node = findTreeNode(rootTree, relativePath);
+		List<FileTreeNode> collected = new ArrayList<>();
+		if (node != null) {
+			collectPreOrder(node, collected);
+		} else {
+			OpenTabState open = findOpenTab(relativePath);
+			boolean looksLikeFile = open != null || looksLikeFilePath(relativePath);
+			EntryKind fallbackKind = looksLikeFile ? EntryKind.FILE : EntryKind.DIRECTORY;
+			collected.add(new FileTreeNode(relativePath, relativePath, fallbackKind, List.of()));
+		}
+
+		List<CompletableFuture<FileSnapshotEntry>> futures = new ArrayList<>(collected.size());
+		for (FileTreeNode entry : collected) {
+			if (entry.kind() == EntryKind.FILE) {
+				OpenTabState open = findOpenTab(entry.relativePath());
+				if (open != null) {
+					futures.add(CompletableFuture.completedFuture(
+							new FileSnapshotEntry(entry.relativePath(), EntryKind.FILE, open.buffer().getText())));
+				} else {
+					futures.add(backend.readFile(entry.relativePath())
+							.handle((doc, err) -> new FileSnapshotEntry(
+									entry.relativePath(), EntryKind.FILE, doc != null ? doc.content() : "")));
+				}
+			} else {
+				futures.add(CompletableFuture.completedFuture(
+						new FileSnapshotEntry(entry.relativePath(), entry.kind(), "")));
+			}
+		}
+		return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
+				.thenApply(v -> {
+					List<FileSnapshotEntry> out = new ArrayList<>(futures.size());
+					for (CompletableFuture<FileSnapshotEntry> f : futures) {
+						out.add(f.join());
+					}
+					return List.copyOf(out);
+				});
+	}
+
+	private void restoreSubtree(List<FileSnapshotEntry> entries, String rootPath, String statusMsg) {
+		CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+		for (FileSnapshotEntry entry : entries) {
+			chain = chain.thenCompose(ignored -> {
+				CompletableFuture<Void> created = backend.createEntry(entry.path(), entry.kind());
+				if (entry.kind() == EntryKind.FILE && entry.content() != null && !entry.content().isEmpty()) {
+					return created.thenCompose(v -> backend.writeFile(entry.path(), entry.content(), null, false)
+							.thenApply(r -> null));
+				}
+				return created;
+			});
+		}
+		chain.whenComplete((ignored, error) -> runOnClient(() -> {
 			busy = false;
 			if (error != null) {
-				setError("Delete failed: " + unwrapMessage(error));
+				setError("Restore failed: " + unwrapMessage(error));
 				return;
 			}
-			closeTabsUnderPrefix(relativePath);
-			if (selectedTreePath.equals(relativePath) || selectedTreePath.startsWith(relativePath + "/")) {
-				selectedTreePath = "";
+			expandAncestors(rootPath);
+			if (!entries.isEmpty() && entries.getFirst().kind() != EntryKind.FILE) {
+				expandedPaths.add(rootPath);
 			}
+			selectedTreePath = rootPath;
 			refreshTree();
-			setStatus("Deleted " + relativePath, false);
-			appendOutput(LogLevel.WARN, "Deleted " + relativePath);
+			setStatus(statusMsg, false);
+			appendOutput(LogLevel.INFO, statusMsg);
 		}));
+	}
+
+	private static FileTreeNode findTreeNode(FileTreeNode current, String relativePath) {
+		if (current == null || relativePath == null) {
+			return null;
+		}
+		if (current.relativePath().equals(relativePath)) {
+			return current;
+		}
+		for (FileTreeNode child : current.children()) {
+			FileTreeNode found = findTreeNode(child, relativePath);
+			if (found != null) {
+				return found;
+			}
+		}
+		return null;
+	}
+
+	private static void collectPreOrder(FileTreeNode node, List<FileTreeNode> out) {
+		out.add(node);
+		for (FileTreeNode child : node.children()) {
+			collectPreOrder(child, out);
+		}
+	}
+
+	private static boolean looksLikeFilePath(String path) {
+		int slash = path.lastIndexOf('/');
+		String name = slash >= 0 ? path.substring(slash + 1) : path;
+		return name.contains(".");
 	}
 
 	private void closeTabsUnderPrefix(String prefix) {

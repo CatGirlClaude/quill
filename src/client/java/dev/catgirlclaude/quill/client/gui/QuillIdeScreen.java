@@ -78,6 +78,7 @@ public class QuillIdeScreen extends Screen {
 	private IdeModal activeModal = null;
 	private QuickPickOverlay activeQuickPick = null;
 	private boolean settingsOpen = false;
+	private boolean sidebarFocused = false;
 	private OpenTabState lastObservedActiveTab = null;
 	private boolean textInputActive = false;
 
@@ -287,12 +288,21 @@ public class QuillIdeScreen extends Screen {
 		return codeEditorWidget;
 	}
 
+	void setSidebarFocused(boolean sidebarFocused) {
+		this.sidebarFocused = sidebarFocused;
+	}
+
+	boolean isSidebarFocused() {
+		return sidebarFocused;
+	}
+
 	boolean isCodeEditorFocused() {
 		return activeModal == null
 				&& activeQuickPick == null
 				&& !settingsOpen
 				&& !isExplorerInlineInputActive()
 				&& !isSearchInputFocused()
+				&& !sidebarFocused
 				&& session.activeTab() != null;
 	}
 
@@ -1338,10 +1348,13 @@ public class QuillIdeScreen extends Screen {
 			syncTextInputState();
 		}
 		if (tabBarWidget.mouseClicked(ev)) {
+			sidebarFocused = false;
 			syncTextInputState();
 			return true;
 		}
 		if (bottomPanelWidget.mouseClicked(ev)) {
+			sidebarFocused = true;
+			syncTextInputState();
 			return true;
 		}
 		if (ev.button() == InputConstants.MOUSE_BUTTON_LEFT) {
@@ -1396,8 +1409,10 @@ public class QuillIdeScreen extends Screen {
 				if (!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER) {
 					explorerTree.cancelInlineInput();
 					session.toggleSidebarCollapsed();
+					sidebarFocused = false;
 				} else {
 					session.setSidebarView(ClientEditorSession.SidebarView.EXPLORER);
+					sidebarFocused = true;
 				}
 				syncTextInputState();
 				return true;
@@ -1406,8 +1421,10 @@ public class QuillIdeScreen extends Screen {
 				if (!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.SEARCH) {
 					session.toggleSidebarCollapsed();
 					searchSidebar.unfocus();
+					sidebarFocused = false;
 					syncTextInputState();
 				} else {
+					sidebarFocused = true;
 					openSearchSidebar();
 				}
 				return true;
@@ -1415,8 +1432,10 @@ public class QuillIdeScreen extends Screen {
 			if (inspectorIconRect.contains(mx, my)) {
 				if (!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.INSPECTOR) {
 					session.toggleSidebarCollapsed();
+					sidebarFocused = false;
 					syncTextInputState();
 				} else {
+					sidebarFocused = true;
 					openInspectorSidebar(false);
 				}
 				return true;
@@ -1426,8 +1445,10 @@ public class QuillIdeScreen extends Screen {
 				searchSidebar.unfocus();
 				if (!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.PRESETS) {
 					session.toggleSidebarCollapsed();
+					sidebarFocused = false;
 				} else {
 					session.setSidebarView(ClientEditorSession.SidebarView.PRESETS);
+					sidebarFocused = true;
 				}
 				syncTextInputState();
 				return true;
@@ -1437,12 +1458,16 @@ public class QuillIdeScreen extends Screen {
 				return true;
 			}
 			if (lastSidebarRect.contains(mx, my)) {
+				OpenTabState prevTab = session.activeTab();
+				int prevTabCount = session.openTabs().size();
 				boolean handled = switch (session.sidebarView()) {
 					case EXPLORER -> explorerTree.mouseClicked(ev);
 					case SEARCH -> searchSidebar.mouseClicked(ev);
 					case INSPECTOR -> inspectorSidebar.mouseClicked(ev);
 					case PRESETS -> quickActions.mouseClicked(ev);
 				};
+				boolean switchedTab = session.activeTab() != prevTab || session.openTabs().size() != prevTabCount;
+				sidebarFocused = !switchedTab;
 				syncActiveTabSelection();
 				syncTextInputState();
 				if (handled) {
@@ -1458,6 +1483,7 @@ public class QuillIdeScreen extends Screen {
 						session.expandedPaths().add(seg.fullPath());
 					}
 					session.setSelectedTreePath(seg.fullPath());
+					sidebarFocused = true;
 					return true;
 				}
 			}
@@ -1466,10 +1492,12 @@ public class QuillIdeScreen extends Screen {
 				return true;
 			}
 			if (welcomeNewPackRect.contains(mx, my)) {
+				sidebarFocused = false;
 				quickActions.promptNewDatapack();
 				return true;
 			}
 			if (welcomeNewFnRect.contains(mx, my)) {
+				sidebarFocused = false;
 				quickActions.promptNewFunction();
 				return true;
 			}
@@ -1479,6 +1507,8 @@ public class QuillIdeScreen extends Screen {
 			}
 			OpenTabState active = settingsOpen ? null : session.activeTab();
 			if (active != null && codeEditorWidget.mouseClicked(ev, font, active)) {
+				sidebarFocused = false;
+				syncTextInputState();
 				return true;
 			}
 			if (statusRemoteBadgeRect.contains(mx, my)) {
@@ -1761,8 +1791,19 @@ public class QuillIdeScreen extends Screen {
 			}
 			return true;
 		}
-		OpenTabState active = session.activeTab();
-		if (active != null && codeEditorWidget.keyPressed(event, font, active)) {
+		if (isCodeEditorFocused()) {
+			OpenTabState active = session.activeTab();
+			if (active != null && codeEditorWidget.keyPressed(event, font, active)) {
+				return true;
+			}
+		} else if (event.hasControlDownWithQuirk() && !event.hasAltDown()
+				&& (event.shortcutKey() == InputConstants.KEYCODE_Z || event.key() == InputConstants.KEY_Z)) {
+			if (event.hasShiftDown()) {
+				session.redoFileOperation();
+			} else {
+				session.undoFileOperation();
+			}
+			syncTextInputState();
 			return true;
 		}
 		if (event.isEscape() && shouldCloseOnEsc()) {
@@ -1796,9 +1837,11 @@ public class QuillIdeScreen extends Screen {
 		if (settingsOpen) {
 			return false;
 		}
-		OpenTabState active = session.activeTab();
-		if (active != null && codeEditorWidget.charTyped(event, font, active)) {
-			return true;
+		if (isCodeEditorFocused()) {
+			OpenTabState active = session.activeTab();
+			if (active != null && codeEditorWidget.charTyped(event, font, active)) {
+				return true;
+			}
 		}
 		return super.charTyped(event);
 	}

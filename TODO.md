@@ -82,7 +82,7 @@ odtwarzającym błąd przed poprawką.
 - [x] Po utworzeniu datapacka widok przełącza się automatycznie na File Explorer.
 - [x] Pole tworzenia nowego pliku: różowe pole jest za duże i nie widać w nim znaku `_`.
 - [x] Rebinding: ESC przypisuje pusty klawisz zamiast anulować.
-- [ ] Ctrl+Z rozdzielone na dwa stosy: w edytorze cofa zmiany w kodzie, poza edytorem cofa operacje na plikach (usunięcia, zmiany nazw itd.).
+- [x] Ctrl+Z rozdzielone na dwa stosy: w edytorze cofa zmiany w kodzie, poza edytorem cofa operacje na plikach (usunięcia, zmiany nazw itd.).
 - [x] Wcięcie przed pierwszą literą w edytorze jest zbyt duże (zajmuje szerokość całej litery).
 - [ ] Kolor czerwony dla niezapisanych zmian w sidebarze wygląda jak błąd. Zmienić na neutralny znacznik `*`.
 - [x] Search: tekst jest ucinany przez "..." (np. `Triggers /reload on every keystroke`). Rozszerzyć pole albo zawijać tekst.

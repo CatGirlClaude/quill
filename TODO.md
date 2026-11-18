@@ -99,15 +99,15 @@ odtwarzającym błąd przed poprawką.
 - [x] UI jest za duże i zajmuje za dużo ekranu. Zwiększyć zoom out lub naprawić skalowanie. DECYZJA: zwiększyć czy naprawić. Nie może się psuć przy różnym GUI Scale.
 - [x] Skala czcionki różna od domyślnej psuje layout. Opis z screenshotu: [uzupełnić: które elementy nachodzą lub są ucinane].
 - [x] Status bar na dole: skompaktować i usunąć zbędne informacje.
-- [ ] Command palette: usunąć skróty już widoczne w innych miejscach (np. "CTRL + P" przy samym pasku).
-- [ ] Command palette rozwija się z góry zamiast otwierać nowe okno nad wszystkim.
+- [x] Command palette: usunąć skróty już widoczne w innych miejscach (np. "CTRL + P" przy samym pasku).
+- [x] Command palette rozwija się z góry zamiast otwierać nowe okno nad wszystkim.
 - [ ] Ustawienia: lewy panel zastąpić listą kategorii. Główna lista zostaje, a kliknięcie kategorii przeskakuje do sekcji.
 - [x] Ustawienia: usunąć znak `*` przy zaznaczonej opcji.
 - [x] Ustawienia: zawijanie tekstu tam, gdzie opisy nie mieszczą się w linii (np. `Triggers /reload on every keystroke`).
 - [x] Ustawienia, Font Family: podgląd "Minecraft Uniform" jest mały i ma niski kontrast. Wszystkie podglądy mają ten sam rozmiar i kontrast, żeby porównanie było uczciwe.
 - [x] Ustawienia, Font Family: zaznaczona opcja (Monospace) ma `*`. Usunąć razem z pozycją o `*` w ustawieniach.
 - [ ] Więcej motywów kolorystycznych.
-- [ ] Animacje w całym UI z globalnym przełącznikiem w ustawieniach.
+- [x] Animacje w całym UI z globalnym przełącznikiem w ustawieniach.
 
 ### P1: explorer plików
 - [ ] Usunąć przyciski pokroju `+file` i `+dir`.

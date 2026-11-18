@@ -2,6 +2,7 @@ package dev.catgirlclaude.quill.client.gui;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
+import dev.catgirlclaude.quill.client.config.QuillClientConfig;
 import dev.catgirlclaude.quill.client.editor.FuzzyMatcher;
 import dev.catgirlclaude.quill.client.editor.SingleLineTextInput;
 import net.minecraft.client.Minecraft;
@@ -21,7 +22,7 @@ import java.util.Set;
 import java.util.function.Supplier;
 
 /**
- * VS Code-style top-center quick pick overlay backing both the Command Palette
+ * VS Code-style top-anchored Command Center dropdown backing both the Command Palette
  * ({@code Ctrl+Shift+P} / {@code F1}, prefixed with {@code >}) and Quick Open File Switcher ({@code Ctrl+P}),
  * with full text selection in the search input via {@link SingleLineTextInput}.
  */
@@ -45,6 +46,7 @@ public final class QuickPickOverlay {
 	}
 
 	private static final int ROW_HEIGHT = 18;
+	private static final int HEADER_HEIGHT = 38;
 	private static final int MAX_VISIBLE_ROWS = 10;
 
 	private final Supplier<List<PickItem>> commandSupplier;
@@ -54,6 +56,8 @@ public final class QuickPickOverlay {
 	private final SingleLineTextInput input = new SingleLineTextInput();
 	private int selectedIndex = 0;
 	private int scrollOffset = 0;
+	private float revealProgress;
+	private long lastFrameNs = 0L;
 
 	private List<ScoredItem> filtered = List.of();
 	private IdeLayout.Rect panelRect = new IdeLayout.Rect(0, 0, 0, 0);
@@ -69,6 +73,7 @@ public final class QuickPickOverlay {
 		this.commandSupplier = Objects.requireNonNull(commandSupplier, "commandSupplier");
 		this.fileSupplier = Objects.requireNonNull(fileSupplier, "fileSupplier");
 		this.onClose = Objects.requireNonNull(onClose, "onClose");
+		this.revealProgress = QuillClientConfig.current().animationsEnabled() ? 0.0f : 1.0f;
 		if (initialMode == Mode.COMMANDS) {
 			input.setText(">");
 		}
@@ -85,40 +90,101 @@ public final class QuickPickOverlay {
 		return raw.startsWith(">") ? raw.substring(1).trim() : raw.trim();
 	}
 
-	public void render(GuiGraphicsExtractor graphics, Font font, int screenWidth, int screenHeight, int mouseX, int mouseY) {
-		QuillDraw.fill(graphics, 0, 0, screenWidth, screenHeight, 0x66000000);
+	static IdeLayout.Rect computeDropdownBounds(
+			IdeLayout.Rect windowRect,
+			IdeLayout.Rect titleBarRect,
+			IdeLayout.Rect anchorRect,
+			int rowCount,
+			int screenHeight,
+			float revealProgress
+	) {
+		int winX = windowRect != null ? windowRect.x() : 0;
+		int winW = windowRect != null && windowRect.width() > 0 ? windowRect.width() : 640;
+		int maxAvailW = Math.max(180, winW - 24);
+		int preferredW = (anchorRect != null && anchorRect.width() > 0) ? Math.max(anchorRect.width() + 80, 380) : 440;
+		int panelW = Math.min(480, Math.min(maxAvailW, preferredW));
 
-		int panelW = Math.min(440, Math.max(240, screenWidth - 40));
-		int visibleRows = Math.min(MAX_VISIBLE_ROWS, Math.max(1, filtered.size()));
-		int headerH = 38;
+		int centerX = (anchorRect != null && anchorRect.width() > 0)
+				? anchorRect.x() + anchorRect.width() / 2
+				: winX + winW / 2;
+		int minX = winX + 6;
+		int maxX = Math.max(minX, winX + winW - panelW - 6);
+		int px = Math.max(minX, Math.min(maxX, centerX - panelW / 2));
+
+		int py = (titleBarRect != null && titleBarRect.height() > 0)
+				? titleBarRect.bottom() - 1
+				: Math.max(8, (windowRect != null ? windowRect.y() : 12) + 23);
+
+		int visibleRows = Math.min(MAX_VISIBLE_ROWS, Math.max(1, rowCount));
 		int listH = visibleRows * ROW_HEIGHT + 6;
-		int panelH = Math.min(screenHeight - 28, headerH + listH);
-		int px = (screenWidth - panelW) / 2;
-		int py = Math.max(12, Math.min(34, (screenHeight - panelH) / 6));
-		panelRect = new IdeLayout.Rect(px, py, panelW, panelH);
+		int maxBottomSpace = Math.max(HEADER_HEIGHT + ROW_HEIGHT, screenHeight - py - 10);
+		int targetH = Math.min(maxBottomSpace, HEADER_HEIGHT + listH);
 
+		float p = Math.max(0.0f, Math.min(1.0f, revealProgress));
+		int currentH = p >= 0.999f
+				? targetH
+				: Math.max(HEADER_HEIGHT, Math.round(HEADER_HEIGHT + (targetH - HEADER_HEIGHT) * p));
+		return new IdeLayout.Rect(px, py, panelW, currentH);
+	}
+
+	public void render(GuiGraphicsExtractor graphics, Font font, int screenWidth, int screenHeight, int mouseX, int mouseY) {
+		IdeLayout.Rect fallbackWin = new IdeLayout.Rect(0, 0, screenWidth, screenHeight);
+		render(graphics, font, fallbackWin, new IdeLayout.Rect(0, 0, screenWidth, 24),
+				new IdeLayout.Rect(0, 0, 0, 0), screenWidth, screenHeight, mouseX, mouseY);
+	}
+
+	public void render(
+			GuiGraphicsExtractor graphics,
+			Font font,
+			IdeLayout.Rect windowRect,
+			IdeLayout.Rect titleBarRect,
+			IdeLayout.Rect commandCenterRect,
+			int screenWidth,
+			int screenHeight,
+			int mouseX,
+			int mouseY
+	) {
+		long now = System.nanoTime();
+		float dt = lastFrameNs == 0L ? 0.016f : Math.min(0.1f, Math.max(0.0f, (now - lastFrameNs) / 1_000_000_000.0f));
+		lastFrameNs = now;
+		revealProgress = QuillAnimator.stepTowards(
+				revealProgress, 1.0f, dt, 18.0f, QuillClientConfig.current().animationsEnabled());
+
+		panelRect = computeDropdownBounds(windowRect, titleBarRect, commandCenterRect, filtered.size(), screenHeight, revealProgress);
+		int px = panelRect.x();
+		int py = panelRect.y();
+		int panelW = panelRect.width();
+		int panelH = panelRect.height();
+
+		// Subtle drop shadow anchored under the top bar (no full-screen dimming box)
+		QuillDraw.fill(graphics, px - 2, py + 1, panelW + 5, panelH + 4, QuillTheme.Metrics.SHADOW_OUTER);
+		QuillDraw.fill(graphics, px + 1, py + 2, panelW + 1, panelH + 2, QuillTheme.Metrics.SHADOW_INNER);
 		QuillDraw.fill(graphics, px, py, panelW, panelH, QuillTheme.BG_POPUP);
 		QuillDraw.outline(graphics, px, py, panelW, panelH, QuillTheme.ACCENT_FOCUS);
 
 		// Mode badge + hint
 		Mode mode = activeMode();
 		String title = mode == Mode.COMMANDS
-				? "Command Palette  (type to filter commands)"
-				: "Quick Open File  (type filename, or '>' for commands)";
+				? "Command Palette"
+				: "Quick Open File  (type '>' for commands)";
 		QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, title, panelW - 16), px + 8, py + 4, QuillTheme.TEXT_MUTED);
 
 		// Input box with full selection
 		inputRect = new IdeLayout.Rect(px + 8, py + 16, panelW - 16, 17);
-		input.render(graphics, font, inputRect, "Search files by name...", true);
+		input.render(graphics, font, inputRect, mode == Mode.COMMANDS ? "Type command name..." : "Search files by name...", true);
 		if (inputRect.contains(mouseX, mouseY)) {
 			QuillDraw.requestCursor(graphics, CursorTypes.IBEAM);
 		}
 
-		QuillDraw.hLine(graphics, px + 1, panelW - 2, py + headerH - 1, QuillTheme.BORDER_SUBTLE);
+		QuillDraw.hLine(graphics, px + 1, panelW - 2, py + HEADER_HEIGHT - 1, QuillTheme.BORDER_SUBTLE);
 
 		// Results list
-		IdeLayout.Rect listRect = new IdeLayout.Rect(px + 2, py + headerH + 2, panelW - 4, Math.max(0, panelRect.bottom() - (py + headerH + 4)));
+		int listH = Math.max(0, panelRect.bottom() - (py + HEADER_HEIGHT + 4));
+		IdeLayout.Rect listRect = new IdeLayout.Rect(px + 2, py + HEADER_HEIGHT + 2, panelW - 4, listH);
 		rowRects.clear();
+		if (listH <= 2) {
+			return;
+		}
 
 		QuillDraw.beginClip(graphics, listRect);
 		if (filtered.isEmpty()) {
@@ -165,18 +231,24 @@ public final class QuickPickOverlay {
 					rightLimit = sx - 6;
 				}
 
+				int labelX = rowRect.x() + 6;
+				if (mode == Mode.FILES) {
+					int iconW = QuillDraw.drawFileTypeIcon(graphics, font, entry.item().label(), labelX, rowRect.y(), ROW_HEIGHT);
+					labelX += iconW + 5;
+				}
+
 				// Label with matched-char accent highlights
 				String label = entry.item().label();
-				int maxLabelW = Math.max(40, rightLimit - (rowRect.x() + 6));
+				int maxLabelW = Math.max(40, rightLimit - labelX);
 				String clippedLabel = QuillDraw.clipToWidth(font, label, maxLabelW);
-				drawHighlightedText(graphics, font, clippedLabel, rowRect.x() + 6, ty,
+				drawHighlightedText(graphics, font, clippedLabel, labelX, ty,
 						selected ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY,
 						QuillTheme.SYNTAX_COORDINATE, entry.labelHighlightIndices());
 
 				// Detail / parent path
 				String detail = entry.item().detail();
 				if (detail != null && !detail.isBlank()) {
-					int dx = rowRect.x() + 6 + QuillDraw.textWidth(font, clippedLabel) + 8;
+					int dx = labelX + QuillDraw.textWidth(font, clippedLabel) + 8;
 					int detailMaxW = rightLimit - dx;
 					if (detailMaxW > 24) {
 						QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, detail, detailMaxW),

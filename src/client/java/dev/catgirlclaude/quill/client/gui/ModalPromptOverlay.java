@@ -2,6 +2,7 @@ package dev.catgirlclaude.quill.client.gui;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
+import dev.catgirlclaude.quill.client.config.QuillClientConfig;
 import dev.catgirlclaude.quill.client.editor.SingleLineTextInput;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -54,6 +55,8 @@ public final class ModalPromptOverlay implements IdeModal {
 
 	private int focusedFieldIndex = 0;
 	private String validationError = null;
+	private float revealProgress;
+	private long lastFrameNs = 0L;
 	private IdeLayout.Rect confirmBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect secondaryBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect cancelBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
@@ -95,6 +98,7 @@ public final class ModalPromptOverlay implements IdeModal {
 		}
 		this.onConfirm = onConfirm;
 		this.onCancel = onCancel;
+		this.revealProgress = QuillClientConfig.current().animationsEnabled() ? 0.0f : 1.0f;
 	}
 
 	public static ModalPromptOverlay confirm(
@@ -146,7 +150,14 @@ public final class ModalPromptOverlay implements IdeModal {
 	}
 
 	public void render(GuiGraphicsExtractor graphics, Font font, int screenWidth, int screenHeight, int mouseX, int mouseY) {
-		QuillDraw.fill(graphics, 0, 0, screenWidth, screenHeight, 0x88000000);
+		long now = System.nanoTime();
+		float dt = lastFrameNs == 0L ? 0.016f : Math.min(0.1f, Math.max(0.0f, (now - lastFrameNs) / 1_000_000_000.0f));
+		lastFrameNs = now;
+		revealProgress = QuillAnimator.stepTowards(
+				revealProgress, 1.0f, dt, 18.0f, QuillClientConfig.current().animationsEnabled());
+
+		int backdropAlpha = Math.round(0x88 * revealProgress);
+		QuillDraw.fill(graphics, 0, 0, screenWidth, screenHeight, (backdropAlpha << 24));
 
 		int dialogW = Math.min(340, Math.max(220, screenWidth - 32));
 		int fieldsHeight = fields.size() * 34;
@@ -154,9 +165,10 @@ public final class ModalPromptOverlay implements IdeModal {
 		int errorHeight = validationError != null ? 16 : 0;
 		int dialogH = 26 + msgHeight + fieldsHeight + errorHeight + 30;
 		int dx = (screenWidth - dialogW) / 2;
-		int dy = (screenHeight - dialogH) / 2;
+		int dy = (screenHeight - dialogH) / 2 - Math.round((1.0f - revealProgress) * 10.0f);
 		dialogRect = new IdeLayout.Rect(dx, dy, dialogW, dialogH);
 
+		QuillDraw.fill(graphics, dx - 2, dy + 1, dialogW + 5, dialogH + 4, QuillTheme.Metrics.SHADOW_OUTER);
 		QuillDraw.fill(graphics, dx, dy, dialogW, dialogH, QuillTheme.BG_MODAL);
 		QuillDraw.outline(graphics, dx, dy, dialogW, dialogH, QuillTheme.BORDER_SUBTLE);
 

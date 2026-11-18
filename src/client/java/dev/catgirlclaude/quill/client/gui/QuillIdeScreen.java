@@ -580,7 +580,7 @@ public class QuillIdeScreen extends Screen {
 			notificationBanner.render(graphics, font, win, layout.titleBar().bottom(), uiMouseX, uiMouseY);
 
 			if (activeQuickPick != null) {
-				activeQuickPick.render(graphics, font, vw, vh, vmX, vmY);
+				activeQuickPick.render(graphics, font, win, layout.titleBar(), commandCenterRect, vw, vh, vmX, vmY);
 			}
 			if (activeModal != null) {
 				activeModal.render(graphics, font, vw, vh, vmX, vmY);
@@ -647,15 +647,16 @@ public class QuillIdeScreen extends Screen {
 					hoverCmdCenter ? QuillTheme.ACCENT_BLUE : QuillTheme.BORDER_SUBTLE);
 
 			OpenTabState active = session.activeTab();
-			String quickOpenKey = QuillClientConfig.current().shortcut(QuillClientConfig.ShortcutAction.QUICK_OPEN).displayLabel();
-			String pillText = settingsOpen
-					? "Settings  (" + quickOpenKey + ")"
-					: (active != null
-							? active.fileName() + (active.isDirty() ? " *" : "") + "  (" + quickOpenKey + ")"
-							: "Search files or >commands  (" + quickOpenKey + ")");
-			String clipped = QuillDraw.clipToWidth(font, pillText, pillW - 12);
-			int pillTextX = commandCenterRect.x() + (commandCenterRect.width() - QuillDraw.textWidth(font, clipped)) / 2;
-			QuillDraw.text(graphics, font, clipped, pillTextX, textY, QuillTheme.TEXT_MUTED);
+			String pillText = formatCommandCenterText(active, settingsOpen);
+			int iconPad = 16;
+			String clipped = QuillDraw.clipToWidth(font, pillText, Math.max(24, pillW - 14 - iconPad));
+			int textW = QuillDraw.textWidth(font, clipped);
+			int groupW = iconPad + textW;
+			int groupX = commandCenterRect.x() + Math.max(6, (commandCenterRect.width() - groupW) / 2);
+			QuillDraw.drawSearchLoupe(graphics, groupX, commandCenterRect.y() + 3,
+					hoverCmdCenter ? QuillTheme.TEXT_PRIMARY : QuillTheme.TEXT_MUTED);
+			QuillDraw.text(graphics, font, clipped, groupX + iconPad, textY,
+					hoverCmdCenter ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY);
 		} else {
 			commandCenterRect = new IdeLayout.Rect(0, 0, 0, 0);
 			OpenTabState active = session.activeTab();
@@ -695,6 +696,16 @@ public class QuillIdeScreen extends Screen {
 		if (hoverMax || hoverClose || hoverRun || hoverCmdCenter) {
 			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 		}
+	}
+
+	static String formatCommandCenterText(OpenTabState active, boolean settingsOpen) {
+		if (settingsOpen) {
+			return "Settings";
+		}
+		if (active != null) {
+			return active.fileName() + (active.isDirty() ? " *" : "");
+		}
+		return "Search files or >commands";
 	}
 
 	protected void renderActivityBar(GuiGraphicsExtractor graphics, IdeLayout.Rect bar, int mouseX, int mouseY) {

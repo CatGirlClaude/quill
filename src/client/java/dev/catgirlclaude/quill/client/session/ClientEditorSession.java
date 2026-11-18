@@ -848,6 +848,7 @@ public final class ClientEditorSession {
 			}
 			expandedPaths.add(createdPack);
 			selectedTreePath = createdPack;
+			setSidebarView(SidebarView.EXPLORER);
 			refreshTree();
 			openFile(createdPack + "/pack.mcmeta");
 			setStatus("Created datapack " + createdPack, false);
@@ -895,6 +896,7 @@ public final class ClientEditorSession {
 					expandedPaths.add(result.pack());
 					expandAncestors(result.loadDoc().relativePath());
 					selectedTreePath = result.loadDoc().relativePath();
+					setSidebarView(SidebarView.EXPLORER);
 					openOrFocusDocument(result.loadDoc());
 					refreshTree();
 					String msg = "Created datapack " + result.pack() + " (" + namespace + ":" + loadFunctionName + ", " + namespace + ":" + tickFunctionName + ")";

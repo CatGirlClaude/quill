@@ -79,7 +79,7 @@ odtwarzającym błąd przed poprawką.
 - [x] Najechanie kursorem na plik w explorerze chowa drzewo tego pliku.
 - [x] Kursor pisania pojawia się także w edytorze, gdy wpisujesz tekst w explorerze. Ma być widoczny tylko w aktywnym polu.
 - [x] Skróty gry (np. F3) działają w GUI. Mają być wyłączone, gdy otwarte jest IDE.
-- [ ] Po utworzeniu datapacka widok przełącza się automatycznie na File Explorer.
+- [x] Po utworzeniu datapacka widok przełącza się automatycznie na File Explorer.
 - [ ] Pole tworzenia nowego pliku: różowe pole jest za duże i nie widać w nim znaku `_`.
 - [ ] Rebinding: ESC przypisuje pusty klawisz zamiast anulować.
 - [ ] Ctrl+Z rozdzielone na dwa stosy: w edytorze cofa zmiany w kodzie, poza edytorem cofa operacje na plikach (usunięcia, zmiany nazw itd.).

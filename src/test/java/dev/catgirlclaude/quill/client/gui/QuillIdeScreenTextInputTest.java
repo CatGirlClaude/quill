@@ -768,6 +768,23 @@ class QuillIdeScreenTextInputTest {
 						+ CodeEditorWidget.codeLeftPadding());
 	}
 
+	@Test
+	void creatingDatapackSwitchesSidebarToFileExplorer() {
+		StubEditorBackend backend = new StubEditorBackend();
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.setSidebarView(ClientEditorSession.SidebarView.PRESETS);
+		session.setSidebarCollapsed(true);
+
+		session.createDatapack("my_pack", "desc").join();
+		assertEquals(ClientEditorSession.SidebarView.EXPLORER, session.sidebarView());
+		assertFalse(session.isSidebarCollapsed());
+
+		session.setSidebarView(ClientEditorSession.SidebarView.SEARCH);
+		session.createDatapackWithTemplate("tpl_pack", "desc", true, "demo", "load", "tick").join();
+		assertEquals(ClientEditorSession.SidebarView.EXPLORER, session.sidebarView());
+		assertFalse(session.isSidebarCollapsed());
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

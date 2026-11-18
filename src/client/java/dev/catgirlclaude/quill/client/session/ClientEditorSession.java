@@ -5,11 +5,17 @@ import dev.catgirlclaude.quill.api.EntryKind;
 import dev.catgirlclaude.quill.api.FileDocument;
 import dev.catgirlclaude.quill.api.FileTreeNode;
 import dev.catgirlclaude.quill.api.PresetDescriptor;
+import dev.catgirlclaude.quill.api.ReloadDiagnostic;
 import dev.catgirlclaude.quill.api.ReloadReport;
 import dev.catgirlclaude.quill.api.RevisionConflictException;
+import dev.catgirlclaude.quill.preset.DatapackScaffolder;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientPacketListener;
 
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -20,15 +26,37 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 /**
  * Persistent client-side IDE state shared across open/close cycles of {@code QuillIdeScreen}
  * within the same world session.
  */
 public final class ClientEditorSession {
+	private static final int MAX_OUTPUT_LOG_ENTRIES = 400;
+	private static final long GAME_MESSAGE_CAPTURE_WINDOW_MS = 3_500L;
+	private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
+
 	public enum SidebarView {
 		EXPLORER,
+		SEARCH,
+		INSPECTOR,
 		PRESETS
+	}
+
+	public enum BottomPanelTab {
+		PROBLEMS,
+		OUTPUT
+	}
+
+	public enum LogLevel {
+		INFO,
+		SUCCESS,
+		WARN,
+		ERROR
+	}
+
+	public record OutputLogEntry(String timestamp, LogLevel level, String message) {
 	}
 
 	public record PendingConflict(
@@ -44,6 +72,8 @@ public final class ClientEditorSession {
 	private final String backendLabel;
 	private final List<OpenTabState> openTabs = new ArrayList<>();
 	private final Set<String> expandedPaths = new HashSet<>();
+	private final List<OutputLogEntry> outputLog = new ArrayList<>();
+	private Consumer<String> commandDispatcher = ClientEditorSession::sendDefaultMinecraftCommand;
 
 	private FileTreeNode rootTree = new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of());
 	private List<PresetDescriptor> presets = List.of();
@@ -56,8 +86,11 @@ public final class ClientEditorSession {
 	private boolean busy = false;
 	private boolean sidebarCollapsed = false;
 	private boolean maximized = false;
-	private boolean diagnosticsExpanded = true;
+	private boolean diagnosticsExpanded = false;
+	private BottomPanelTab bottomPanelTab = BottomPanelTab.PROBLEMS;
 	private SidebarView sidebarView = SidebarView.EXPLORER;
+	private long lastCommandDispatchMs = 0L;
+	private long workspaceRevision = 0L;
 
 	public ClientEditorSession(EditorBackend backend) {
 		this(backend, task -> Minecraft.getInstance().execute(task), "Local");
@@ -76,6 +109,7 @@ public final class ClientEditorSession {
 		this.uiExecutor = Objects.requireNonNull(uiExecutor, "uiExecutor");
 		this.backendLabel = (backendLabel == null || backendLabel.isBlank()) ? "Local" : backendLabel;
 		this.expandedPaths.add("");
+		appendOutput(LogLevel.INFO, "Quill session started (" + this.backendLabel + ")");
 	}
 
 	public EditorBackend backend() {
@@ -84,6 +118,14 @@ public final class ClientEditorSession {
 
 	public String backendLabel() {
 		return backendLabel;
+	}
+
+	public void setCommandDispatcher(Consumer<String> commandDispatcher) {
+		this.commandDispatcher = Objects.requireNonNull(commandDispatcher, "commandDispatcher");
+	}
+
+	public long workspaceRevision() {
+		return workspaceRevision;
 	}
 
 	public PendingConflict consumePendingConflict() {
@@ -196,6 +238,139 @@ public final class ClientEditorSession {
 		this.diagnosticsExpanded = diagnosticsExpanded;
 	}
 
+	public boolean isBottomPanelOpen() {
+		return diagnosticsExpanded;
+	}
+
+	public BottomPanelTab bottomPanelTab() {
+		return bottomPanelTab;
+	}
+
+	public void setBottomPanelTab(BottomPanelTab tab) {
+		this.bottomPanelTab = Objects.requireNonNull(tab, "tab");
+	}
+
+	public void openBottomPanel(BottomPanelTab tab) {
+		this.bottomPanelTab = Objects.requireNonNull(tab, "tab");
+		this.diagnosticsExpanded = true;
+	}
+
+	public void toggleBottomPanel() {
+		this.diagnosticsExpanded = !this.diagnosticsExpanded;
+	}
+
+	public List<OutputLogEntry> outputLog() {
+		return Collections.unmodifiableList(outputLog);
+	}
+
+	public void appendOutput(LogLevel level, String message) {
+		if (message == null || message.isBlank()) {
+			return;
+		}
+		String ts = LocalTime.now().format(TIME_FMT);
+		String[] lines = message.replace("\r\n", "\n").replace('\r', '\n').split("\n");
+		for (String line : lines) {
+			if (line.isBlank()) {
+				continue;
+			}
+			outputLog.add(new OutputLogEntry(ts, level, line));
+		}
+		while (outputLog.size() > MAX_OUTPUT_LOG_ENTRIES) {
+			outputLog.removeFirst();
+		}
+	}
+
+	public void clearOutputLog() {
+		outputLog.clear();
+		appendOutput(LogLevel.INFO, "Output log cleared.");
+	}
+
+	/**
+	 * Captures game/command feedback messages arriving shortly after Quill dispatches a command or reload.
+	 */
+	public void onGameMessageReceived(String message) {
+		if (message == null || message.isBlank()) {
+			return;
+		}
+		long elapsed = System.currentTimeMillis() - lastCommandDispatchMs;
+		if (elapsed < 0 || elapsed > GAME_MESSAGE_CAPTURE_WINDOW_MS) {
+			return;
+		}
+		runOnClient(() -> {
+			String lower = message.toLowerCase(Locale.ROOT);
+			LogLevel level = (lower.contains("unknown function") || lower.contains("failed") || lower.contains("error") || lower.contains("incorrect argument"))
+					? LogLevel.ERROR
+					: LogLevel.INFO;
+			appendOutput(level, "[MC] " + message);
+		});
+	}
+
+	public String activeFunctionId() {
+		OpenTabState tab = activeTab();
+		if (tab == null) {
+			return null;
+		}
+		return DatapackScaffolder.inferFunctionId(tab.relativePath());
+	}
+
+	/**
+	 * Runs the active {@code .mcfunction} tab via {@code /function <namespace>:<path>}.
+	 * If the tab has unsaved edits, saves and reloads first before running.
+	 */
+	public void runCurrentFunction() {
+		OpenTabState tab = activeTab();
+		if (tab == null) {
+			setError("No active file to run.");
+			return;
+		}
+		String fnId = DatapackScaffolder.inferFunctionId(tab.relativePath());
+		if (fnId == null) {
+			setError("Active file is not under data/<namespace>/function/*.mcfunction.");
+			return;
+		}
+		openBottomPanel(BottomPanelTab.OUTPUT);
+		if (tab.isDirty()) {
+			appendOutput(LogLevel.INFO, "Saving & reloading before running /function " + fnId + "...");
+			saveTabInternal(tab, tab.sha256(), true, () -> dispatchFunctionCommand(fnId));
+		} else {
+			dispatchFunctionCommand(fnId);
+		}
+	}
+
+	private void dispatchFunctionCommand(String fnId) {
+		String command = "function " + fnId;
+		this.lastCommandDispatchMs = System.currentTimeMillis();
+		appendOutput(LogLevel.INFO, "> /" + command);
+		try {
+			commandDispatcher.accept(command);
+			setStatus("Ran /" + command, false);
+		} catch (Exception e) {
+			setError("Run failed: " + unwrapMessage(e));
+		}
+	}
+
+	public List<String> listAllFilePaths() {
+		List<String> files = new ArrayList<>();
+		collectFilePaths(rootTree, files);
+		return files;
+	}
+
+	private static void collectFilePaths(FileTreeNode node, List<String> out) {
+		if (node == null) {
+			return;
+		}
+		if (node.kind() == EntryKind.FILE && !node.relativePath().isEmpty()) {
+			out.add(node.relativePath());
+		}
+		for (FileTreeNode child : node.children()) {
+			collectFilePaths(child, out);
+		}
+	}
+
+	public void bumpWorkspaceRevision() {
+		this.workspaceRevision++;
+	}
+
 	public SidebarView sidebarView() {
 		return sidebarView;
 	}
@@ -246,6 +421,7 @@ public final class ClientEditorSession {
 				return;
 			}
 			this.rootTree = tree;
+			bumpWorkspaceRevision();
 			if (tree.children().size() == 1) {
 				this.expandedPaths.add(tree.children().getFirst().relativePath());
 			}
@@ -267,14 +443,14 @@ public final class ClientEditorSession {
 	}
 
 	public void openFileAndJump(String relativePath, int oneBasedLine) {
+		openFileAndSelect(relativePath, oneBasedLine, -1, -1);
+	}
+
+	public void openFileAndSelect(String relativePath, int oneBasedLine, int startCol, int endCol) {
 		for (int i = 0; i < openTabs.size(); i++) {
 			if (openTabs.get(i).relativePath().equals(relativePath)) {
 				activeTabIndex = i;
-				if (oneBasedLine > 0) {
-					OpenTabState tab = openTabs.get(i);
-					tab.buffer().jumpToLine(oneBasedLine);
-					tab.requestScrollToCaret();
-				}
+				applyJumpSelection(openTabs.get(i), oneBasedLine, startCol, endCol);
 				return;
 			}
 		}
@@ -286,12 +462,23 @@ public final class ClientEditorSession {
 				return;
 			}
 			OpenTabState tab = openOrFocusDocument(doc);
-			if (oneBasedLine > 0) {
-				tab.buffer().jumpToLine(oneBasedLine);
-				tab.requestScrollToCaret();
-			}
+			applyJumpSelection(tab, oneBasedLine, startCol, endCol);
 			setStatus("Opened " + tab.fileName(), false);
 		}));
+	}
+
+	private static void applyJumpSelection(OpenTabState tab, int oneBasedLine, int startCol, int endCol) {
+		if (oneBasedLine <= 0) {
+			return;
+		}
+		if (startCol >= 0 && endCol > startCol) {
+			int lineIdx = Math.max(0, Math.min(tab.buffer().lineCount() - 1, oneBasedLine - 1));
+			tab.buffer().setCursor(lineIdx, startCol, false);
+			tab.buffer().setCursor(lineIdx, endCol, true);
+		} else {
+			tab.buffer().jumpToLine(oneBasedLine);
+		}
+		tab.requestScrollToCaret();
 	}
 
 	public OpenTabState openOrFocusDocument(FileDocument document) {
@@ -318,7 +505,7 @@ public final class ClientEditorSession {
 			}
 			return;
 		}
-		saveTabInternal(tab, tab.sha256(), reloadAfterSave);
+		saveTabInternal(tab, tab.sha256(), reloadAfterSave, null);
 	}
 
 	public void forceSaveActiveTab(boolean reloadAfterSave) {
@@ -326,13 +513,13 @@ public final class ClientEditorSession {
 		if (tab == null) {
 			return;
 		}
-		saveTabInternal(tab, null, reloadAfterSave);
+		saveTabInternal(tab, null, reloadAfterSave, null);
 	}
 
 	public void forceSaveTab(String relativePath, boolean reloadAfterSave) {
 		OpenTabState tab = findOpenTab(relativePath);
 		if (tab != null) {
-			saveTabInternal(tab, null, reloadAfterSave);
+			saveTabInternal(tab, null, reloadAfterSave, null);
 		}
 	}
 
@@ -348,10 +535,12 @@ public final class ClientEditorSession {
 				setError("Reload file failed: " + unwrapMessage(error));
 				return;
 			}
+			bumpWorkspaceRevision();
 			OpenTabState tab = findOpenTab(relativePath);
 			if (tab != null) {
 				tab.replaceFromDocument(doc);
 				setStatus("Reloaded " + tab.fileName() + " from server", false);
+				appendOutput(LogLevel.INFO, "Reloaded " + relativePath + " from backend.");
 			} else {
 				openOrFocusDocument(doc);
 				setStatus("Opened latest " + doc.relativePath(), false);
@@ -380,7 +569,10 @@ public final class ClientEditorSession {
 									OpenTabState current = findOpenTab(path);
 									if (current != null && !current.isDirty()) {
 										current.replaceFromDocument(doc);
-										setStatus("Synced " + current.fileName() + " (edited by " + actor + ")", false);
+										bumpWorkspaceRevision();
+										String msg = "Synced " + current.fileName() + " (edited by " + actor + ")";
+										setStatus(msg, false);
+										appendOutput(LogLevel.INFO, msg);
 									}
 								}
 							}));
@@ -407,12 +599,19 @@ public final class ClientEditorSession {
 					}
 				}
 			} else if ("RELOAD".equals(kind)) {
-				setStatus("Datapacks reloaded by " + actor, false);
+				String msg = "Datapacks reloaded by " + actor;
+				setStatus(msg, false);
+				appendOutput(LogLevel.INFO, msg);
 			}
 		});
 	}
 
-	private void saveTabInternal(OpenTabState tab, String expectedBaseSha256, boolean reloadAfterSave) {
+	private void saveTabInternal(
+			OpenTabState tab,
+			String expectedBaseSha256,
+			boolean reloadAfterSave,
+			Runnable afterCleanSaveAndReload
+	) {
 		busy = true;
 		setStatus(reloadAfterSave ? "Saving & reloading..." : "Saving...", false);
 		String content = tab.buffer().getText();
@@ -435,15 +634,24 @@ public final class ClientEditorSession {
 				return;
 			}
 			tab.applySavedDocument(result.document());
+			bumpWorkspaceRevision();
 			if (result.reloadReport() != null) {
 				applyReloadReport(result.reloadReport(), true);
+				if (!result.reloadReport().hasErrors() && afterCleanSaveAndReload != null) {
+					afterCleanSaveAndReload.run();
+				}
 			} else {
+				String msg = "Saved " + tab.relativePath();
 				setStatus("Saved " + tab.fileName(), false);
+				appendOutput(LogLevel.SUCCESS, msg);
+				if (afterCleanSaveAndReload != null) {
+					afterCleanSaveAndReload.run();
+				}
 			}
 		}));
 	}
 
-	private OpenTabState findOpenTab(String relativePath) {
+	public OpenTabState findOpenTab(String relativePath) {
 		for (OpenTabState tab : openTabs) {
 			if (tab.relativePath().equals(relativePath)) {
 				return tab;
@@ -479,6 +687,7 @@ public final class ClientEditorSession {
 			refreshTree();
 			openFile(createdPack + "/pack.mcmeta");
 			setStatus("Created datapack " + createdPack, false);
+			appendOutput(LogLevel.SUCCESS, "Created datapack " + createdPack);
 		})).thenApply(ignored -> null);
 	}
 
@@ -496,6 +705,7 @@ public final class ClientEditorSession {
 			selectedTreePath = createdDir;
 			refreshTree();
 			setStatus("Created namespace " + namespace, false);
+			appendOutput(LogLevel.SUCCESS, "Created namespace " + createdDir);
 		})).thenApply(ignored -> null);
 	}
 
@@ -512,6 +722,7 @@ public final class ClientEditorSession {
 			refreshTree();
 			openFile(createdFile);
 			setStatus("Created " + createdFile, false);
+			appendOutput(LogLevel.SUCCESS, "Created function " + createdFile);
 		})).thenApply(ignored -> null);
 	}
 
@@ -528,6 +739,7 @@ public final class ClientEditorSession {
 			refreshTree();
 			openOrFocusDocument(doc);
 			setStatus("Applied preset " + presetId, false);
+			appendOutput(LogLevel.SUCCESS, "Applied preset " + presetId + " -> " + doc.relativePath());
 		})).thenApply(ignored -> null);
 	}
 
@@ -549,6 +761,7 @@ public final class ClientEditorSession {
 				openFile(relativePath);
 			}
 			setStatus("Created " + relativePath, false);
+			appendOutput(LogLevel.SUCCESS, "Created " + relativePath);
 		}));
 	}
 
@@ -565,6 +778,7 @@ public final class ClientEditorSession {
 			expandAncestors(targetRelativePath);
 			refreshTree();
 			setStatus("Renamed to " + targetRelativePath, false);
+			appendOutput(LogLevel.INFO, "Renamed " + sourceRelativePath + " -> " + targetRelativePath);
 		}));
 	}
 
@@ -582,6 +796,7 @@ public final class ClientEditorSession {
 			}
 			refreshTree();
 			setStatus("Deleted " + relativePath, false);
+			appendOutput(LogLevel.WARN, "Deleted " + relativePath);
 		}));
 	}
 
@@ -597,12 +812,19 @@ public final class ClientEditorSession {
 	private void applyReloadReport(ReloadReport report, boolean afterSave) {
 		this.lastReloadReport = report;
 		if (report.hasErrors()) {
+			this.bottomPanelTab = BottomPanelTab.PROBLEMS;
 			this.diagnosticsExpanded = true;
 			int count = report.diagnostics().size();
 			setError("Reload errors (" + count + ") in " + report.durationMs() + "ms");
+			for (ReloadDiagnostic diag : report.diagnostics()) {
+				String loc = diag.line() > 0 ? ":" + diag.line() : "";
+				appendOutput(LogLevel.ERROR, "  [!] " + diag.file() + loc + " - " + diag.message());
+			}
 		} else {
 			String prefix = afterSave ? "Saved & Reloaded" : "Reloaded";
-			setStatus(prefix + " (" + report.durationMs() + "ms, " + report.enabledPackCount() + " packs)", false);
+			String summary = prefix + " (" + report.durationMs() + "ms, " + report.enabledPackCount() + " packs)";
+			setStatus(summary, false);
+			appendOutput(LogLevel.SUCCESS, summary);
 		}
 	}
 
@@ -613,10 +835,27 @@ public final class ClientEditorSession {
 
 	private void setError(String message) {
 		setStatus(message, true);
+		appendOutput(LogLevel.ERROR, message);
+	}
+
+	public void runOnUi(Runnable task) {
+		runOnClient(task);
 	}
 
 	private void runOnClient(Runnable task) {
 		uiExecutor.execute(task);
+	}
+
+	private static void sendDefaultMinecraftCommand(String command) {
+		Minecraft mc = Minecraft.getInstance();
+		if (mc == null) {
+			throw new IllegalStateException("Minecraft client is not running.");
+		}
+		ClientPacketListener connection = mc.getConnection();
+		if (connection == null) {
+			throw new IllegalStateException("Not connected to a Minecraft world.");
+		}
+		connection.sendCommand(command);
 	}
 
 	private static Throwable unwrapThrowable(Throwable throwable) {

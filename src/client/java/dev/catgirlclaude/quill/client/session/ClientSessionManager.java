@@ -75,6 +75,10 @@ public final class ClientSessionManager {
 		return activeRemoteBackend;
 	}
 
+	public static ClientEditorSession activeSession() {
+		return activeSession;
+	}
+
 	public static synchronized void clear() {
 		clear("Editor session closed.");
 	}

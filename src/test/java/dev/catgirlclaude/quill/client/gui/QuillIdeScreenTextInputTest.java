@@ -242,6 +242,69 @@ class QuillIdeScreenTextInputTest {
 		assertEquals("saved_sha", session.activeTab().sha256());
 	}
 
+	@Test
+	void quickOpenCtrlPActivatesTextInputAndOpensMatchedFile() {
+		StubEditorBackend backend = new StubEditorBackend() {
+			@Override
+			public CompletableFuture<FileTreeNode> listTree() {
+				FileTreeNode tick = new FileTreeNode("tick.mcfunction", "my_pack/data/demo/function/tick.mcfunction", EntryKind.FILE, List.of());
+				FileTreeNode load = new FileTreeNode("load.mcfunction", "my_pack/data/demo/function/load.mcfunction", EntryKind.FILE, List.of());
+				FileTreeNode fnDir = new FileTreeNode("function", "my_pack/data/demo/function", EntryKind.DIRECTORY, List.of(load, tick));
+				FileTreeNode pack = new FileTreeNode("my_pack", "my_pack", EntryKind.DATAPACK, List.of(fnDir));
+				return CompletableFuture.completedFuture(new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of(pack)));
+			}
+
+			@Override
+			public CompletableFuture<FileDocument> readFile(String relativePath) {
+				return CompletableFuture.completedFuture(new FileDocument(relativePath, "# loaded " + relativePath, "sha", 0L));
+			}
+		};
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.refreshTree();
+
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+		assertFalse(bridge.isActiveFor(screen));
+
+		// Ctrl+P opens Quick Open file switcher and captures SDL3 text input
+		screen.keyPressed(new KeyEvent(0, 'p', net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER));
+		assertTrue(bridge.isActiveFor(screen));
+		assertEquals(QuickPickOverlay.Mode.FILES, screen.activeQuickPick().activeMode());
+
+		simulateSdlTextInput(screen, bridge, "tick");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+
+		assertEquals(null, screen.activeQuickPick());
+		assertEquals("my_pack/data/demo/function/tick.mcfunction", session.activeTab().relativePath());
+		assertTrue(bridge.isActiveFor(screen), "Opened code tab should keep SDL text input active.");
+	}
+
+	@Test
+	void commandPaletteF1RunsActionAndCtrlJTogglesBottomPanel() {
+		StubEditorBackend backend = new StubEditorBackend();
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		assertFalse(session.isBottomPanelOpen());
+		screen.keyPressed(new KeyEvent(0, 'j', net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER));
+		assertTrue(session.isBottomPanelOpen());
+
+		// F1 opens Command Palette in COMMANDS mode
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_F1, 0, 0));
+		assertTrue(bridge.isActiveFor(screen));
+		assertEquals(QuickPickOverlay.Mode.COMMANDS, screen.activeQuickPick().activeMode());
+
+		simulateSdlTextInput(screen, bridge, "toggle bottom");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+
+		assertEquals(null, screen.activeQuickPick());
+		assertFalse(session.isBottomPanelOpen(), "Running 'View: Toggle Bottom Panel' should collapse the panel.");
+		assertFalse(bridge.isActiveFor(screen), "Closing Command Palette with no open tabs stops SDL text input.");
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

@@ -152,7 +152,7 @@ public final class EditorTabBarWidget {
 		return true;
 	}
 
-	private void requestCloseTab(int index) {
+	public void requestCloseTab(int index) {
 		if (index < 0 || index >= session.openTabs().size()) {
 			return;
 		}

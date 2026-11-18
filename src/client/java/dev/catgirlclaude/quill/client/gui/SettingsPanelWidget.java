@@ -26,6 +26,30 @@ public final class SettingsPanelWidget {
 	static final String INSTANT_RELOAD_WARNING_BODY =
 			"Triggers /reload on every keystroke and may cause lag or partial-edit errors.";
 
+	public enum Category {
+		APPEARANCE("Appearance", "Themes, fonts & scale"),
+		GAMEPLAY("Gameplay & Reload", "Pause, autosave & reload"),
+		TEMPLATES("Templates", "New datapack defaults"),
+		WINDOW("Window & Scale", "Bounds & splitters"),
+		KEYBINDINGS("Keybindings", "IDE shortcuts");
+
+		private final String label;
+		private final String subtitle;
+
+		Category(String label, String subtitle) {
+			this.label = label;
+			this.subtitle = subtitle;
+		}
+
+		public String label() {
+			return label;
+		}
+
+		public String subtitle() {
+			return subtitle;
+		}
+	}
+
 	private record ClickTarget(IdeLayout.Rect rect, Runnable action) {
 	}
 
@@ -43,9 +67,13 @@ public final class SettingsPanelWidget {
 	};
 
 	private final List<ClickTarget> clickTargets = new ArrayList<>();
+	private final List<ClickTarget> sidebarClickTargets = new ArrayList<>();
+	private final int[] sectionAnchorOffsets = new int[Category.values().length];
 	private IdeLayout.Rect lastArea = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect lastSidebarArea = new IdeLayout.Rect(0, 0, 0, 0);
 	private int scrollPixels = 0;
 	private int contentHeight = 0;
+	private Category pinnedCategory = null;
 
 	private int focusedTemplateField = -1; // -1 none, 0 namespace, 1 load, 2 tick
 	private QuillClientConfig.ShortcutAction recordingAction = null;
@@ -99,6 +127,102 @@ public final class SettingsPanelWidget {
 		namespaceInput.mouseReleased();
 		loadFnInput.mouseReleased();
 		tickFnInput.mouseReleased();
+	}
+
+	public int scrollPixels() {
+		return scrollPixels;
+	}
+
+	void setSectionAnchorOffset(Category category, int offset) {
+		sectionAnchorOffsets[category.ordinal()] = Math.max(0, offset);
+	}
+
+	void setContentMetrics(int contentHeight, int viewportHeight) {
+		this.contentHeight = Math.max(0, contentHeight);
+		this.lastArea = new IdeLayout.Rect(0, 0, Math.max(100, lastArea.width()), Math.max(40, viewportHeight));
+	}
+
+	public Category activeCategory() {
+		if (pinnedCategory != null) {
+			return pinnedCategory;
+		}
+		Category[] cats = Category.values();
+		Category active = cats[0];
+		for (int i = 1; i < cats.length; i++) {
+			int offset = sectionAnchorOffsets[i];
+			if (offset > 0 && scrollPixels + 18 >= offset) {
+				active = cats[i];
+			}
+		}
+		return active;
+	}
+
+	public void scrollToCategory(Category category) {
+		if (category == null) {
+			return;
+		}
+		pinnedCategory = category;
+		int target = sectionAnchorOffsets[category.ordinal()];
+		int maxScroll = lastArea.height() > 0 ? Math.max(0, contentHeight - lastArea.height() + 16) : target;
+		scrollPixels = Math.max(0, Math.min(maxScroll, target));
+	}
+
+	public void renderCategorySidebar(GuiGraphicsExtractor graphics, Font font, IdeLayout.Rect sidebarArea, int mouseX, int mouseY) {
+		lastSidebarArea = sidebarArea;
+		sidebarClickTargets.clear();
+		if (sidebarArea.width() < 24 || sidebarArea.height() < 24) {
+			return;
+		}
+
+		QuillDraw.text(graphics, font, "SETTINGS", sidebarArea.x() + 8, sidebarArea.y() + 6, QuillTheme.TEXT_MUTED);
+		QuillDraw.hLine(graphics, sidebarArea.x(), sidebarArea.width() - 1, sidebarArea.y() + 18, QuillTheme.BORDER_SUBTLE);
+
+		int y = sidebarArea.y() + 24;
+		Category active = activeCategory();
+		boolean anyHover = false;
+		QuillDraw.beginClip(graphics, new IdeLayout.Rect(sidebarArea.x(), sidebarArea.y() + 19, sidebarArea.width() - 1, Math.max(0, sidebarArea.height() - 19)));
+		for (Category cat : Category.values()) {
+			int rowH = 30;
+			IdeLayout.Rect rowRect = new IdeLayout.Rect(sidebarArea.x(), y, sidebarArea.width() - 1, rowH);
+			boolean selected = cat == active;
+			boolean hover = sidebarArea.contains(mouseX, mouseY) && rowRect.contains(mouseX, mouseY);
+			if (hover) {
+				anyHover = true;
+			}
+			sidebarClickTargets.add(new ClickTarget(rowRect, () -> scrollToCategory(cat)));
+
+			if (selected) {
+				QuillDraw.fill(graphics, rowRect.x(), rowRect.y(), rowRect.width(), rowRect.height(), QuillTheme.ROW_SELECTED);
+				QuillDraw.fill(graphics, rowRect.x(), rowRect.y() + 2, 2, rowRect.height() - 4, QuillTheme.ACCENT_BLUE);
+			} else if (hover) {
+				QuillDraw.fill(graphics, rowRect.x(), rowRect.y(), rowRect.width(), rowRect.height(), QuillTheme.BG_HOVER);
+			}
+
+			int textMaxW = Math.max(20, rowRect.width() - 16);
+			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, cat.label(), textMaxW),
+					rowRect.x() + 10, rowRect.y() + 5, selected ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY);
+			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, cat.subtitle(), textMaxW),
+					rowRect.x() + 10, rowRect.y() + 16, QuillTheme.TEXT_MUTED);
+			y += rowH + 2;
+		}
+		QuillDraw.endClip(graphics);
+
+		if (anyHover) {
+			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
+		}
+	}
+
+	public boolean mouseClickedSidebar(MouseButtonEvent event) {
+		if (!lastSidebarArea.contains(event.x(), event.y()) || event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
+			return false;
+		}
+		for (ClickTarget target : sidebarClickTargets) {
+			if (target.rect().contains(event.x(), event.y())) {
+				target.action().run();
+				return true;
+			}
+		}
+		return true;
 	}
 
 	public void render(GuiGraphicsExtractor graphics, Font font, IdeLayout.Rect area, int mouseX, int mouseY) {
@@ -164,6 +288,7 @@ public final class SettingsPanelWidget {
 		y += 10;
 
 		// ========== SECTION 1: APPEARANCE ==========
+		sectionAnchorOffsets[Category.APPEARANCE.ordinal()] = 0;
 		y = renderSectionTitle(graphics, font, x, y, "Appearance & VS Code Themes");
 
 		// Theme cards grid
@@ -301,6 +426,7 @@ public final class SettingsPanelWidget {
 		// ========== SECTION 2: BEHAVIOR, PAUSE, AUTOSAVE & RELOAD ==========
 		QuillDraw.hLine(graphics, x, contentW, y, QuillTheme.BORDER_SUBTLE);
 		y += 10;
+		sectionAnchorOffsets[Category.GAMEPLAY.ordinal()] = Math.max(0, y - startY - 4);
 		y = renderSectionTitle(graphics, font, x, y, "Gameplay, Autosave & Datapack Reload");
 
 		// Pause game toggle
@@ -399,6 +525,7 @@ public final class SettingsPanelWidget {
 		// ========== SECTION 3: DATAPACK TEMPLATE DEFAULTS ==========
 		QuillDraw.hLine(graphics, x, contentW, y, QuillTheme.BORDER_SUBTLE);
 		y += 10;
+		sectionAnchorOffsets[Category.TEMPLATES.ordinal()] = Math.max(0, y - startY - 4);
 		y = renderSectionTitle(graphics, font, x, y, "New Datapack Template Defaults");
 		for (String line : QuillDraw.wrapLines(font, "Used when 'Use template' is checked in New Datapack.", contentW)) {
 			QuillDraw.text(graphics, font, line, x, y, QuillTheme.TEXT_MUTED);
@@ -435,6 +562,7 @@ public final class SettingsPanelWidget {
 		// ========== SECTION 4: WINDOW & LAYOUT ==========
 		QuillDraw.hLine(graphics, x, contentW, y, QuillTheme.BORDER_SUBTLE);
 		y += 10;
+		sectionAnchorOffsets[Category.WINDOW.ordinal()] = Math.max(0, y - startY - 4);
 		y = renderSectionTitle(graphics, font, x, y, "Window Position & Scale");
 		String winInfo = cfg.hasCustomWindowBounds()
 				? "Custom window: (" + cfg.windowX() + ", " + cfg.windowY() + ") " + cfg.windowWidth() + "x" + cfg.windowHeight()
@@ -465,6 +593,7 @@ public final class SettingsPanelWidget {
 		// ========== SECTION 5: KEYBOARD SHORTCUTS ==========
 		QuillDraw.hLine(graphics, x, contentW, y, QuillTheme.BORDER_SUBTLE);
 		y += 10;
+		sectionAnchorOffsets[Category.KEYBINDINGS.ordinal()] = Math.max(0, y - startY - 4);
 		y = renderSectionTitle(graphics, font, x, y, "Keyboard Shortcuts");
 		for (String line : QuillDraw.wrapLines(font, "Click a binding to record a new key combination (Esc sets Not Bound).", contentW)) {
 			QuillDraw.text(graphics, font, line, x, y, QuillTheme.TEXT_MUTED);
@@ -594,6 +723,7 @@ public final class SettingsPanelWidget {
 		if (!lastArea.contains(mouseX, mouseY)) {
 			return false;
 		}
+		pinnedCategory = null;
 		int maxScroll = Math.max(0, contentHeight - lastArea.height() + 16);
 		scrollPixels = Math.max(0, Math.min(maxScroll, scrollPixels - (int) (scrollY * 26)));
 		return true;

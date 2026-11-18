@@ -101,12 +101,12 @@ odtwarzającym błąd przed poprawką.
 - [x] Status bar na dole: skompaktować i usunąć zbędne informacje.
 - [x] Command palette: usunąć skróty już widoczne w innych miejscach (np. "CTRL + P" przy samym pasku).
 - [x] Command palette rozwija się z góry zamiast otwierać nowe okno nad wszystkim.
-- [ ] Ustawienia: lewy panel zastąpić listą kategorii. Główna lista zostaje, a kliknięcie kategorii przeskakuje do sekcji.
+- [x] Ustawienia: lewy panel zastąpić listą kategorii. Główna lista zostaje, a kliknięcie kategorii przeskakuje do sekcji.
 - [x] Ustawienia: usunąć znak `*` przy zaznaczonej opcji.
 - [x] Ustawienia: zawijanie tekstu tam, gdzie opisy nie mieszczą się w linii (np. `Triggers /reload on every keystroke`).
 - [x] Ustawienia, Font Family: podgląd "Minecraft Uniform" jest mały i ma niski kontrast. Wszystkie podglądy mają ten sam rozmiar i kontrast, żeby porównanie było uczciwe.
 - [x] Ustawienia, Font Family: zaznaczona opcja (Monospace) ma `*`. Usunąć razem z pozycją o `*` w ustawieniach.
-- [ ] Więcej motywów kolorystycznych.
+- [x] Więcej motywów kolorystycznych.
 - [x] Animacje w całym UI z globalnym przełącznikiem w ustawieniach.
 
 ### P1: explorer plików
@@ -139,7 +139,7 @@ odtwarzającym błąd przed poprawką.
 - [ ] Konsola Minecrafta w output: logi na żywo, wpisany tekst wykonywany jako komenda od gracza. DECYZJA: zakres (sama wysyłka i logi, czy od razu podpowiedzi komend).
 
 ### P2: konfiguracja
-- [ ] Ctrl+Z i Ctrl+Shift+Z konfigurowalne w ustawieniach.
+- [x] Ctrl+Z i Ctrl+Shift+Z konfigurowalne w ustawieniach.
 
 ### P2: komendy klienta
 - [ ] Komenda clientside `/quill` otwiera menu IDE.

@@ -160,7 +160,9 @@ public final class QuillClientConfig {
 		RELOAD_DATAPACKS("reload_datapacks", "Reload Datapacks", KeyShortcut.ofChar(true, false, false, 'r')),
 		ZOOM_IN("zoom_in", "Zoom In UI", KeyShortcut.ofChar(true, false, false, '=')),
 		ZOOM_OUT("zoom_out", "Zoom Out UI", KeyShortcut.ofChar(true, false, false, '-')),
-		ZOOM_RESET("zoom_reset", "Reset UI Zoom", KeyShortcut.ofChar(true, false, false, '0'));
+		ZOOM_RESET("zoom_reset", "Reset UI Zoom", KeyShortcut.ofChar(true, false, false, '0')),
+		UNDO("undo", "Undo", KeyShortcut.ofChar(true, false, false, 'z')),
+		REDO("redo", "Redo", KeyShortcut.ofChar(true, true, false, 'z'));
 
 		private final String id;
 		private final String label;

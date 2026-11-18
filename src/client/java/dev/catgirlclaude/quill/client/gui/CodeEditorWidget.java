@@ -662,8 +662,11 @@ public final class CodeEditorWidget {
 			}
 			return true;
 		}
-		if (ctrl && !event.hasAltDown() && event.shortcutKey() == InputConstants.KEYCODE_Z) {
-			boolean changed = shift ? buffer.redo() : buffer.undo();
+		QuillClientConfig cfg = QuillClientConfig.current();
+		boolean redoShortcut = cfg.shortcut(QuillClientConfig.ShortcutAction.REDO).matches(event);
+		boolean undoShortcut = cfg.shortcut(QuillClientConfig.ShortcutAction.UNDO).matches(event);
+		if (redoShortcut || undoShortcut) {
+			boolean changed = redoShortcut ? buffer.redo() : buffer.undo();
 			if (changed) {
 				dismissAutocomplete();
 				touchCaret();

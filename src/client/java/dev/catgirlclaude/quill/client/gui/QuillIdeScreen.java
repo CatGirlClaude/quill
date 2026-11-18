@@ -827,6 +827,11 @@ public class QuillIdeScreen extends Screen {
 		QuillDraw.fill(graphics, sidebar.x(), sidebar.y(), sidebar.width(), sidebar.height(), QuillTheme.BG_SIDEBAR);
 		QuillDraw.vLine(graphics, sidebar.right() - 1, sidebar.y(), sidebar.height(), QuillTheme.BORDER_SUBTLE);
 
+		if (settingsOpen) {
+			settingsPanel.renderCategorySidebar(graphics, font, sidebar, mouseX, mouseY);
+			return;
+		}
+
 		switch (session.sidebarView()) {
 			case EXPLORER -> explorerTree.render(graphics, font, sidebar, mouseX, mouseY);
 			case SEARCH -> searchSidebar.render(graphics, font, sidebar, mouseX, mouseY);
@@ -1475,6 +1480,13 @@ public class QuillIdeScreen extends Screen {
 				return true;
 			}
 			if (lastSidebarRect.contains(mx, my)) {
+				if (settingsOpen) {
+					if (settingsPanel.mouseClickedSidebar(ev)) {
+						sidebarFocused = true;
+						syncTextInputState();
+						return true;
+					}
+				}
 				OpenTabState prevTab = session.activeTab();
 				int prevTabCount = session.openTabs().size();
 				boolean handled = switch (session.sidebarView()) {
@@ -1813,15 +1825,18 @@ public class QuillIdeScreen extends Screen {
 			if (active != null && codeEditorWidget.keyPressed(event, font, active)) {
 				return true;
 			}
-		} else if (event.hasControlDownWithQuirk() && !event.hasAltDown()
-				&& (event.shortcutKey() == InputConstants.KEYCODE_Z || event.key() == InputConstants.KEY_Z)) {
-			if (event.hasShiftDown()) {
-				session.redoFileOperation();
-			} else {
-				session.undoFileOperation();
+		} else {
+			boolean redoMatch = cfg.shortcut(QuillClientConfig.ShortcutAction.REDO).matches(event);
+			boolean undoMatch = cfg.shortcut(QuillClientConfig.ShortcutAction.UNDO).matches(event);
+			if (redoMatch || undoMatch) {
+				if (redoMatch) {
+					session.redoFileOperation();
+				} else {
+					session.undoFileOperation();
+				}
+				syncTextInputState();
+				return true;
 			}
-			syncTextInputState();
-			return true;
 		}
 		if (event.isEscape() && shouldCloseOnEsc()) {
 			return super.keyPressed(event);

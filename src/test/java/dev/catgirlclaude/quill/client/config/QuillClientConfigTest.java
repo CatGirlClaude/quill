@@ -136,12 +136,14 @@ class QuillClientConfigTest {
 		assertNotEquals(darkEditorBg, QuillTheme.BG_EDITOR);
 		assertEquals(QuillColorPalette.LIGHT_PLUS.bgEditor(), QuillTheme.BG_EDITOR);
 
-		assertEquals(7, QuillColorPalette.all().size());
+		assertEquals(12, QuillColorPalette.all().size());
 		for (QuillColorPalette p : QuillColorPalette.all()) {
 			cfg.setThemeId(p.id());
 			assertEquals(p.id(), cfg.palette().id());
 			assertEquals(p.accentBlue(), QuillTheme.ACCENT_BLUE);
 		}
+		assertEquals("Ctrl+Z", cfg.shortcut(QuillClientConfig.ShortcutAction.UNDO).displayLabel());
+		assertEquals("Ctrl+Shift+Z", cfg.shortcut(QuillClientConfig.ShortcutAction.REDO).displayLabel());
 	}
 
 	@Test

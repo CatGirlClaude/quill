@@ -352,6 +352,16 @@ public final class SingleLineTextInput {
 		return lastBoxRect;
 	}
 
+	public static int computeTextY(int rectY, int rectHeight, int fontLineHeight) {
+		int centered = (rectHeight - fontLineHeight) / 2;
+		int offset = Math.max(1, centered - (rectHeight <= 16 ? 1 : 0));
+		return rectY + offset;
+	}
+
+	public static IdeLayout.Rect computeClipRect(IdeLayout.Rect rect) {
+		return new IdeLayout.Rect(rect.x() + 2, rect.y() + 1, Math.max(0, rect.width() - 4), Math.max(0, rect.height() - 2));
+	}
+
 	public void render(
 			GuiGraphicsExtractor graphics,
 			Font font,
@@ -377,10 +387,10 @@ public final class SingleLineTextInput {
 		int totalW = QuillDraw.textWidth(font, str);
 		scrollX = Math.max(0, Math.min(Math.max(0, totalW - innerW + 6), scrollX));
 
-		int textY = rect.y() + (rect.height() - font.lineHeight) / 2;
+		int textY = computeTextY(rect.y(), rect.height(), font.lineHeight);
 		int drawX = rect.x() + padX - scrollX;
 
-		QuillDraw.beginClip(graphics, new IdeLayout.Rect(rect.x() + 2, rect.y() + 1, Math.max(0, rect.width() - 4), Math.max(0, rect.height() - 2)));
+		QuillDraw.beginClip(graphics, computeClipRect(rect));
 		if (hasSelection() && focused) {
 			int selS = selectionStart();
 			int selE = selectionEnd();

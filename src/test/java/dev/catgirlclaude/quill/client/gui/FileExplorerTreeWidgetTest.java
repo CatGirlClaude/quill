@@ -38,4 +38,26 @@ class FileExplorerTreeWidgetTest {
 		assertTrue(ops.indexOf("FILL") < ops.indexOf("GUIDE"),
 				"Selection background fill must also happen BEFORE indent guides: " + ops);
 	}
+
+	@Test
+	void inlineFileInputLeavesClearanceForUnderscoreAndSizesCompactly() {
+		// Inside a wide sidebar (maxBoxW = 240) for "new_fn.mcfunction" (~95px text width),
+		// the focus border should hug the filename comfortably instead of stretching to 240px.
+		IdeLayout.Rect box = FileExplorerTreeWidget.computeInlineBoxRect(30, 100, 240, 95);
+		assertTrue(box.width() < 200,
+				"Inline input focus frame should wrap content compactly when short, was: " + box.width());
+
+		// TTF fonts in assets/quill/font/*.json apply shift [0, +1] downward; underscore sits at bottom of 9px line + 1px shift.
+		int lineHeight = 9;
+		int ttfVerticalShift = 1;
+		int textY = dev.catgirlclaude.quill.client.editor.SingleLineTextInput.computeTextY(box.y(), box.height(), lineHeight);
+		IdeLayout.Rect clip = dev.catgirlclaude.quill.client.editor.SingleLineTextInput.computeClipRect(box);
+		int bottomOutlineY = box.bottom() - 1;
+		int underscoreBottomY = textY + lineHeight + ttfVerticalShift;
+
+		assertTrue(underscoreBottomY < bottomOutlineY,
+				"Underscore glyph (y=" + underscoreBottomY + ") must stay strictly above bottom focus outline (y=" + bottomOutlineY + ").");
+		assertTrue(underscoreBottomY <= clip.bottom() - 1,
+				"Underscore glyph (y=" + underscoreBottomY + ") must not be sliced by bottom scissor clip (" + clip.bottom() + ").");
+	}
 }

@@ -24,7 +24,7 @@ import java.util.function.Consumer;
  * inline renaming, and deleting files and folders directly inside the explorer tree.
  */
 public final class FileExplorerTreeWidget {
-	private static final int ROW_HEIGHT = 15;
+	private static final int ROW_HEIGHT = 17;
 	private static final int TOOLBAR_HEIGHT = 18;
 
 	public enum InlineEditKind {
@@ -279,8 +279,9 @@ public final class FileExplorerTreeWidget {
 					QuillDraw.text(graphics, font, icon, indentX, textY, iconColor);
 
 					int boxX = indentX + QuillDraw.textWidth(font, icon);
-					int boxW = Math.max(36, listRect.right() - boxX - 6);
-					edit.boxRect = new IdeLayout.Rect(boxX, ry + 1, boxW, ROW_HEIGHT - 2);
+					int maxBoxW = Math.max(36, listRect.right() - boxX - 6);
+					int contentW = Math.max(QuillDraw.textWidth(font, edit.input.text()), QuillDraw.textWidth(font, edit.placeholder()));
+					edit.boxRect = computeInlineBoxRect(boxX, ry, maxBoxW, contentW);
 					edit.input.render(graphics, font, edit.boxRect, edit.placeholder(), true);
 					if (edit.validationError != null) {
 						QuillDraw.outline(graphics, edit.boxRect.x(), edit.boxRect.y(), edit.boxRect.width(), edit.boxRect.height(), QuillTheme.BG_STATUS_ERROR);
@@ -361,6 +362,12 @@ public final class FileExplorerTreeWidget {
 			int gx = listRect.x() + 8 + g * 10;
 			target.drawIndentGuide(gx, ry, ROW_HEIGHT, QuillTheme.BORDER_SUBTLE);
 		}
+	}
+
+	static IdeLayout.Rect computeInlineBoxRect(int boxX, int ry, int maxBoxW, int contentWidth) {
+		int desiredW = Math.max(88, contentWidth + 20);
+		int width = Math.max(Math.min(maxBoxW, 88), Math.min(maxBoxW, desiredW));
+		return new IdeLayout.Rect(boxX, ry + 1, width, ROW_HEIGHT - 2);
 	}
 
 	public boolean mouseClicked(MouseButtonEvent event) {

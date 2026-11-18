@@ -53,6 +53,7 @@ public class QuillIdeScreen extends Screen {
 	private final WorkspaceFileCache workspaceFileCache = new WorkspaceFileCache();
 	private final FileExplorerTreeWidget explorerTree;
 	private final SearchSidebarWidget searchSidebar;
+	private final InspectorSidebarWidget inspectorSidebar;
 	private final QuickActionsAndPresetsWidget quickActions;
 	private final EditorTabBarWidget tabBarWidget;
 	private final CodeEditorWidget codeEditorWidget;
@@ -67,6 +68,7 @@ public class QuillIdeScreen extends Screen {
 	private IdeLayout.Rect closeBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect explorerIconRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect searchIconRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect inspectorIconRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect presetsIconRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect saveReloadBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect reloadBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
@@ -86,6 +88,7 @@ public class QuillIdeScreen extends Screen {
 		this.textInputBridge = Objects.requireNonNull(textInputBridge, "textInputBridge");
 		this.explorerTree = new FileExplorerTreeWidget(session, this::openModal, this::closeModal);
 		this.searchSidebar = new SearchSidebarWidget(session, workspaceFileCache, this::openModal, this::closeModal);
+		this.inspectorSidebar = new InspectorSidebarWidget(session, workspaceFileCache);
 		this.quickActions = new QuickActionsAndPresetsWidget(session, this::openModal, this::closeModal);
 		this.tabBarWidget = new EditorTabBarWidget(session, this::openModal, this::closeModal);
 		this.codeEditorWidget = new CodeEditorWidget();
@@ -102,6 +105,10 @@ public class QuillIdeScreen extends Screen {
 
 	SearchSidebarWidget searchSidebar() {
 		return searchSidebar;
+	}
+
+	InspectorSidebarWidget inspectorSidebar() {
+		return inspectorSidebar;
 	}
 
 	protected void openModal(ModalPromptOverlay modal) {
@@ -146,6 +153,14 @@ public class QuillIdeScreen extends Screen {
 		OpenTabState active = session.activeTab();
 		String selected = (active != null && active.buffer().hasSelection()) ? active.buffer().getSelectedText() : null;
 		searchSidebar.focusSearchInput(selected);
+		syncTextInputState();
+	}
+
+	protected void openInspectorSidebar(boolean invalidateCache) {
+		this.codeEditorWidget.dismissAutocomplete();
+		this.searchSidebar.unfocus();
+		session.setSidebarView(ClientEditorSession.SidebarView.INSPECTOR);
+		inspectorSidebar.refresh(invalidateCache);
 		syncTextInputState();
 	}
 
@@ -350,7 +365,8 @@ public class QuillIdeScreen extends Screen {
 		int iconSize = bar.width() - 2;
 		explorerIconRect = new IdeLayout.Rect(bar.x(), bar.y() + 4, iconSize, 26);
 		searchIconRect = new IdeLayout.Rect(bar.x(), explorerIconRect.bottom() + 4, iconSize, 26);
-		presetsIconRect = new IdeLayout.Rect(bar.x(), searchIconRect.bottom() + 4, iconSize, 26);
+		inspectorIconRect = new IdeLayout.Rect(bar.x(), searchIconRect.bottom() + 4, iconSize, 26);
+		presetsIconRect = new IdeLayout.Rect(bar.x(), inspectorIconRect.bottom() + 4, iconSize, 26);
 
 		drawActivityButton(graphics, explorerIconRect, "E",
 				!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER,
@@ -358,12 +374,16 @@ public class QuillIdeScreen extends Screen {
 		drawActivityButton(graphics, searchIconRect, "S",
 				!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.SEARCH,
 				searchIconRect.contains(mouseX, mouseY));
+		drawActivityButton(graphics, inspectorIconRect, "I",
+				!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.INSPECTOR,
+				inspectorIconRect.contains(mouseX, mouseY));
 		drawActivityButton(graphics, presetsIconRect, "P",
 				!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.PRESETS,
 				presetsIconRect.contains(mouseX, mouseY));
 
 		if (explorerIconRect.contains(mouseX, mouseY)
 				|| searchIconRect.contains(mouseX, mouseY)
+				|| inspectorIconRect.contains(mouseX, mouseY)
 				|| presetsIconRect.contains(mouseX, mouseY)) {
 			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 		}
@@ -387,7 +407,8 @@ public class QuillIdeScreen extends Screen {
 		switch (session.sidebarView()) {
 			case EXPLORER -> explorerTree.render(graphics, font, sidebar, mouseX, mouseY);
 			case SEARCH -> searchSidebar.render(graphics, font, sidebar, mouseX, mouseY);
-			default -> quickActions.render(graphics, font, sidebar, mouseX, mouseY);
+			case INSPECTOR -> inspectorSidebar.render(graphics, font, sidebar, mouseX, mouseY);
+			case PRESETS -> quickActions.render(graphics, font, sidebar, mouseX, mouseY);
 		}
 	}
 
@@ -570,6 +591,12 @@ public class QuillIdeScreen extends Screen {
 				"view_search", "Search: Find & Replace in Files", "Search across all datapack files", "Ctrl+Shift+F",
 				"Search: Find & Replace in Files grep workspace", this::openSearchSidebar));
 		items.add(new QuickPickOverlay.PickItem(
+				"view_inspector", "View: Show Macro & Scoreboard Inspector", "Inspect scoreboard objectives, storage, and macros", "",
+				"View: Show Macro & Scoreboard Inspector variables storage", () -> openInspectorSidebar(false)));
+		items.add(new QuickPickOverlay.PickItem(
+				"rescan_inspector", "Inspector: Rescan Datapacks", "Refresh scoreboard, storage, and macro index", "",
+				"Inspector: Rescan Datapacks refresh variables", () -> openInspectorSidebar(true)));
+		items.add(new QuickPickOverlay.PickItem(
 				"view_presets", "View: Show Presets & Quick Actions", "Focus Presets sidebar", "",
 				"View: Show Presets Quick Actions templates", () -> session.setSidebarView(ClientEditorSession.SidebarView.PRESETS)));
 		items.add(new QuickPickOverlay.PickItem(
@@ -664,6 +691,15 @@ public class QuillIdeScreen extends Screen {
 				}
 				return true;
 			}
+			if (inspectorIconRect.contains(mx, my)) {
+				if (!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.INSPECTOR) {
+					session.toggleSidebarCollapsed();
+					syncTextInputState();
+				} else {
+					openInspectorSidebar(false);
+				}
+				return true;
+			}
 			if (presetsIconRect.contains(mx, my)) {
 				if (!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.PRESETS) {
 					session.toggleSidebarCollapsed();
@@ -677,7 +713,8 @@ public class QuillIdeScreen extends Screen {
 				boolean handled = switch (session.sidebarView()) {
 					case EXPLORER -> explorerTree.mouseClicked(event);
 					case SEARCH -> searchSidebar.mouseClicked(event);
-					default -> quickActions.mouseClicked(event);
+					case INSPECTOR -> inspectorSidebar.mouseClicked(event);
+					case PRESETS -> quickActions.mouseClicked(event);
 				};
 				syncTextInputState();
 				if (handled) {
@@ -763,7 +800,8 @@ public class QuillIdeScreen extends Screen {
 			boolean handled = switch (session.sidebarView()) {
 				case EXPLORER -> explorerTree.mouseScrolled(mouseX, mouseY, scrollY);
 				case SEARCH -> searchSidebar.mouseScrolled(mouseX, mouseY, scrollY);
-				default -> quickActions.mouseScrolled(mouseX, mouseY, scrollY);
+				case INSPECTOR -> inspectorSidebar.mouseScrolled(mouseX, mouseY, scrollY);
+				case PRESETS -> quickActions.mouseScrolled(mouseX, mouseY, scrollY);
 			};
 			if (handled) {
 				return true;

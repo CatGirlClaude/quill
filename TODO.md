@@ -41,7 +41,7 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] Enforce server-side permission checks (operator permission level >= 2 or dedicated Quill ACL), path traversal guards, rate limits, and payload size caps.
 - [x] Support chunked file transfers and optimistic concurrency (`sha256` revision hashes).
 
-## Phase 4: IDE Productivity & Language Features (In Progress)
+## Phase 4: IDE Productivity & Language Features (Completed)
 
 - [x] **`.mcfunction` & `.json` Syntax Highlighting**: Tokenize command names, `execute` subcommands, selectors (`@a`, `@e[...]`), coordinates (`~ ~ ~`, `^ ^ ^`), SNBT payloads, identifiers, comments (`#`), macro lines (`$`, `$(var)`), and JSON keys/values with VS Code Dark+ colors.
 - [x] **Brigadier Command Autocomplete & Hover Signatures**: Query the client's live `CommandDispatcher` tree to show real-time argument suggestions (`Tab`/`Enter` to accept, `Ctrl+Space` to invoke) and syntax usage tooltips at the cursor/hover position.
@@ -49,7 +49,7 @@ Single source of truth for project progress, planned tasks, optional feature pro
 - [x] **Quick Open File Switcher (`Ctrl+P`)**: Fuzzy filename search across all datapacks in the current world (with seamless `>` toggle to Command Palette).
 - [x] **Integrated Reload & Function Output Log Panel**: Bottom panel (VS Code `PROBLEMS` / `OUTPUT` tabs, toggleable via `Ctrl+J`) displaying scrollable datapack parse exceptions with clickable line jump, live reload/command output log, and a "Run Function Now (`/function ...`)" button.
 - [x] **Search & Replace Across Files (`Ctrl+Shift+F`)**: Full-text (plain/case-sensitive/regex) search and replace across all `.mcfunction` and `.json` files in `datapacks/`, honoring live unsaved tab buffers and undo history.
-- [ ] **Macro & Scoreboard Variable Inspector**: Sidebar panel listing detected scoreboard objectives, storage namespaces/keys, and macro parameters used across datapacks with click-to-jump occurrences.
+- [x] **Macro & Scoreboard Variable Inspector**: Sidebar panel listing detected scoreboard objectives, storage namespaces/keys, and macro parameters used across datapacks with click-to-jump occurrences.
 - [x] **JSON Schema Templates for Other Datapack Registries**: Expand the resource-driven preset system beyond function tags (`minecraft:load`, `minecraft:tick`) to include MC `26.3`-valid shaped/shapeless recipes, loot tables, advancements, and predicates.
 
 ## Proposals (Propozycje)

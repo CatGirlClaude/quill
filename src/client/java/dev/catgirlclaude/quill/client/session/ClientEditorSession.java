@@ -93,6 +93,9 @@ public final class ClientEditorSession {
 	public record NotificationBanner(String message, NotificationLevel level, boolean autoHide, long createdAtMs) {
 	}
 
+	public record ExplorerClipboard(String sourcePath, boolean cut) {
+	}
+
 	public record OutputLogEntry(String timestamp, LogLevel level, String message) {
 	}
 
@@ -107,6 +110,7 @@ public final class ClientEditorSession {
 	private final EditorBackend backend;
 	private final Executor uiExecutor;
 	private final String backendLabel;
+	private final java.nio.file.Path localDatapacksRoot;
 	private final List<OpenTabState> openTabs = new ArrayList<>();
 	private final Set<String> expandedPaths = new HashSet<>();
 	private final List<OutputLogEntry> outputLog = new ArrayList<>();
@@ -119,6 +123,8 @@ public final class ClientEditorSession {
 	private FileTreeNode rootTree = new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of());
 	private List<PresetDescriptor> presets = List.of();
 	private int activeTabIndex = -1;
+	private String secondaryTabPath = null;
+	private ExplorerClipboard explorerClipboard = null;
 	private String selectedTreePath = "";
 	private ReloadReport lastReloadReport = null;
 	private PendingConflict pendingConflict = null;
@@ -136,21 +142,35 @@ public final class ClientEditorSession {
 	private boolean reloadPendingOnClose = false;
 
 	public ClientEditorSession(EditorBackend backend) {
-		this(backend, task -> Minecraft.getInstance().execute(task), "Local");
+		this(backend, task -> Minecraft.getInstance().execute(task), "Local", null);
 	}
 
 	public ClientEditorSession(EditorBackend backend, String backendLabel) {
-		this(backend, task -> Minecraft.getInstance().execute(task), backendLabel);
+		this(backend, task -> Minecraft.getInstance().execute(task), backendLabel, null);
+	}
+
+	public ClientEditorSession(EditorBackend backend, String backendLabel, java.nio.file.Path localDatapacksRoot) {
+		this(backend, task -> Minecraft.getInstance().execute(task), backendLabel, localDatapacksRoot);
 	}
 
 	public ClientEditorSession(EditorBackend backend, Executor uiExecutor) {
-		this(backend, uiExecutor, "Local");
+		this(backend, uiExecutor, "Local", null);
 	}
 
 	public ClientEditorSession(EditorBackend backend, Executor uiExecutor, String backendLabel) {
+		this(backend, uiExecutor, backendLabel, null);
+	}
+
+	public ClientEditorSession(
+			EditorBackend backend,
+			Executor uiExecutor,
+			String backendLabel,
+			java.nio.file.Path localDatapacksRoot
+	) {
 		this.backend = Objects.requireNonNull(backend, "backend");
 		this.uiExecutor = Objects.requireNonNull(uiExecutor, "uiExecutor");
 		this.backendLabel = (backendLabel == null || backendLabel.isBlank()) ? "Local" : backendLabel;
+		this.localDatapacksRoot = localDatapacksRoot != null ? localDatapacksRoot.toAbsolutePath().normalize() : null;
 		this.expandedPaths.add("");
 		appendOutput(LogLevel.INFO, "Quill session started (" + this.backendLabel + ")");
 	}
@@ -161,6 +181,37 @@ public final class ClientEditorSession {
 
 	public String backendLabel() {
 		return backendLabel;
+	}
+
+	public boolean isLocalWorkspace() {
+		return localDatapacksRoot != null;
+	}
+
+	public java.nio.file.Path resolveLocalPathForReveal(String relativePath) {
+		if (localDatapacksRoot == null) {
+			return null;
+		}
+		if (relativePath == null || relativePath.isBlank()) {
+			return localDatapacksRoot;
+		}
+		try {
+			PathSandbox sandbox = new PathSandbox(localDatapacksRoot);
+			String normalized = sandbox.normalizeRelativePath(relativePath);
+			java.nio.file.Path target = localDatapacksRoot.resolve(normalized).normalize();
+			if (!target.startsWith(localDatapacksRoot)) {
+				return localDatapacksRoot;
+			}
+			if (java.nio.file.Files.isDirectory(target)) {
+				return target;
+			}
+			java.nio.file.Path parent = target.getParent();
+			if (parent != null && java.nio.file.Files.exists(parent)) {
+				return parent;
+			}
+			return localDatapacksRoot;
+		} catch (RuntimeException e) {
+			return localDatapacksRoot;
+		}
 	}
 
 	public void setCommandDispatcher(Consumer<String> commandDispatcher) {
@@ -366,13 +417,26 @@ public final class ClientEditorSession {
 			setError("No active file to run.");
 			return;
 		}
-		String fnId = DatapackScaffolder.inferFunctionId(tab.relativePath());
+		runFunction(tab.relativePath());
+	}
+
+	/**
+	 * Runs any {@code .mcfunction} file under {@code data/<namespace>/function/*.mcfunction}.
+	 * If currently open and dirty, saves and reloads first before running.
+	 */
+	public void runFunction(String relativePath) {
+		if (relativePath == null || relativePath.isBlank()) {
+			setError("No file selected to run.");
+			return;
+		}
+		String fnId = DatapackScaffolder.inferFunctionId(relativePath);
 		if (fnId == null) {
-			setError("Active file is not under data/<namespace>/function/*.mcfunction.");
+			setError("File is not under data/<namespace>/function/*.mcfunction.");
 			return;
 		}
 		openBottomPanel(BottomPanelTab.OUTPUT);
-		if (tab.isDirty()) {
+		OpenTabState tab = findOpenTab(relativePath);
+		if (tab != null && tab.isDirty()) {
 			appendOutput(LogLevel.INFO, "Saving & reloading before running /function " + fnId + "...");
 			saveTabInternal(tab, tab.sha256(), true, () -> dispatchFunctionCommand(fnId));
 		} else {
@@ -450,11 +514,66 @@ public final class ClientEditorSession {
 		}
 	}
 
+	public OpenTabState secondaryTab() {
+		if (secondaryTabPath == null || secondaryTabPath.isEmpty()) {
+			return null;
+		}
+		return findOpenTab(secondaryTabPath);
+	}
+
+	public void closeSideEditor() {
+		this.secondaryTabPath = null;
+	}
+
+	public void openFileToSide(String relativePath) {
+		if (relativePath == null || relativePath.isBlank()) {
+			return;
+		}
+		if (!PathSandbox.hasAllowedExtension(relativePath)) {
+			openFile(relativePath);
+			return;
+		}
+		OpenTabState existing = findOpenTab(relativePath);
+		if (existing != null) {
+			if (activeTabIndex < 0) {
+				activeTabIndex = openTabs.indexOf(existing);
+			}
+			this.secondaryTabPath = existing.relativePath();
+			setStatus("Opened to side: " + existing.fileName(), false);
+			return;
+		}
+
+		setStatus("Opening " + relativePath + " to side...", false);
+		backend.readFile(relativePath).whenComplete((doc, error) -> runOnClient(() -> {
+			if (error != null) {
+				setError("Open failed: " + unwrapMessage(error));
+				return;
+			}
+			OpenTabState already = findOpenTab(doc.relativePath());
+			OpenTabState tab;
+			if (already != null) {
+				tab = already;
+			} else {
+				tab = new OpenTabState(doc);
+				openTabs.add(tab);
+				if (activeTabIndex < 0) {
+					activeTabIndex = openTabs.size() - 1;
+				}
+				expandAncestors(doc.relativePath());
+			}
+			this.secondaryTabPath = tab.relativePath();
+			setStatus("Opened to side: " + tab.fileName(), false);
+		}));
+	}
+
 	public void closeTab(int index) {
 		if (index < 0 || index >= openTabs.size()) {
 			return;
 		}
-		openTabs.remove(index);
+		OpenTabState removed = openTabs.remove(index);
+		if (removed != null && removed.relativePath().equals(secondaryTabPath)) {
+			secondaryTabPath = null;
+		}
 		if (openTabs.isEmpty()) {
 			activeTabIndex = -1;
 		} else if (activeTabIndex >= openTabs.size()) {
@@ -1094,6 +1213,128 @@ public final class ClientEditorSession {
 		);
 	}
 
+	public ExplorerClipboard explorerClipboard() {
+		return explorerClipboard;
+	}
+
+	public boolean isCutEntry(String relativePath) {
+		return explorerClipboard != null
+				&& explorerClipboard.cut()
+				&& relativePath != null
+				&& (relativePath.equals(explorerClipboard.sourcePath())
+				|| relativePath.startsWith(explorerClipboard.sourcePath() + "/"));
+	}
+
+	public void copyTreeEntryToClipboard(String relativePath) {
+		if (relativePath == null || relativePath.isBlank()) {
+			return;
+		}
+		this.explorerClipboard = new ExplorerClipboard(relativePath, false);
+		setStatus("Copied " + fileNameOf(relativePath), false);
+	}
+
+	public void cutTreeEntryToClipboard(String relativePath) {
+		if (relativePath == null || relativePath.isBlank()) {
+			return;
+		}
+		this.explorerClipboard = new ExplorerClipboard(relativePath, true);
+		setStatus("Cut " + fileNameOf(relativePath), false);
+	}
+
+	public void clearExplorerClipboard() {
+		this.explorerClipboard = null;
+	}
+
+	public CompletableFuture<Void> pasteClipboard(String targetDirectory) {
+		ExplorerClipboard clip = this.explorerClipboard;
+		if (clip == null || clip.sourcePath().isBlank()) {
+			return CompletableFuture.completedFuture(null);
+		}
+		String sourcePath = clip.sourcePath();
+		FileTreeNode sourceNode = findTreeNode(rootTree, sourcePath);
+		if (sourceNode == null) {
+			this.explorerClipboard = null;
+			setError("Clipboard source no longer exists: " + sourcePath);
+			return CompletableFuture.completedFuture(null);
+		}
+		String dir = targetDirectory == null ? "" : targetDirectory;
+		if (dir.isEmpty() && sourceNode.kind() != EntryKind.DATAPACK) {
+			setError("Select a datapack or folder as paste destination.");
+			return CompletableFuture.completedFuture(null);
+		}
+		String baseName = fileNameOf(sourcePath);
+
+		if (clip.cut()) {
+			if (dir.equals(sourcePath) || dir.startsWith(sourcePath + "/")) {
+				setError("Cannot move a folder inside itself.");
+				return CompletableFuture.completedFuture(null);
+			}
+			String targetPath = dir.isEmpty() ? baseName : dir + "/" + baseName;
+			if (targetPath.equals(sourcePath)) {
+				this.explorerClipboard = null;
+				setStatus("Moved " + baseName, false);
+				return CompletableFuture.completedFuture(null);
+			}
+			if (findTreeNode(rootTree, targetPath) != null) {
+				setError("Target already exists: " + targetPath);
+				return CompletableFuture.completedFuture(null);
+			}
+			this.explorerClipboard = null;
+			return renameEntry(sourcePath, targetPath);
+		}
+
+		String targetPath = computeUniqueCopyPath(rootTree, dir, baseName);
+		busy = true;
+		return snapshotSubtree(sourcePath).thenCompose(snapshot -> {
+			List<FileSnapshotEntry> remapped = new ArrayList<>(snapshot.size());
+			for (FileSnapshotEntry entry : snapshot) {
+				String suffix = entry.path().equals(sourcePath)
+						? ""
+						: entry.path().substring(sourcePath.length());
+				String destPath = targetPath + suffix;
+				EntryKind destKind = entry.kind();
+				if (entry.path().equals(sourcePath)) {
+					destKind = dir.isEmpty()
+							? EntryKind.DATAPACK
+							: (entry.kind() == EntryKind.DATAPACK ? EntryKind.DIRECTORY : entry.kind());
+				}
+				remapped.add(new FileSnapshotEntry(destPath, destKind, entry.content()));
+			}
+			EntryKind rootKind = remapped.isEmpty() ? sourceNode.kind() : remapped.getFirst().kind();
+			CreateFileOp op = new CreateFileOp(targetPath, rootKind);
+			op.snapshot = List.copyOf(remapped);
+			pushFileUndo(op);
+			return restoreSubtree(remapped, targetPath, "Copied to " + targetPath);
+		});
+	}
+
+	static String computeUniqueCopyPath(FileTreeNode rootTree, String targetDir, String sourceName) {
+		String prefix = (targetDir == null || targetDir.isEmpty()) ? "" : targetDir + "/";
+		String candidate = prefix + sourceName;
+		if (findTreeNode(rootTree, candidate) == null) {
+			return candidate;
+		}
+		int dot = sourceName.lastIndexOf('.');
+		String stem = dot > 0 ? sourceName.substring(0, dot) : sourceName;
+		String ext = dot > 0 ? sourceName.substring(dot) : "";
+		for (int i = 1; i < 10_000; i++) {
+			String suffix = i == 1 ? "_copy" : "_copy" + i;
+			String next = prefix + stem + suffix + ext;
+			if (findTreeNode(rootTree, next) == null) {
+				return next;
+			}
+		}
+		return prefix + stem + "_copy" + System.currentTimeMillis() + ext;
+	}
+
+	private static String fileNameOf(String path) {
+		if (path == null) {
+			return "";
+		}
+		int slash = path.lastIndexOf('/');
+		return slash >= 0 ? path.substring(slash + 1) : path;
+	}
+
 	public boolean canUndoFileOperation() {
 		return !fileUndoStack.isEmpty();
 	}
@@ -1260,7 +1501,7 @@ public final class ClientEditorSession {
 				});
 	}
 
-	private void restoreSubtree(List<FileSnapshotEntry> entries, String rootPath, String statusMsg) {
+	private CompletableFuture<Void> restoreSubtree(List<FileSnapshotEntry> entries, String rootPath, String statusMsg) {
 		CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
 		for (FileSnapshotEntry entry : entries) {
 			chain = chain.thenCompose(ignored -> {
@@ -1272,7 +1513,7 @@ public final class ClientEditorSession {
 				return created;
 			});
 		}
-		chain.whenComplete((ignored, error) -> runOnClient(() -> {
+		return chain.whenComplete((ignored, error) -> runOnClient(() -> {
 			busy = false;
 			if (error != null) {
 				setError("Restore failed: " + unwrapMessage(error));

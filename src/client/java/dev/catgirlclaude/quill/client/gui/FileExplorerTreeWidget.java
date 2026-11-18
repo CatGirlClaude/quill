@@ -1,11 +1,13 @@
 package dev.catgirlclaude.quill.client.gui;
 
+import com.mojang.blaze3d.Blaze3D;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
 import dev.catgirlclaude.quill.api.EntryKind;
 import dev.catgirlclaude.quill.api.FileTreeNode;
 import dev.catgirlclaude.quill.client.editor.SingleLineTextInput;
 import dev.catgirlclaude.quill.client.session.ClientEditorSession;
+import dev.catgirlclaude.quill.preset.DatapackScaffolder;
 import dev.catgirlclaude.quill.security.EditorSecurityException;
 import dev.catgirlclaude.quill.security.PathSandbox;
 import net.minecraft.client.Minecraft;
@@ -15,22 +17,40 @@ import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.Consumer;
 
 /**
  * Interactive VS Code-style datapack tree widget for browsing, inline creating (folders &amp; files),
- * inline renaming, and deleting files and folders directly inside the explorer tree.
+ * inline renaming, keyboard copy/cut/paste/delete, and right-click context menu actions.
  */
 public final class FileExplorerTreeWidget {
+	public static final int HEADER_HEIGHT = 18;
 	private static final int ROW_HEIGHT = QuillTheme.Metrics.EXPLORER_ROW_HEIGHT;
-	private static final int TOOLBAR_HEIGHT = 18;
 
 	public enum InlineEditKind {
 		NEW_FOLDER,
 		NEW_FILE,
 		RENAME
+	}
+
+	public record ContextMenuActions(
+			Runnable openToSide,
+			Runnable runFunction,
+			Runnable revealInFileExplorer,
+			Runnable findFileReferences,
+			Runnable newFile,
+			Runnable newFolder,
+			Runnable cut,
+			Runnable copy,
+			Runnable paste,
+			Runnable copyPath,
+			Runnable rename,
+			Runnable delete
+	) {
 	}
 
 	private sealed interface VisibleRow permits NodeRow, InlineInputRow {
@@ -81,15 +101,17 @@ public final class FileExplorerTreeWidget {
 		}
 	}
 
-	private record ToolbarAction(String label, String tooltip, Runnable action, IdeLayout.Rect rect) {
-	}
-
 	private final ClientEditorSession session;
 	private final Consumer<ModalPromptOverlay> modalOpener;
 	private final Runnable modalCloser;
 
+	private Consumer<ContextMenuOverlay> contextMenuOpener = menu -> {};
+	private Runnable contextMenuDismisser = () -> {};
+	private Consumer<String> findReferencesHandler = query -> {};
+	private Consumer<String> systemClipboardCopier = FileExplorerTreeWidget::copyToMinecraftClipboard;
+	private Consumer<String> revealPathHandler = null;
+
 	private final List<VisibleRow> visibleRows = new ArrayList<>();
-	private final List<ToolbarAction> toolbarActions = new ArrayList<>();
 	private IdeLayout.Rect listRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private int scrollPixels = 0;
 
@@ -104,6 +126,35 @@ public final class FileExplorerTreeWidget {
 		this.session = session;
 		this.modalOpener = modalOpener;
 		this.modalCloser = modalCloser;
+	}
+
+	public void setContextMenuHooks(
+			Consumer<ContextMenuOverlay> contextMenuOpener,
+			Runnable contextMenuDismisser,
+			Consumer<String> findReferencesHandler
+	) {
+		this.contextMenuOpener = contextMenuOpener != null ? contextMenuOpener : menu -> {};
+		this.contextMenuDismisser = contextMenuDismisser != null ? contextMenuDismisser : () -> {};
+		this.findReferencesHandler = findReferencesHandler != null ? findReferencesHandler : q -> {};
+	}
+
+	void setSystemClipboardCopier(Consumer<String> systemClipboardCopier) {
+		this.systemClipboardCopier = systemClipboardCopier != null
+				? systemClipboardCopier
+				: FileExplorerTreeWidget::copyToMinecraftClipboard;
+	}
+
+	void setRevealPathHandler(Consumer<String> revealPathHandler) {
+		this.revealPathHandler = revealPathHandler;
+	}
+
+	public static boolean hasToolbarButtons() {
+		return false;
+	}
+
+	public static IdeLayout.Rect computeListRect(IdeLayout.Rect area) {
+		int listY = area.y() + HEADER_HEIGHT;
+		return new IdeLayout.Rect(area.x(), listY, Math.max(0, area.width() - 1), Math.max(0, area.bottom() - listY));
 	}
 
 	public boolean hasActiveInlineInput() {
@@ -127,15 +178,19 @@ public final class FileExplorerTreeWidget {
 	}
 
 	public void beginInlineCreateFolder() {
-		String baseDir = resolveTargetDirectory();
-		EntryKind kind = baseDir.isEmpty() ? EntryKind.DATAPACK : EntryKind.DIRECTORY;
-		if (!baseDir.isEmpty()) {
-			session.expandAncestors(baseDir + "/dummy");
-			session.expandedPaths().add(baseDir);
+		beginInlineCreateFolderIn(resolveTargetDirectory());
+	}
+
+	public void beginInlineCreateFolderIn(String baseDir) {
+		String dir = baseDir == null ? "" : baseDir;
+		EntryKind kind = dir.isEmpty() ? EntryKind.DATAPACK : EntryKind.DIRECTORY;
+		if (!dir.isEmpty()) {
+			session.expandAncestors(dir + "/dummy");
+			session.expandedPaths().add(dir);
 		}
 		inlineEdit = new InlineEditState(
 				InlineEditKind.NEW_FOLDER,
-				baseDir,
+				dir,
 				null,
 				null,
 				false,
@@ -146,16 +201,20 @@ public final class FileExplorerTreeWidget {
 	}
 
 	public void beginInlineCreateFile() {
-		String baseDir = resolveTargetDirectory();
-		if (baseDir.isEmpty()) {
+		beginInlineCreateFileIn(resolveTargetDirectory());
+	}
+
+	public void beginInlineCreateFileIn(String baseDir) {
+		String dir = baseDir == null ? "" : baseDir;
+		if (dir.isEmpty()) {
 			session.setStatus("Select a datapack or folder first.", true);
 			return;
 		}
-		session.expandAncestors(baseDir + "/dummy");
-		session.expandedPaths().add(baseDir);
+		session.expandAncestors(dir + "/dummy");
+		session.expandedPaths().add(dir);
 		inlineEdit = new InlineEditState(
 				InlineEditKind.NEW_FILE,
-				baseDir,
+				dir,
 				null,
 				null,
 				true,
@@ -200,31 +259,13 @@ public final class FileExplorerTreeWidget {
 	public void render(GuiGraphicsExtractor graphics, Font font, IdeLayout.Rect area, int mouseX, int mouseY) {
 		rebuildVisibleRows();
 
-		// Header
+		// Clean VS Code EXPLORER header without button clutter
 		QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, "EXPLORER", area.width() - 12),
 				area.x() + 6, area.y() + 5, QuillTheme.TEXT_MUTED);
+		QuillDraw.hLine(graphics, area.x(), Math.max(0, area.width() - 1), area.y() + HEADER_HEIGHT - 1, QuillTheme.BORDER_SUBTLE);
 
-		// Compact CRUD Toolbar
-		int toolbarY = area.y() + 17;
-		QuillDraw.fill(graphics, area.x(), toolbarY, area.width() - 1, TOOLBAR_HEIGHT, QuillTheme.BG_TAB_INACTIVE);
-		QuillDraw.hLine(graphics, area.x(), area.width() - 1, toolbarY + TOOLBAR_HEIGHT - 1, QuillTheme.BORDER_SUBTLE);
-
-		buildToolbarActions(font, area.x() + 4, toolbarY + 2, area.width() - 8);
-		for (ToolbarAction btn : toolbarActions) {
-			boolean hover = btn.rect().contains(mouseX, mouseY);
-			QuillDraw.fill(graphics, btn.rect().x(), btn.rect().y(), btn.rect().width(), btn.rect().height(),
-					hover ? QuillTheme.BG_BUTTON : QuillTheme.BG_BUTTON_SECONDARY);
-			int tx = btn.rect().x() + (btn.rect().width() - QuillDraw.textWidth(font, btn.label())) / 2;
-			int ty = btn.rect().y() + (btn.rect().height() - font.lineHeight) / 2;
-			QuillDraw.text(graphics, font, btn.label(), tx, ty, QuillTheme.TEXT_BRIGHT);
-			if (hover) {
-				QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
-			}
-		}
-
-		// Tree list viewport
-		int listY = toolbarY + TOOLBAR_HEIGHT;
-		listRect = new IdeLayout.Rect(area.x(), listY, area.width() - 1, Math.max(0, area.bottom() - listY));
+		// Tree list viewport starts directly below header
+		listRect = computeListRect(area);
 
 		if (pendingScrollToInline && inlineEdit != null) {
 			pendingScrollToInline = false;
@@ -240,7 +281,7 @@ public final class FileExplorerTreeWidget {
 		QuillDraw.beginClip(graphics, listRect);
 		if (visibleRows.isEmpty()) {
 			QuillDraw.text(graphics, font, "No datapacks yet.", listRect.x() + 8, listRect.y() + 8, QuillTheme.TEXT_MUTED);
-			QuillDraw.text(graphics, font, "Click +Dir or open Presets.", listRect.x() + 8, listRect.y() + 22, QuillTheme.TEXT_MUTED);
+			QuillDraw.text(graphics, font, "Right-click or open Presets.", listRect.x() + 8, listRect.y() + 22, QuillTheme.TEXT_MUTED);
 		} else {
 			int firstRow = scrollPixels / ROW_HEIGHT;
 			int lastRow = Math.min(visibleRows.size() - 1, (scrollPixels + listRect.height()) / ROW_HEIGHT);
@@ -294,11 +335,13 @@ public final class FileExplorerTreeWidget {
 					}
 				} else if (row instanceof NodeRow nodeRow) {
 					FileTreeNode node = nodeRow.node();
+					boolean cut = session.isCutEntry(node.relativePath());
 					if (hovered) {
 						QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 					}
 
 					int textY = ry + (ROW_HEIGHT - font.lineHeight) / 2;
+					int labelColor = cut ? QuillTheme.TEXT_MUTED : colorForEntryLabel(selected);
 					if (node.kind() == EntryKind.FILE) {
 						int iconW = QuillDraw.drawFileTypeIcon(graphics, font, node.name(), indentX + 2, ry, ROW_HEIGHT);
 						int nameX = indentX + 2 + iconW + 4;
@@ -307,7 +350,7 @@ public final class FileExplorerTreeWidget {
 						boolean dirty = openTab != null && openTab.isDirty();
 						String displayName = formatFileDisplayName(node.name(), dirty);
 						QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, displayName, maxW),
-								nameX, textY, colorForEntryLabel(selected));
+								nameX, textY, labelColor);
 					} else {
 						boolean expanded = session.isExpanded(node.relativePath());
 						QuillDraw.drawChevron(graphics, indentX - 1, ry, ROW_HEIGHT, expanded, QuillTheme.TEXT_MUTED);
@@ -316,7 +359,7 @@ public final class FileExplorerTreeWidget {
 						int nameX = indentX + 10 + folderW + 4;
 						int maxW = Math.max(0, listRect.right() - nameX - 6);
 						QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, node.name(), maxW),
-								nameX, textY, colorForEntryLabel(selected));
+								nameX, textY, labelColor);
 					}
 				}
 			}
@@ -376,11 +419,27 @@ public final class FileExplorerTreeWidget {
 	}
 
 	public boolean mouseClicked(MouseButtonEvent event) {
+		double mx = event.x();
+		double my = event.y();
+
+		if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+			if (!listRect.contains(mx, my)) {
+				return false;
+			}
+			cancelInlineInput();
+			int idx = ((int) my - listRect.y() + scrollPixels) / ROW_HEIGHT;
+			FileTreeNode clickedNode = null;
+			if (idx >= 0 && idx < visibleRows.size() && visibleRows.get(idx) instanceof NodeRow nodeRow) {
+				clickedNode = nodeRow.node();
+				session.setSelectedTreePath(clickedNode.relativePath());
+			}
+			openContextMenu((int) Math.round(mx), (int) Math.round(my), clickedNode);
+			return true;
+		}
+
 		if (event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
 			return false;
 		}
-		double mx = event.x();
-		double my = event.y();
 
 		if (inlineEdit != null) {
 			if (inlineEdit.boxRect.contains(mx, my)) {
@@ -388,13 +447,6 @@ public final class FileExplorerTreeWidget {
 				return true;
 			}
 			cancelInlineInput();
-		}
-
-		for (ToolbarAction action : toolbarActions) {
-			if (action.rect().contains(mx, my)) {
-				action.action().run();
-				return true;
-			}
 		}
 
 		if (listRect.contains(mx, my)) {
@@ -416,6 +468,173 @@ public final class FileExplorerTreeWidget {
 		return false;
 	}
 
+	private void openContextMenu(int anchorX, int anchorY, FileTreeNode node) {
+		List<ContextMenuOverlay.MenuEntry> entries;
+		if (node != null) {
+			String targetPath = node.relativePath();
+			String parentOrSelfDir = node.kind() == EntryKind.FILE ? parentPathOf(targetPath) : targetPath;
+			ContextMenuActions actions = new ContextMenuActions(
+					() -> session.openFileToSide(targetPath),
+					() -> session.runFunction(targetPath),
+					() -> revealInFileExplorer(targetPath),
+					() -> findReferencesForPath(targetPath),
+					() -> beginInlineCreateFileIn(parentOrSelfDir),
+					() -> beginInlineCreateFolderIn(parentOrSelfDir),
+					() -> session.cutTreeEntryToClipboard(targetPath),
+					() -> session.copyTreeEntryToClipboard(targetPath),
+					() -> session.pasteClipboard(parentOrSelfDir),
+					() -> copyRelativePath(targetPath),
+					() -> {
+						session.setSelectedTreePath(targetPath);
+						beginInlineRename();
+					},
+					() -> {
+						session.setSelectedTreePath(targetPath);
+						promptDeleteSelected();
+					}
+			);
+			entries = buildContextMenuEntries(session, node, actions);
+		} else {
+			String fallbackDir = resolveTargetDirectory();
+			entries = buildEmptySpaceContextMenuEntries(
+					session,
+					fallbackDir,
+					() -> beginInlineCreateFileIn(fallbackDir),
+					() -> beginInlineCreateFolderIn(""),
+					() -> session.pasteClipboard(fallbackDir),
+					() -> revealInFileExplorer(""),
+					session::refreshTree
+			);
+		}
+		contextMenuOpener.accept(new ContextMenuOverlay(anchorX, anchorY, entries, contextMenuDismisser));
+	}
+
+	public static List<ContextMenuOverlay.MenuEntry> buildContextMenuEntries(
+			ClientEditorSession session,
+			FileTreeNode node,
+			ContextMenuActions actions
+	) {
+		List<ContextMenuOverlay.MenuEntry> items = new ArrayList<>();
+		boolean isFile = node.kind() == EntryKind.FILE;
+		boolean canPaste = session.explorerClipboard() != null;
+		boolean canReveal = session.isLocalWorkspace();
+
+		if (isFile) {
+			boolean editable = PathSandbox.hasAllowedExtension(node.relativePath());
+			boolean runnableFn = DatapackScaffolder.inferFunctionId(node.relativePath()) != null;
+			items.add(new ContextMenuOverlay.ActionItem("Open to Side", "", editable, actions.openToSide()));
+			items.add(new ContextMenuOverlay.ActionItem("Run Function", "", runnableFn, actions.runFunction()));
+			items.add(new ContextMenuOverlay.Separator());
+		} else {
+			items.add(new ContextMenuOverlay.ActionItem("New File...", "", true, actions.newFile()));
+			items.add(new ContextMenuOverlay.ActionItem("New Folder...", "", true, actions.newFolder()));
+			items.add(new ContextMenuOverlay.Separator());
+		}
+
+		items.add(new ContextMenuOverlay.ActionItem("Reveal in File Explorer", "", canReveal, actions.revealInFileExplorer()));
+		items.add(new ContextMenuOverlay.ActionItem("Find File References", "", true, actions.findFileReferences()));
+		items.add(new ContextMenuOverlay.Separator());
+
+		if (isFile) {
+			items.add(new ContextMenuOverlay.ActionItem("New File...", "", true, actions.newFile()));
+			items.add(new ContextMenuOverlay.ActionItem("New Folder...", "", true, actions.newFolder()));
+			items.add(new ContextMenuOverlay.Separator());
+		}
+
+		items.add(new ContextMenuOverlay.ActionItem("Cut", "Ctrl+X", true, actions.cut()));
+		items.add(new ContextMenuOverlay.ActionItem("Copy", "Ctrl+C", true, actions.copy()));
+		items.add(new ContextMenuOverlay.ActionItem("Paste", "Ctrl+V", canPaste, actions.paste()));
+		items.add(new ContextMenuOverlay.ActionItem("Copy Path", "", true, actions.copyPath()));
+		items.add(new ContextMenuOverlay.Separator());
+		items.add(new ContextMenuOverlay.ActionItem("Rename", "F2", true, actions.rename()));
+		items.add(new ContextMenuOverlay.ActionItem("Delete", "Del", true, actions.delete()));
+		return List.copyOf(items);
+	}
+
+	private static List<ContextMenuOverlay.MenuEntry> buildEmptySpaceContextMenuEntries(
+			ClientEditorSession session,
+			String fallbackDir,
+			Runnable newFile,
+			Runnable newFolder,
+			Runnable paste,
+			Runnable reveal,
+			Runnable refresh
+	) {
+		List<ContextMenuOverlay.MenuEntry> items = new ArrayList<>();
+		items.add(new ContextMenuOverlay.ActionItem("New Datapack Folder...", "", true, newFolder));
+		items.add(new ContextMenuOverlay.ActionItem("New File...", "", !fallbackDir.isEmpty(), newFile));
+		items.add(new ContextMenuOverlay.Separator());
+		items.add(new ContextMenuOverlay.ActionItem("Paste", "Ctrl+V", session.explorerClipboard() != null, paste));
+		items.add(new ContextMenuOverlay.ActionItem("Reveal in File Explorer", "", session.isLocalWorkspace(), reveal));
+		items.add(new ContextMenuOverlay.Separator());
+		items.add(new ContextMenuOverlay.ActionItem("Refresh Explorer", "", true, refresh));
+		return List.copyOf(items);
+	}
+
+	private void revealInFileExplorer(String relativePath) {
+		if (revealPathHandler != null) {
+			revealPathHandler.accept(relativePath);
+			return;
+		}
+		Path path = session.resolveLocalPathForReveal(relativePath);
+		if (path == null) {
+			session.setStatus("Reveal in file explorer is only available in singleplayer.", true);
+			return;
+		}
+		try {
+			Blaze3D.openPath(path);
+			session.setStatus("Revealed in file explorer", false);
+		} catch (Exception e) {
+			session.setStatus("Could not open file explorer: " + e.getMessage(), true);
+		}
+	}
+
+	private void findReferencesForPath(String relativePath) {
+		String query = inferReferenceQuery(relativePath);
+		findReferencesHandler.accept(query);
+	}
+
+	private void copyRelativePath(String relativePath) {
+		if (relativePath == null || relativePath.isEmpty()) {
+			return;
+		}
+		systemClipboardCopier.accept(relativePath);
+		session.setStatus("Copied path: " + relativePath, false);
+	}
+
+	public static String inferReferenceQuery(String relativePath) {
+		if (relativePath == null || relativePath.isBlank()) {
+			return "";
+		}
+		String fnId = DatapackScaffolder.inferFunctionId(relativePath);
+		if (fnId != null) {
+			return fnId;
+		}
+		String[] parts = relativePath.split("/");
+		// Match <pack>/data/<namespace>/tags/<type>/<path>.json or <pack>/data/<namespace>/<registry>/<path>.json
+		if (parts.length >= 5 && "data".equals(parts[1])) {
+			String ns = parts[2];
+			String category = parts[3];
+			int offset = "tags".equals(category) && parts.length >= 6 ? 5 : 4;
+			StringBuilder rel = new StringBuilder();
+			for (int i = offset; i < parts.length; i++) {
+				if (i > offset) {
+					rel.append('/');
+				}
+				rel.append(parts[i]);
+			}
+			String name = rel.toString();
+			if (name.endsWith(".json")) {
+				name = name.substring(0, name.length() - ".json".length());
+				return ("tags".equals(category) ? "#" : "") + ns + ":" + name;
+			}
+		}
+		int slash = relativePath.lastIndexOf('/');
+		String fileName = slash >= 0 ? relativePath.substring(slash + 1) : relativePath;
+		int dot = fileName.lastIndexOf('.');
+		return dot > 0 ? fileName.substring(0, dot) : fileName;
+	}
+
 	public boolean mouseDragged(MouseButtonEvent event) {
 		if (inlineEdit != null && event.button() == InputConstants.MOUSE_BUTTON_LEFT && inlineEdit.input.isDragging()) {
 			return inlineEdit.input.mouseDragged(event.x(), safeFont());
@@ -431,13 +650,32 @@ public final class FileExplorerTreeWidget {
 
 	public boolean keyPressed(KeyEvent event) {
 		if (inlineEdit == null) {
-			if (event.key() == InputConstants.KEY_F2
-					&& !event.hasControlDownWithQuirk()
-					&& !event.hasShiftDown()
-					&& !event.hasAltDown()
-					&& !session.selectedTreePath().isEmpty()) {
+			String selected = session.selectedTreePath();
+			boolean ctrl = event.hasControlDownWithQuirk();
+			boolean shift = event.hasShiftDown();
+			boolean alt = event.hasAltDown();
+
+			if (event.key() == InputConstants.KEY_F2 && !ctrl && !shift && !alt && !selected.isEmpty()) {
 				beginInlineRename();
 				return true;
+			}
+			if (event.key() == InputConstants.KEY_DELETE && !ctrl && !shift && !alt && !selected.isEmpty()) {
+				promptDeleteSelected();
+				return true;
+			}
+			if (ctrl && !shift && !alt) {
+				if (matchesLetter(event, InputConstants.KEY_C, 'c') && !selected.isEmpty()) {
+					session.copyTreeEntryToClipboard(selected);
+					return true;
+				}
+				if (matchesLetter(event, InputConstants.KEY_X, 'x') && !selected.isEmpty()) {
+					session.cutTreeEntryToClipboard(selected);
+					return true;
+				}
+				if (matchesLetter(event, InputConstants.KEY_V, 'v') && session.explorerClipboard() != null) {
+					session.pasteClipboard(resolveTargetDirectory());
+					return true;
+				}
 			}
 			return false;
 		}
@@ -454,6 +692,14 @@ public final class FileExplorerTreeWidget {
 			refreshLiveValidation();
 		}
 		return true;
+	}
+
+	private static boolean matchesLetter(KeyEvent event, int keyCode, char lower) {
+		if (event.key() == keyCode) {
+			return true;
+		}
+		int ch = event.shortcutKey();
+		return ch == lower || ch == Character.toUpperCase(lower);
 	}
 
 	public boolean charTyped(CharacterEvent event) {
@@ -558,27 +804,6 @@ public final class FileExplorerTreeWidget {
 		}
 	}
 
-	private void buildToolbarActions(Font font, int startX, int y, int maxWidth) {
-		toolbarActions.clear();
-		String[] labels = {"+File", "+Dir", "Ren", "Del", "Ref"};
-		Runnable[] runners = {
-				this::beginInlineCreateFile,
-				this::beginInlineCreateFolder,
-				this::beginInlineRename,
-				this::promptDeleteSelected,
-				session::refreshTree
-		};
-		int x = startX;
-		for (int i = 0; i < labels.length; i++) {
-			int w = QuillDraw.textWidth(font, labels[i]) + 8;
-			if (x + w > startX + maxWidth) {
-				break;
-			}
-			toolbarActions.add(new ToolbarAction(labels[i], labels[i], runners[i], new IdeLayout.Rect(x, y, w, TOOLBAR_HEIGHT - 4)));
-			x += w + 3;
-		}
-	}
-
 	private void rebuildVisibleRows() {
 		visibleRows.clear();
 		if (inlineEdit != null
@@ -639,14 +864,21 @@ public final class FileExplorerTreeWidget {
 				if (node.kind() != EntryKind.FILE) {
 					return node.relativePath();
 				}
-				int slash = selected.lastIndexOf('/');
-				return slash >= 0 ? selected.substring(0, slash) : "";
+				return parentPathOf(selected);
 			}
 		}
 		if (!session.rootTree().children().isEmpty()) {
 			return session.rootTree().children().getFirst().relativePath();
 		}
 		return "";
+	}
+
+	private static String parentPathOf(String path) {
+		if (path == null) {
+			return "";
+		}
+		int slash = path.lastIndexOf('/');
+		return slash >= 0 ? path.substring(0, slash) : "";
 	}
 
 	private static FileTreeNode findNode(FileTreeNode root, String relativePath) {
@@ -660,6 +892,13 @@ public final class FileExplorerTreeWidget {
 			}
 		}
 		return null;
+	}
+
+	private static void copyToMinecraftClipboard(String text) {
+		Minecraft mc = Minecraft.getInstance();
+		if (mc != null && mc.keyboardHandler != null) {
+			mc.keyboardHandler.setClipboard(text);
+		}
 	}
 
 	static String formatFileDisplayName(String name, boolean dirty) {

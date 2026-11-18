@@ -110,10 +110,10 @@ odtwarzającym błąd przed poprawką.
 - [x] Animacje w całym UI z globalnym przełącznikiem w ustawieniach.
 
 ### P1: explorer plików
-- [ ] Usunąć przyciski pokroju `+file` i `+dir`.
-- [ ] Menu kontekstowe (prawy klik) na pliku i folderze. Minimum: Run function, Open to side, Reveal in file explorer, Find file references, Cut, Copy, Copy path, Delete, Rename.
-- [ ] Skrót F2 zmienia nazwę zaznaczonego pliku.
-- [ ] Skróty Delete oraz Ctrl+C / Ctrl+X / Ctrl+V na zaznaczonym pliku.
+- [x] Usunąć przyciski pokroju `+file` i `+dir`.
+- [x] Menu kontekstowe (prawy klik) na pliku i folderze. Minimum: Run function, Open to side, Reveal in file explorer, Find file references, Cut, Copy, Copy path, Delete, Rename.
+- [x] Skrót F2 zmienia nazwę zaznaczonego pliku.
+- [x] Skróty Delete oraz Ctrl+C / Ctrl+X / Ctrl+V na zaznaczonym pliku.
 - [x] Najechanie na plik nie chowa drzewa (patrz P0).
 
 ### P1: edytor kodu

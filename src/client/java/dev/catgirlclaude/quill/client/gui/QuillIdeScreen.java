@@ -72,14 +72,17 @@ public class QuillIdeScreen extends Screen {
 	private final QuickActionsAndPresetsWidget quickActions;
 	private final EditorTabBarWidget tabBarWidget;
 	private final CodeEditorWidget codeEditorWidget;
+	private final CodeEditorWidget secondaryCodeEditorWidget;
 	private final SettingsPanelWidget settingsPanel;
 	private final BottomPanelWidget bottomPanelWidget;
 	private final QuillNotificationBanner notificationBanner;
 
 	private IdeModal activeModal = null;
 	private QuickPickOverlay activeQuickPick = null;
+	private ContextMenuOverlay activeContextMenu = null;
 	private boolean settingsOpen = false;
 	private boolean sidebarFocused = false;
+	private boolean secondaryEditorFocused = false;
 	private OpenTabState lastObservedActiveTab = null;
 	private boolean textInputActive = false;
 
@@ -91,6 +94,10 @@ public class QuillIdeScreen extends Screen {
 	private int dragStartSplitterSize = 0;
 
 	private IdeLayout lastLayout = IdeLayout.compute(854, 480, false, false, false);
+	private IdeLayout.Rect primaryEditorPaneRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect secondaryEditorHeaderRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect secondaryCloseBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect secondaryEditorPaneRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect commandCenterRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect runTitleBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect maximizeBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
@@ -127,12 +134,15 @@ public class QuillIdeScreen extends Screen {
 		this.session = Objects.requireNonNull(session, "session");
 		this.textInputBridge = Objects.requireNonNull(textInputBridge, "textInputBridge");
 		this.explorerTree = new FileExplorerTreeWidget(session, this::openModal, this::closeModal);
+		this.explorerTree.setContextMenuHooks(this::openContextMenu, this::closeContextMenu, this::openSearchWithQuery);
 		this.searchSidebar = new SearchSidebarWidget(session, workspaceFileCache, this::openModal, this::closeModal);
 		this.inspectorSidebar = new InspectorSidebarWidget(session, workspaceFileCache);
 		this.quickActions = new QuickActionsAndPresetsWidget(session, this::openModal, this::closeModal);
 		this.tabBarWidget = new EditorTabBarWidget(session, this::openModal, this::closeModal);
 		this.codeEditorWidget = new CodeEditorWidget();
 		this.codeEditorWidget.setOnBufferEdited(session::notifyTabBufferEdited);
+		this.secondaryCodeEditorWidget = new CodeEditorWidget();
+		this.secondaryCodeEditorWidget.setOnBufferEdited(session::notifyTabBufferEdited);
 		this.settingsPanel = new SettingsPanelWidget(this::closeSettings, this::onResetWindowBounds);
 		this.bottomPanelWidget = new BottomPanelWidget(session);
 		this.notificationBanner = new QuillNotificationBanner(session);
@@ -173,15 +183,46 @@ public class QuillIdeScreen extends Screen {
 		return activeModal;
 	}
 
+	ContextMenuOverlay activeContextMenu() {
+		return activeContextMenu;
+	}
+
+	protected void openContextMenu(ContextMenuOverlay menu) {
+		this.activeContextMenu = menu;
+		this.codeEditorWidget.dismissAutocomplete();
+		this.secondaryCodeEditorWidget.dismissAutocomplete();
+	}
+
+	protected void closeContextMenu() {
+		this.activeContextMenu = null;
+		syncTextInputState();
+	}
+
+	private CodeEditorWidget focusedEditorWidget() {
+		if (secondaryEditorFocused && session.secondaryTab() != null && secondaryEditorPaneRect.width() > 0) {
+			return secondaryCodeEditorWidget;
+		}
+		return codeEditorWidget;
+	}
+
+	private OpenTabState focusedEditorTab() {
+		if (secondaryEditorFocused && session.secondaryTab() != null && secondaryEditorPaneRect.width() > 0) {
+			return session.secondaryTab();
+		}
+		return session.activeTab();
+	}
+
 	public boolean isSettingsOpen() {
 		return settingsOpen;
 	}
 
 	public void openSettings() {
 		this.codeEditorWidget.dismissAutocomplete();
+		this.secondaryCodeEditorWidget.dismissAutocomplete();
 		this.explorerTree.cancelInlineInput();
 		this.searchSidebar.unfocus();
 		this.activeQuickPick = null;
+		this.activeContextMenu = null;
 		this.settingsPanel.syncFromConfig();
 		this.settingsOpen = true;
 		this.lastObservedActiveTab = session.activeTab();
@@ -215,9 +256,11 @@ public class QuillIdeScreen extends Screen {
 
 	protected void openModal(IdeModal modal) {
 		this.codeEditorWidget.dismissAutocomplete();
+		this.secondaryCodeEditorWidget.dismissAutocomplete();
 		this.explorerTree.cancelInlineInput();
 		this.settingsPanel.unfocus();
 		this.activeQuickPick = null;
+		this.activeContextMenu = null;
 		this.activeModal = modal;
 		syncTextInputState();
 	}
@@ -232,9 +275,11 @@ public class QuillIdeScreen extends Screen {
 			return;
 		}
 		this.codeEditorWidget.dismissAutocomplete();
+		this.secondaryCodeEditorWidget.dismissAutocomplete();
 		this.searchSidebar.unfocus();
 		this.explorerTree.cancelInlineInput();
 		this.settingsPanel.unfocus();
+		this.activeContextMenu = null;
 		this.activeQuickPick = new QuickPickOverlay(
 				mode,
 				this::buildCommandPaletteItems,
@@ -254,21 +299,29 @@ public class QuillIdeScreen extends Screen {
 	}
 
 	protected void openSearchSidebar() {
+		OpenTabState active = focusedEditorTab();
+		String selected = (active != null && active.buffer().hasSelection()) ? active.buffer().getSelectedText() : null;
+		openSearchWithQuery(selected);
+	}
+
+	protected void openSearchWithQuery(String query) {
 		this.codeEditorWidget.dismissAutocomplete();
+		this.secondaryCodeEditorWidget.dismissAutocomplete();
 		this.explorerTree.cancelInlineInput();
 		this.settingsPanel.unfocus();
+		this.activeContextMenu = null;
 		session.setSidebarView(ClientEditorSession.SidebarView.SEARCH);
-		OpenTabState active = session.activeTab();
-		String selected = (active != null && active.buffer().hasSelection()) ? active.buffer().getSelectedText() : null;
-		searchSidebar.focusSearchInput(selected);
+		searchSidebar.focusSearchInput(query);
 		syncTextInputState();
 	}
 
 	protected void openInspectorSidebar(boolean invalidateCache) {
 		this.codeEditorWidget.dismissAutocomplete();
+		this.secondaryCodeEditorWidget.dismissAutocomplete();
 		this.searchSidebar.unfocus();
 		this.explorerTree.cancelInlineInput();
 		this.settingsPanel.unfocus();
+		this.activeContextMenu = null;
 		session.setSidebarView(ClientEditorSession.SidebarView.INSPECTOR);
 		inspectorSidebar.refresh(invalidateCache);
 		syncTextInputState();
@@ -301,6 +354,7 @@ public class QuillIdeScreen extends Screen {
 	boolean isCodeEditorFocused() {
 		return activeModal == null
 				&& activeQuickPick == null
+				&& activeContextMenu == null
 				&& !settingsOpen
 				&& !isExplorerInlineInputActive()
 				&& !isSearchInputFocused()
@@ -314,6 +368,9 @@ public class QuillIdeScreen extends Screen {
 		}
 		if (activeQuickPick != null) {
 			return true;
+		}
+		if (activeContextMenu != null) {
+			return false;
 		}
 		if (isExplorerInlineInputActive()) {
 			return true;
@@ -342,6 +399,9 @@ public class QuillIdeScreen extends Screen {
 
 	private void syncActiveTabSelection() {
 		OpenTabState current = session.activeTab();
+		if (session.secondaryTab() == null) {
+			secondaryEditorFocused = false;
+		}
 		if (settingsOpen && current != null && current != lastObservedActiveTab) {
 			settingsOpen = false;
 			settingsPanel.unfocus();
@@ -507,7 +567,7 @@ public class QuillIdeScreen extends Screen {
 					? new IdeLayout.Rect(layout.window().x(), layout.diagnosticsBanner().y() - 2, layout.window().width(), 5)
 					: new IdeLayout.Rect(0, 0, 0, 0);
 
-			boolean overlayOpen = activeModal != null || activeQuickPick != null;
+			boolean overlayOpen = activeModal != null || activeQuickPick != null || activeContextMenu != null;
 			int uiMouseX = overlayOpen ? -1 : vmX;
 			int uiMouseY = overlayOpen ? -1 : vmY;
 
@@ -579,6 +639,9 @@ public class QuillIdeScreen extends Screen {
 
 			notificationBanner.render(graphics, font, win, layout.titleBar().bottom(), uiMouseX, uiMouseY);
 
+			if (activeContextMenu != null) {
+				activeContextMenu.render(graphics, font, vw, vh, vmX, vmY);
+			}
 			if (activeQuickPick != null) {
 				activeQuickPick.render(graphics, font, win, layout.titleBar(), commandCenterRect, vw, vh, vmX, vmY);
 			}
@@ -893,9 +956,17 @@ public class QuillIdeScreen extends Screen {
 		}
 	}
 
+	private void clearEditorPaneRects() {
+		primaryEditorPaneRect = new IdeLayout.Rect(0, 0, 0, 0);
+		secondaryEditorHeaderRect = new IdeLayout.Rect(0, 0, 0, 0);
+		secondaryCloseBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+		secondaryEditorPaneRect = new IdeLayout.Rect(0, 0, 0, 0);
+	}
+
 	protected void renderEditorArea(GuiGraphicsExtractor graphics, IdeLayout.Rect editor, int mouseX, int mouseY) {
 		QuillDraw.fill(graphics, editor.x(), editor.y(), editor.width(), editor.height(), QuillTheme.BG_EDITOR);
 		if (settingsOpen) {
+			clearEditorPaneRects();
 			welcomeNewPackRect = new IdeLayout.Rect(0, 0, 0, 0);
 			welcomeNewFnRect = new IdeLayout.Rect(0, 0, 0, 0);
 			welcomeSettingsRect = new IdeLayout.Rect(0, 0, 0, 0);
@@ -904,6 +975,7 @@ public class QuillIdeScreen extends Screen {
 		}
 		OpenTabState active = session.activeTab();
 		if (active == null) {
+			clearEditorPaneRects();
 			QuillDraw.beginClip(graphics, editor);
 			int leftX = editor.x() + 24;
 			int topY = editor.y() + Math.max(18, editor.height() / 5);
@@ -974,7 +1046,65 @@ public class QuillIdeScreen extends Screen {
 			welcomeNewPackRect = new IdeLayout.Rect(0, 0, 0, 0);
 			welcomeNewFnRect = new IdeLayout.Rect(0, 0, 0, 0);
 			welcomeSettingsRect = new IdeLayout.Rect(0, 0, 0, 0);
-			codeEditorWidget.render(graphics, font, editor, active, mouseX, mouseY, isCodeEditorFocused());
+			OpenTabState secondary = session.secondaryTab();
+			if (secondary != null && editor.width() >= 220) {
+				int leftW = Math.max(100, (editor.width() - 1) / 2);
+				int dividerX = editor.x() + leftW;
+				int rightX = dividerX + 1;
+				int rightW = Math.max(80, editor.right() - rightX);
+				primaryEditorPaneRect = new IdeLayout.Rect(editor.x(), editor.y(), leftW, editor.height());
+
+				int headerH = 16;
+				secondaryEditorHeaderRect = new IdeLayout.Rect(rightX, editor.y(), rightW, headerH);
+				int closeSize = 12;
+				secondaryCloseBtnRect = new IdeLayout.Rect(
+						secondaryEditorHeaderRect.right() - closeSize - 3,
+						secondaryEditorHeaderRect.y() + 2,
+						closeSize,
+						closeSize);
+				secondaryEditorPaneRect = new IdeLayout.Rect(
+						rightX,
+						editor.y() + headerH,
+						rightW,
+						Math.max(1, editor.height() - headerH));
+
+				boolean editorFocused = isCodeEditorFocused();
+				codeEditorWidget.render(graphics, font, primaryEditorPaneRect, active, mouseX, mouseY, editorFocused && !secondaryEditorFocused);
+				QuillDraw.vLine(graphics, dividerX, editor.y(), editor.height(), QuillTheme.BORDER_SUBTLE);
+
+				QuillDraw.fill(graphics, secondaryEditorHeaderRect.x(), secondaryEditorHeaderRect.y(),
+						secondaryEditorHeaderRect.width(), secondaryEditorHeaderRect.height(), QuillTheme.BG_SIDEBAR);
+				QuillDraw.hLine(graphics, secondaryEditorHeaderRect.x(), secondaryEditorHeaderRect.width(),
+						secondaryEditorHeaderRect.bottom() - 1, QuillTheme.BORDER_SUBTLE);
+				if (editorFocused && secondaryEditorFocused) {
+					QuillDraw.hLine(graphics, secondaryEditorHeaderRect.x(), secondaryEditorHeaderRect.width(),
+							secondaryEditorHeaderRect.y(), QuillTheme.ACCENT_BLUE);
+				}
+				String secTitle = secondary.fileName() + (secondary.isDirty() ? " *" : "");
+				int titleMaxW = Math.max(12, secondaryCloseBtnRect.x() - secondaryEditorHeaderRect.x() - 10);
+				int titleY = secondaryEditorHeaderRect.y() + (secondaryEditorHeaderRect.height() - font.lineHeight) / 2;
+				QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, secTitle, titleMaxW),
+						secondaryEditorHeaderRect.x() + 6, titleY,
+						secondaryEditorFocused ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY);
+
+				boolean hoverSecClose = secondaryCloseBtnRect.contains(mouseX, mouseY);
+				if (hoverSecClose) {
+					QuillDraw.fill(graphics, secondaryCloseBtnRect.x(), secondaryCloseBtnRect.y(),
+							secondaryCloseBtnRect.width(), secondaryCloseBtnRect.height(), QuillTheme.BG_HOVER);
+					QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
+				}
+				QuillDraw.drawCloseX(graphics, secondaryCloseBtnRect.x() + 2, secondaryCloseBtnRect.y() + 2, 8,
+						hoverSecClose ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
+
+				secondaryCodeEditorWidget.render(graphics, font, secondaryEditorPaneRect, secondary, mouseX, mouseY,
+						editorFocused && secondaryEditorFocused);
+			} else {
+				primaryEditorPaneRect = editor;
+				secondaryEditorHeaderRect = new IdeLayout.Rect(0, 0, 0, 0);
+				secondaryCloseBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+				secondaryEditorPaneRect = new IdeLayout.Rect(0, 0, 0, 0);
+				codeEditorWidget.render(graphics, font, editor, active, mouseX, mouseY, isCodeEditorFocused());
+			}
 		}
 	}
 
@@ -1329,6 +1459,17 @@ public class QuillIdeScreen extends Screen {
 			syncTextInputState();
 			return handled;
 		}
+		if (activeContextMenu != null) {
+			boolean handled = activeContextMenu.mouseClicked(ev);
+			syncTextInputState();
+			if (handled) {
+				return true;
+			}
+			// Consume left-clicks outside menu; allow right-clicks to fall through to open the next context menu
+			if (ev.button() != InputConstants.MOUSE_BUTTON_RIGHT) {
+				return true;
+			}
+		}
 		if (notificationBanner.mouseClicked(ev)) {
 			return true;
 		}
@@ -1371,6 +1512,7 @@ public class QuillIdeScreen extends Screen {
 		}
 		if (tabBarWidget.mouseClicked(ev)) {
 			sidebarFocused = false;
+			secondaryEditorFocused = false;
 			syncTextInputState();
 			return true;
 		}
@@ -1378,6 +1520,15 @@ public class QuillIdeScreen extends Screen {
 			sidebarFocused = true;
 			syncTextInputState();
 			return true;
+		}
+		if (ev.button() == InputConstants.MOUSE_BUTTON_RIGHT
+				&& !settingsOpen
+				&& lastSidebarRect.contains(mx, my)
+				&& session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER) {
+			sidebarFocused = true;
+			boolean handled = explorerTree.mouseClicked(ev);
+			syncTextInputState();
+			return handled;
 		}
 		if (ev.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 			if (closeBtnRect.contains(mx, my)) {
@@ -1497,6 +1648,9 @@ public class QuillIdeScreen extends Screen {
 				};
 				boolean switchedTab = session.activeTab() != prevTab || session.openTabs().size() != prevTabCount;
 				sidebarFocused = !switchedTab;
+				if (switchedTab) {
+					secondaryEditorFocused = false;
+				}
 				syncActiveTabSelection();
 				syncTextInputState();
 				if (handled) {
@@ -1535,10 +1689,33 @@ public class QuillIdeScreen extends Screen {
 				return true;
 			}
 			OpenTabState active = settingsOpen ? null : session.activeTab();
-			if (active != null && codeEditorWidget.mouseClicked(ev, font, active)) {
-				sidebarFocused = false;
-				syncTextInputState();
-				return true;
+			if (active != null) {
+				OpenTabState secondary = session.secondaryTab();
+				if (secondary != null && secondaryCloseBtnRect.contains(mx, my)) {
+					session.closeSideEditor();
+					secondaryEditorFocused = false;
+					syncTextInputState();
+					return true;
+				}
+				if (secondary != null && secondaryEditorHeaderRect.contains(mx, my)) {
+					sidebarFocused = false;
+					secondaryEditorFocused = true;
+					syncTextInputState();
+					return true;
+				}
+				if (secondary != null && secondaryEditorPaneRect.contains(mx, my)
+						&& secondaryCodeEditorWidget.mouseClicked(ev, font, secondary)) {
+					sidebarFocused = false;
+					secondaryEditorFocused = true;
+					syncTextInputState();
+					return true;
+				}
+				if (codeEditorWidget.mouseClicked(ev, font, active)) {
+					sidebarFocused = false;
+					secondaryEditorFocused = false;
+					syncTextInputState();
+					return true;
+				}
 			}
 			if (statusRemoteBadgeRect.contains(mx, my)) {
 				openQuickPick(QuickPickOverlay.Mode.COMMANDS);
@@ -1585,6 +1762,9 @@ public class QuillIdeScreen extends Screen {
 		if (activeQuickPick != null) {
 			return activeQuickPick.mouseDragged(ev);
 		}
+		if (activeContextMenu != null) {
+			return true;
+		}
 		if (dragMode != DragMode.NONE && ev.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 			int dx = (int) Math.round(ev.x() - dragStartMouseX);
 			int dy = (int) Math.round(ev.y() - dragStartMouseY);
@@ -1628,8 +1808,14 @@ public class QuillIdeScreen extends Screen {
 			return true;
 		}
 		OpenTabState active = settingsOpen ? null : session.activeTab();
-		if (active != null && codeEditorWidget.mouseDragged(ev, font, active)) {
-			return true;
+		if (active != null) {
+			OpenTabState secondary = session.secondaryTab();
+			if (secondary != null && secondaryEditorFocused && secondaryCodeEditorWidget.mouseDragged(ev, font, secondary)) {
+				return true;
+			}
+			if (codeEditorWidget.mouseDragged(ev, font, active)) {
+				return true;
+			}
 		}
 		return super.mouseDragged(event, dragX, dragY);
 	}
@@ -1644,6 +1830,7 @@ public class QuillIdeScreen extends Screen {
 			return true;
 		}
 		codeEditorWidget.mouseReleased(ev);
+		secondaryCodeEditorWidget.mouseReleased(ev);
 		searchSidebar.mouseReleased(ev);
 		explorerTree.mouseReleased(ev);
 		settingsPanel.mouseReleased(ev);
@@ -1663,7 +1850,7 @@ public class QuillIdeScreen extends Screen {
 		float scale = uiScale();
 		double vmX = mouseX / scale;
 		double vmY = mouseY / scale;
-		if (activeModal != null) {
+		if (activeModal != null || activeContextMenu != null) {
 			return true;
 		}
 		if (activeQuickPick != null) {
@@ -1690,8 +1877,15 @@ public class QuillIdeScreen extends Screen {
 			return true;
 		}
 		OpenTabState active = settingsOpen ? null : session.activeTab();
-		if (active != null && codeEditorWidget.mouseScrolled(vmX, vmY, scrollX, scrollY, font, active)) {
-			return true;
+		if (active != null) {
+			OpenTabState secondary = session.secondaryTab();
+			if (secondary != null && secondaryEditorPaneRect.contains(vmX, vmY)
+					&& secondaryCodeEditorWidget.mouseScrolled(vmX, vmY, scrollX, scrollY, font, secondary)) {
+				return true;
+			}
+			if (codeEditorWidget.mouseScrolled(vmX, vmY, scrollX, scrollY, font, active)) {
+				return true;
+			}
 		}
 		return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
 	}
@@ -1727,6 +1921,11 @@ public class QuillIdeScreen extends Screen {
 		}
 		if (activeQuickPick != null) {
 			boolean handled = activeQuickPick.keyPressed(event);
+			syncTextInputState();
+			return handled;
+		}
+		if (activeContextMenu != null) {
+			boolean handled = activeContextMenu.keyPressed(event);
 			syncTextInputState();
 			return handled;
 		}
@@ -1807,10 +2006,10 @@ public class QuillIdeScreen extends Screen {
 			syncTextInputState();
 			return true;
 		}
-		if (!session.isSidebarCollapsed()
-				&& session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER
-				&& event.key() == InputConstants.KEY_F2
-				&& explorerTree.keyPressed(event)) {
+		boolean explorerActive = !settingsOpen
+				&& !session.isSidebarCollapsed()
+				&& session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER;
+		if (explorerActive && (event.key() == InputConstants.KEY_F2 || sidebarFocused) && explorerTree.keyPressed(event)) {
 			syncTextInputState();
 			return true;
 		}
@@ -1821,8 +2020,9 @@ public class QuillIdeScreen extends Screen {
 			return true;
 		}
 		if (isCodeEditorFocused()) {
-			OpenTabState active = session.activeTab();
-			if (active != null && codeEditorWidget.keyPressed(event, font, active)) {
+			CodeEditorWidget editorWidget = focusedEditorWidget();
+			OpenTabState focusedTab = focusedEditorTab();
+			if (focusedTab != null && editorWidget.keyPressed(event, font, focusedTab)) {
 				return true;
 			}
 		} else {
@@ -1857,6 +2057,9 @@ public class QuillIdeScreen extends Screen {
 		if (activeQuickPick != null) {
 			return activeQuickPick.charTyped(event);
 		}
+		if (activeContextMenu != null) {
+			return false;
+		}
 		if (settingsOpen && (settingsPanel.isRecordingKeybind() || settingsPanel.hasFocusedTextInput())) {
 			return settingsPanel.charTyped(event);
 		}
@@ -1870,8 +2073,9 @@ public class QuillIdeScreen extends Screen {
 			return false;
 		}
 		if (isCodeEditorFocused()) {
-			OpenTabState active = session.activeTab();
-			if (active != null && codeEditorWidget.charTyped(event, font, active)) {
+			CodeEditorWidget editorWidget = focusedEditorWidget();
+			OpenTabState focusedTab = focusedEditorTab();
+			if (focusedTab != null && editorWidget.charTyped(event, font, focusedTab)) {
 				return true;
 			}
 		}

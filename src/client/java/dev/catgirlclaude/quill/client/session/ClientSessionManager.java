@@ -36,7 +36,11 @@ public final class ClientSessionManager {
 			closeActiveRemote("Switched to singleplayer session.");
 			boundConnection = null;
 			boundServer = server;
-			activeSession = new ClientEditorSession(new ServerEditorBackend(server), "Local");
+			activeSession = new ClientEditorSession(
+					new ServerEditorBackend(server),
+					"Local",
+					server.getWorldPath(net.minecraft.world.level.storage.LevelResource.DATAPACK_DIR)
+			);
 			activeSession.refreshAll();
 		}
 		return activeSession;

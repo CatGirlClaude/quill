@@ -969,6 +969,89 @@ class QuillIdeScreenTextInputTest {
 		assertTrue(dirs.contains("pack/data/demo/function/extra"));
 	}
 
+	@Test
+	void explorerFocusRoutesCopyCutPasteDeleteAndContextMenuEscapeInScreen() {
+		java.util.Map<String, String> files = new java.util.LinkedHashMap<>();
+		files.put("pack/data/demo/function/one.mcfunction", "say one");
+		files.put("pack/data/demo/function/two.mcfunction", "say two");
+
+		StubEditorBackend backend = new StubEditorBackend() {
+			@Override
+			public CompletableFuture<FileTreeNode> listTree() {
+				List<FileTreeNode> fnChildren = new java.util.ArrayList<>();
+				for (String path : files.keySet()) {
+					if (path.startsWith("pack/data/demo/function/")) {
+						String name = path.substring("pack/data/demo/function/".length());
+						fnChildren.add(new FileTreeNode(name, path, EntryKind.FILE, List.of()));
+					}
+				}
+				FileTreeNode fnDir = new FileTreeNode("function", "pack/data/demo/function", EntryKind.DIRECTORY, fnChildren);
+				FileTreeNode pack = new FileTreeNode("pack", "pack", EntryKind.DATAPACK, List.of(fnDir));
+				return CompletableFuture.completedFuture(new FileTreeNode("datapacks", "", EntryKind.ROOT, List.of(pack)));
+			}
+
+			@Override
+			public CompletableFuture<FileDocument> readFile(String relativePath) {
+				String c = files.get(relativePath);
+				if (c == null) {
+					return CompletableFuture.failedFuture(new IllegalArgumentException("Missing: " + relativePath));
+				}
+				return CompletableFuture.completedFuture(new FileDocument(relativePath, c, "sha", 0L));
+			}
+
+			@Override
+			public CompletableFuture<SaveResult> writeFile(String relativePath, String content, String expectedBaseSha256, boolean reloadAfterSave) {
+				files.put(relativePath, content);
+				return CompletableFuture.completedFuture(new SaveResult(new FileDocument(relativePath, content, "sha2", 0L), null));
+			}
+
+			@Override
+			public CompletableFuture<Void> deleteEntry(String relativePath) {
+				files.remove(relativePath);
+				return CompletableFuture.completedFuture(null);
+			}
+		};
+
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.refreshTree();
+		session.openFile("pack/data/demo/function/one.mcfunction");
+
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		int ctrl = net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER;
+
+		// Focus Explorer and select two.mcfunction -> Ctrl+C then Ctrl+V duplicates file via backend without editing one.mcfunction
+		screen.setSidebarFocused(true);
+		session.setSelectedTreePath("pack/data/demo/function/two.mcfunction");
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_C, InputConstants.KEYCODE_C, ctrl)));
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_V, InputConstants.KEYCODE_V, ctrl)));
+		assertEquals("say two", files.get("pack/data/demo/function/two_copy.mcfunction"));
+		assertEquals("say one", session.activeTab().buffer().getText());
+
+		// Pressing Delete while Explorer is focused opens Delete Entry confirmation modal
+		session.setSelectedTreePath("pack/data/demo/function/two_copy.mcfunction");
+		assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_DELETE, 0, 0)));
+		assertTrue(screen.activeModal() != null);
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_RETURN, InputConstants.KEYCODE_RETURN, 0));
+		assertFalse(files.containsKey("pack/data/demo/function/two_copy.mcfunction"));
+
+		// Context menu blocks code editor focus and Escape dismisses it cleanly
+		screen.setSidebarFocused(false);
+		assertTrue(screen.isCodeEditorFocused());
+		screen.openContextMenu(new ContextMenuOverlay(
+				20, 20,
+				List.of(new ContextMenuOverlay.ActionItem("Test", "", true, () -> {})),
+				screen::closeContextMenu
+		));
+		assertFalse(screen.isCodeEditorFocused());
+		assertTrue(screen.activeContextMenu() != null);
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0));
+		assertEquals(null, screen.activeContextMenu());
+		assertTrue(screen.isCodeEditorFocused());
+	}
+
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {
 		if (!bridge.isActiveFor(screen)) {
 			return;

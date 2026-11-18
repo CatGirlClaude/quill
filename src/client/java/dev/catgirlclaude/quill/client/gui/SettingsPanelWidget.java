@@ -242,12 +242,12 @@ public final class SettingsPanelWidget {
 		int fontRows = (fonts.length + fontCols - 1) / fontCols;
 		y += fontRows * (fontCardH + gap) + 8;
 
-		// Whole-GUI & font scale stepper
+		// Whole-GUI & font scale stepper (50% - 200%)
 		QuillDraw.text(graphics, font, "UI & Font Scale (Zoom)", x, y + 4, QuillTheme.TEXT_PRIMARY);
 		int ctrlX = x + Math.min(160, contentW / 2);
 		IdeLayout.Rect minusRect = new IdeLayout.Rect(ctrlX, y, 22, 18);
-		String sizeText = Math.round(cfg.uiScale() * 100) + "% (" + cfg.textSize() + " px)";
-		int sizeLabelW = Math.max(76, QuillDraw.textWidth(font, sizeText) + 12);
+		String sizeText = cfg.zoomPercent() + "%";
+		int sizeLabelW = Math.max(52, QuillDraw.textWidth(font, "200%") + 14);
 		IdeLayout.Rect plusRect = new IdeLayout.Rect(minusRect.right() + sizeLabelW + 4, y, 22, 18);
 		IdeLayout.Rect resetSizeRect = new IdeLayout.Rect(plusRect.right() + 8, y, QuillDraw.textWidth(font, "Reset") + 10, 18);
 
@@ -274,7 +274,23 @@ public final class SettingsPanelWidget {
 			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, zoomHint, x + contentW - hintX),
 					hintX, y + 4, QuillTheme.TEXT_MUTED);
 		}
-		y += 28;
+		y += 24;
+
+		// Global UI animations toggle
+		IdeLayout.Rect animRowRect = new IdeLayout.Rect(x, y, contentW, 20);
+		boolean hoverAnim = area.contains(mouseX, mouseY) && animRowRect.contains(mouseX, mouseY);
+		if (hoverAnim) {
+			hoveredClickable = true;
+			QuillDraw.fill(graphics, x, y, contentW, 20, QuillTheme.BG_HOVER);
+		}
+		clickTargets.add(new ClickTarget(animRowRect, () -> {
+			cfg.setAnimationsEnabled(!cfg.animationsEnabled());
+			QuillClientConfig.saveCurrent();
+		}));
+		drawCheckbox(graphics, font, x + 2, y + 4, cfg.animationsEnabled());
+		QuillDraw.text(graphics, font, "Enable UI animations (transitions, fades & slides)",
+				x + 20, y + 5, QuillTheme.TEXT_PRIMARY);
+		y += 26;
 
 		// ========== SECTION 2: BEHAVIOR, PAUSE, AUTOSAVE & RELOAD ==========
 		QuillDraw.hLine(graphics, x, contentW, y, QuillTheme.BORDER_SUBTLE);

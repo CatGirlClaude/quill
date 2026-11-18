@@ -24,7 +24,7 @@ import java.util.function.Consumer;
  * inline renaming, and deleting files and folders directly inside the explorer tree.
  */
 public final class FileExplorerTreeWidget {
-	private static final int ROW_HEIGHT = 17;
+	private static final int ROW_HEIGHT = QuillTheme.Metrics.EXPLORER_ROW_HEIGHT;
 	private static final int TOOLBAR_HEIGHT = 18;
 
 	public enum InlineEditKind {

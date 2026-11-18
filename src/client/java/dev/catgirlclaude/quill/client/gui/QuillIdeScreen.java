@@ -422,25 +422,25 @@ public class QuillIdeScreen extends Screen {
 		}
 	}
 
-	private static float uiScale() {
-		return QuillClientConfig.current().uiScale();
+	private int mcGuiScale() {
+		return minecraft != null && minecraft.getWindow() != null
+				? Math.max(1, minecraft.getWindow().getGuiScale())
+				: IdeLayout.DEFAULT_TEST_MC_GUI_SCALE;
+	}
+
+	private float uiScale() {
+		return IdeLayout.computeEffectiveScale(mcGuiScale(), QuillClientConfig.current().uiScale());
 	}
 
 	private int virtualWidth() {
-		if (width <= 0) {
-			return 0;
-		}
-		return Math.max(1, Math.round(width / uiScale()));
+		return IdeLayout.toVirtualSize(width, uiScale());
 	}
 
 	private int virtualHeight() {
-		if (height <= 0) {
-			return 0;
-		}
-		return Math.max(1, Math.round(height / uiScale()));
+		return IdeLayout.toVirtualSize(height, uiScale());
 	}
 
-	private static MouseButtonEvent unscaleMouseEvent(MouseButtonEvent event) {
+	private MouseButtonEvent unscaleMouseEvent(MouseButtonEvent event) {
 		float scale = uiScale();
 		if (Math.abs(scale - 1.0f) <= 0.001f) {
 			return event;
@@ -449,17 +449,18 @@ public class QuillIdeScreen extends Screen {
 	}
 
 	private IdeLayout computeCurrentLayout() {
-		return computeCurrentLayout(virtualWidth(), virtualHeight(), uiScale());
+		return computeCurrentLayout(virtualWidth(), virtualHeight());
 	}
 
-	private IdeLayout computeCurrentLayout(int vw, int vh, float scale) {
+	private IdeLayout computeCurrentLayout(int vw, int vh) {
 		QuillClientConfig cfg = QuillClientConfig.current();
+		float physScale = IdeLayout.physicalToVirtualScale(cfg.uiScale());
 		IdeLayout.WindowBounds custom = cfg.hasCustomWindowBounds()
 				? new IdeLayout.WindowBounds(
-						Math.round(cfg.windowX() / scale),
-						Math.round(cfg.windowY() / scale),
-						Math.round(cfg.windowWidth() / scale),
-						Math.round(cfg.windowHeight() / scale))
+						Math.round(cfg.windowX() / physScale),
+						Math.round(cfg.windowY() / physScale),
+						Math.round(cfg.windowWidth() / physScale),
+						Math.round(cfg.windowHeight() / physScale))
 				: null;
 		boolean showBreadcrumbs = !settingsOpen && session.activeTab() != null;
 		return IdeLayout.compute(
@@ -494,7 +495,7 @@ public class QuillIdeScreen extends Screen {
 			graphics.pose().scale(scale, scale);
 		}
 		try {
-			IdeLayout layout = computeCurrentLayout(vw, vh, scale);
+			IdeLayout layout = computeCurrentLayout(vw, vh);
 			lastLayout = layout;
 			lastSidebarRect = layout.sidebar();
 			sidebarSplitterRect = layout.sidebar().width() > 0
@@ -510,13 +511,14 @@ public class QuillIdeScreen extends Screen {
 
 			hoveredActivityTooltip = null;
 
-			// Outer floating drop shadow + crisp frame
+			// Soft multi-layer desktop drop shadow + crisp hairline window frame
+			IdeLayout.Rect win = layout.window();
 			if (!session.isMaximized()) {
-				QuillDraw.fill(graphics, layout.window().x() + 3, layout.window().y() + 3,
-						layout.window().width(), layout.window().height(), 0x55000000);
+				QuillDraw.fill(graphics, win.x() - 2, win.y() + 1, win.width() + 6, win.height() + 6, QuillTheme.Metrics.SHADOW_OUTER);
+				QuillDraw.fill(graphics, win.x() + 1, win.y() + 2, win.width() + 2, win.height() + 3, QuillTheme.Metrics.SHADOW_INNER);
 			}
-			QuillDraw.fill(graphics, layout.window().x(), layout.window().y(), layout.window().width(), layout.window().height(), QuillTheme.BG_EDITOR);
-			QuillDraw.outline(graphics, layout.window().x(), layout.window().y(), layout.window().width(), layout.window().height(),
+			QuillDraw.fill(graphics, win.x(), win.y(), win.width(), win.height(), QuillTheme.BG_EDITOR);
+			QuillDraw.outline(graphics, win.x(), win.y(), win.width(), win.height(),
 					dragMode != DragMode.NONE ? QuillTheme.ACCENT_BLUE : QuillTheme.BORDER_SUBTLE);
 
 			renderTitleBar(graphics, layout.titleBar(), uiMouseX, uiMouseY);
@@ -1054,8 +1056,8 @@ public class QuillIdeScreen extends Screen {
 
 		// Right-side VS Code metadata
 		OpenTabState active = settingsOpen ? null : session.activeTab();
-		String zoomPrefix = Math.abs(cfg.uiScale() - 1.0f) > 0.001f
-				? Math.round(cfg.uiScale() * 100) + "%  |  "
+		String zoomPrefix = cfg.zoomPercent() != QuillClientConfig.DEFAULT_ZOOM_PERCENT
+				? cfg.zoomPercent() + "%  |  "
 				: "";
 		String rightInfo;
 		if (active != null) {
@@ -1383,19 +1385,19 @@ public class QuillIdeScreen extends Screen {
 				}
 				if (session.isMaximized()) {
 					session.toggleMaximized();
-					float scale = uiScale();
+					float physScale = IdeLayout.physicalToVirtualScale(QuillClientConfig.current().uiScale());
 					int vw = virtualWidth();
 					int vh = virtualHeight();
-					IdeLayout restored = computeCurrentLayout(vw, vh, scale);
+					IdeLayout restored = computeCurrentLayout(vw, vh);
 					int rw = restored.window().width();
 					int rh = restored.window().height();
 					int nx = Math.max(0, Math.min(Math.max(0, vw - rw), (int) mx - rw / 2));
 					int ny = Math.max(0, Math.min(Math.max(0, vh - rh), (int) my - QuillTheme.TITLE_BAR_HEIGHT / 2));
 					QuillClientConfig.current().setCustomWindowBounds(
-							Math.round(nx * scale),
-							Math.round(ny * scale),
-							Math.round(rw * scale),
-							Math.round(rh * scale)
+							Math.round(nx * physScale),
+							Math.round(ny * physScale),
+							Math.round(rw * physScale),
+							Math.round(rh * physScale)
 					);
 					dragStartBounds = new IdeLayout.WindowBounds(nx, ny, rw, rh);
 				} else {
@@ -1562,26 +1564,26 @@ public class QuillIdeScreen extends Screen {
 			int dx = (int) Math.round(ev.x() - dragStartMouseX);
 			int dy = (int) Math.round(ev.y() - dragStartMouseY);
 			QuillClientConfig cfg = QuillClientConfig.current();
-			float scale = uiScale();
+			float physScale = IdeLayout.physicalToVirtualScale(cfg.uiScale());
 			int vw = virtualWidth();
 			int vh = virtualHeight();
 			switch (dragMode) {
 				case MOVE_WINDOW -> {
 					IdeLayout.WindowBounds next = IdeLayout.applyMove(dragStartBounds, dx, dy, vw, vh);
 					cfg.setCustomWindowBounds(
-							Math.round(next.x() * scale),
-							Math.round(next.y() * scale),
-							Math.round(next.width() * scale),
-							Math.round(next.height() * scale)
+							Math.round(next.x() * physScale),
+							Math.round(next.y() * physScale),
+							Math.round(next.width() * physScale),
+							Math.round(next.height() * physScale)
 					);
 				}
 				case RESIZE_WINDOW -> {
 					IdeLayout.WindowBounds next = IdeLayout.applyResize(dragStartBounds, activeResizeEdge, dx, dy, vw, vh);
 					cfg.setCustomWindowBounds(
-							Math.round(next.x() * scale),
-							Math.round(next.y() * scale),
-							Math.round(next.width() * scale),
-							Math.round(next.height() * scale)
+							Math.round(next.x() * physScale),
+							Math.round(next.y() * physScale),
+							Math.round(next.width() * physScale),
+							Math.round(next.height() * physScale)
 					);
 				}
 				case RESIZE_SIDEBAR -> cfg.setSidebarWidth(dragStartSplitterSize + dx);
@@ -1674,7 +1676,7 @@ public class QuillIdeScreen extends Screen {
 		if (changed) {
 			QuillClientConfig.saveCurrent();
 		}
-		session.setStatus("UI Zoom: " + Math.round(cfg.uiScale() * 100) + "% (" + cfg.textSize() + " px)", false);
+		session.setStatus("UI Zoom: " + cfg.zoomPercent() + "%", false);
 	}
 
 	private static boolean matchesZoomIn(KeyEvent event, QuillClientConfig cfg) {

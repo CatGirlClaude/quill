@@ -78,15 +78,51 @@ public final class QuillTheme {
 	public static int WARNING_BANNER_BG = QuillColorPalette.DARK_PLUS.warningBannerBg();
 	public static int WARNING_BANNER_BORDER = QuillColorPalette.DARK_PLUS.warningBannerBorder();
 
-	public static final int TITLE_BAR_HEIGHT = 22;
-	public static final int ACTIVITY_BAR_WIDTH = 36;
-	public static final int SIDEBAR_DEFAULT_WIDTH = 204;
-	public static final int TAB_BAR_HEIGHT = 24;
-	public static final int BREADCRUMB_HEIGHT = 16;
-	public static final int STATUS_BAR_HEIGHT = 18;
-	public static final int DIAGNOSTICS_HEIGHT = 96;
+	/**
+	 * Centralized spacing, chrome sizing, and elevation tokens in normalized virtual pixels.
+	 */
+	public static final class Metrics {
+		public static final int TITLE_BAR_HEIGHT = 24;
+		public static final int ACTIVITY_BAR_WIDTH = 36;
+		public static final int SIDEBAR_DEFAULT_WIDTH = 204;
+		public static final int TAB_BAR_HEIGHT = 24;
+		public static final int BREADCRUMB_HEIGHT = 18;
+		public static final int STATUS_BAR_HEIGHT = 18;
+		public static final int DIAGNOSTICS_HEIGHT = 96;
+		public static final int EXPLORER_ROW_HEIGHT = 17;
+
+		public static final int PAD_XS = 2;
+		public static final int PAD_SM = 4;
+		public static final int PAD_MD = 8;
+		public static final int PAD_LG = 12;
+		public static final int SCROLLBAR_SIZE = 5;
+
+		public static final int SHADOW_OUTER = 0x33000000;
+		public static final int SHADOW_INNER = 0x26000000;
+		public static final int WINDOW_HIGHLIGHT = 0x16FFFFFF;
+
+		private Metrics() {
+		}
+	}
+
+	public static final int TITLE_BAR_HEIGHT = Metrics.TITLE_BAR_HEIGHT;
+	public static final int ACTIVITY_BAR_WIDTH = Metrics.ACTIVITY_BAR_WIDTH;
+	public static final int SIDEBAR_DEFAULT_WIDTH = Metrics.SIDEBAR_DEFAULT_WIDTH;
+	public static final int TAB_BAR_HEIGHT = Metrics.TAB_BAR_HEIGHT;
+	public static final int BREADCRUMB_HEIGHT = Metrics.BREADCRUMB_HEIGHT;
+	public static final int STATUS_BAR_HEIGHT = Metrics.STATUS_BAR_HEIGHT;
+	public static final int DIAGNOSTICS_HEIGHT = Metrics.DIAGNOSTICS_HEIGHT;
 
 	private QuillTheme() {
+	}
+
+	public static int withAlpha(int argb, int alpha) {
+		int a = Math.max(0, Math.min(255, alpha));
+		return (a << 24) | (argb & 0x00FFFFFF);
+	}
+
+	public static int dividerSoft() {
+		return withAlpha(BORDER_SUBTLE, 0x88);
 	}
 
 	public static QuillColorPalette palette() {

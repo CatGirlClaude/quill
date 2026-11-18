@@ -37,16 +37,39 @@ class QuillClientConfigTest {
 		assertEquals("load", cfg.defaultLoadFunctionName());
 		assertEquals("tick", cfg.defaultTickFunctionName());
 		assertFalse(cfg.hasCustomWindowBounds());
+		assertTrue(cfg.animationsEnabled());
+		assertEquals(100, cfg.zoomPercent());
+		assertEquals(QuillClientConfig.MIN_ZOOM_PERCENT, 50);
+		assertEquals(QuillClientConfig.MAX_ZOOM_PERCENT, 200);
 
 		assertTrue(cfg.zoomIn());
-		assertEquals(QuillClientConfig.DEFAULT_TEXT_SIZE + 1, cfg.textSize());
+		assertEquals(110, cfg.zoomPercent());
 		assertTrue(cfg.uiScale() > 1.0f);
 		assertTrue(cfg.zoomOut());
-		assertEquals(QuillClientConfig.DEFAULT_TEXT_SIZE, cfg.textSize());
+		assertEquals(100, cfg.zoomPercent());
 		assertTrue(cfg.zoomOut());
-		assertEquals(QuillClientConfig.DEFAULT_TEXT_SIZE - 1, cfg.textSize());
+		assertEquals(90, cfg.zoomPercent());
 		assertTrue(cfg.resetZoom());
+		assertEquals(100, cfg.zoomPercent());
 		assertEquals(1.0f, cfg.uiScale(), 0.0001f);
+
+		// Step all the way down to 50% and up to 200%
+		for (int i = 0; i < 10; i++) {
+			cfg.zoomOut();
+		}
+		assertEquals(50, cfg.zoomPercent());
+		assertEquals(0.50f, cfg.uiScale(), 0.0001f);
+		assertFalse(cfg.zoomOut());
+
+		for (int i = 0; i < 20; i++) {
+			cfg.zoomIn();
+		}
+		assertEquals(200, cfg.zoomPercent());
+		assertEquals(2.00f, cfg.uiScale(), 0.0001f);
+		assertFalse(cfg.zoomIn());
+
+		cfg.resetZoom();
+		assertEquals(100, cfg.zoomPercent());
 
 		cfg.setAutosaveMode(QuillClientConfig.AutosaveMode.ON_KEYPRESS);
 		assertTrue(cfg.hasInstantAutosaveReloadWarning(),
@@ -62,7 +85,8 @@ class QuillClientConfigTest {
 		QuillClientConfig cfg = QuillClientConfig.createDefault();
 		cfg.setThemeId(QuillColorPalette.DRACULA.id());
 		cfg.setFontChoice(QuillClientConfig.FontChoice.MONOSPACE);
-		cfg.setTextSize(12);
+		cfg.setZoomPercent(130);
+		cfg.setAnimationsEnabled(false);
 		cfg.setPauseGameWhileOpen(true);
 		cfg.setAutosaveMode(QuillClientConfig.AutosaveMode.ON_GUI_CLOSE);
 		cfg.setReloadTriggerMode(QuillClientConfig.ReloadTriggerMode.ON_GUI_CLOSE);
@@ -80,7 +104,9 @@ class QuillClientConfigTest {
 		QuillClientConfig loaded = QuillClientConfig.load(file);
 		assertEquals(QuillColorPalette.DRACULA.id(), loaded.themeId());
 		assertEquals(QuillClientConfig.FontChoice.MONOSPACE, loaded.fontChoice());
-		assertEquals(12, loaded.textSize());
+		assertEquals(130, loaded.zoomPercent());
+		assertEquals(1.30f, loaded.uiScale(), 0.0001f);
+		assertFalse(loaded.animationsEnabled());
 		assertTrue(loaded.pauseGameWhileOpen());
 		assertEquals(QuillClientConfig.AutosaveMode.ON_GUI_CLOSE, loaded.autosaveMode());
 		assertEquals(QuillClientConfig.ReloadTriggerMode.ON_GUI_CLOSE, loaded.reloadTriggerMode());
@@ -119,12 +145,22 @@ class QuillClientConfigTest {
 	}
 
 	@Test
-	void clampingAndTemplateDefaultValidationRejectInvalidValues() {
+	void clampingAndTemplateDefaultValidationRejectInvalidValues(@TempDir Path tempDir) throws Exception {
 		QuillClientConfig cfg = QuillClientConfig.createDefault();
+		cfg.setZoomPercent(500);
+		assertEquals(QuillClientConfig.MAX_ZOOM_PERCENT, cfg.zoomPercent());
+		cfg.setZoomPercent(10);
+		assertEquals(QuillClientConfig.MIN_ZOOM_PERCENT, cfg.zoomPercent());
 		cfg.setTextSize(99);
 		assertEquals(QuillClientConfig.MAX_TEXT_SIZE, cfg.textSize());
 		cfg.setTextSize(2);
 		assertEquals(QuillClientConfig.MIN_TEXT_SIZE, cfg.textSize());
+
+		// Legacy config containing only textSize should migrate cleanly
+		Path legacy = tempDir.resolve("legacy-quill-client.json");
+		java.nio.file.Files.writeString(legacy, "{\"textSize\": 12}\n");
+		QuillClientConfig migrated = QuillClientConfig.load(legacy);
+		assertEquals(Math.round((12 / 9.0f) * 100), migrated.zoomPercent());
 
 		cfg.setDefaultTemplateNamespace("../bad!");
 		assertEquals("demo", cfg.defaultTemplateNamespace());

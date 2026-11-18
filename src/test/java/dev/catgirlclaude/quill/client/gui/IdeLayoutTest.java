@@ -102,4 +102,75 @@ class IdeLayoutTest {
 		assertEquals(700, grownSE.width());
 		assertEquals(400, grownSE.height());
 	}
+
+	@Test
+	void guiScaleIndependentScalingKeepsVirtualLayoutIdenticalAcrossMcScales() {
+		int fbWidth = 1920;
+		int fbHeight = 1080;
+		IdeLayout baseline = null;
+		for (int mcGuiScale = 1; mcGuiScale <= 4; mcGuiScale++) {
+			int screenW = fbWidth / mcGuiScale;
+			int screenH = fbHeight / mcGuiScale;
+			float effective = IdeLayout.computeEffectiveScale(mcGuiScale, 1.0f);
+			int vw = IdeLayout.toVirtualSize(screenW, effective);
+			int vh = IdeLayout.toVirtualSize(screenH, effective);
+			assertEquals(960, vw, "1080p at 100% zoom should normalize to 960 virtual width at GUI scale " + mcGuiScale);
+			assertEquals(540, vh, "1080p at 100% zoom should normalize to 540 virtual height at GUI scale " + mcGuiScale);
+
+			IdeLayout layout = IdeLayout.compute(vw, vh, false, false, true, true, null, 204, 96);
+			if (baseline == null) {
+				baseline = layout;
+			} else {
+				assertEquals(baseline, layout, "Virtual layout must match cleanly across MC GUI Scale " + mcGuiScale);
+			}
+		}
+	}
+
+	@Test
+	void zoomRange50To200PreservesNonOverlappingLayoutOnDesktopAndSmallScreens() {
+		int[][] displays = {{1920, 1080}, {1280, 720}};
+		float[] zooms = {0.50f, 1.00f, 1.50f, 2.00f};
+		for (int[] display : displays) {
+			for (int mcScale = 1; mcScale <= 4; mcScale++) {
+				int screenW = Math.max(1, display[0] / mcScale);
+				int screenH = Math.max(1, display[1] / mcScale);
+				for (float zoom : zooms) {
+					float effective = IdeLayout.computeEffectiveScale(mcScale, zoom);
+					int vw = IdeLayout.toVirtualSize(screenW, effective);
+					int vh = IdeLayout.toVirtualSize(screenH, effective);
+					IdeLayout layout = IdeLayout.compute(vw, vh, false, false, true, true, null, 204, 96);
+					assertTrue(layout.window().width() > 0 && layout.window().width() <= vw);
+					assertTrue(layout.window().height() > 0 && layout.window().height() <= vh);
+					assertTrue(layout.titleBar().bottom() <= layout.statusBar().y());
+					assertTrue(layout.editor().height() >= 0);
+					assertTrue(layout.editor().bottom() <= layout.statusBar().y());
+					assertTrue(layout.statusBar().bottom() <= layout.window().bottom());
+				}
+			}
+		}
+
+		// Extremely compact screen must still never overlap editor/tab/status regions
+		IdeLayout tiny = IdeLayout.compute(160, 100, true, false, true, true, null, 204, 96);
+		assertTrue(tiny.tabBar().bottom() <= tiny.statusBar().y());
+		assertTrue(tiny.editor().bottom() <= tiny.statusBar().y());
+		assertEquals(tiny.window().bottom(), tiny.statusBar().bottom());
+	}
+
+	@Test
+	void themeMetricsAndAnimatorRespectDisabledAnimations() {
+		assertEquals(24, QuillTheme.Metrics.TITLE_BAR_HEIGHT);
+		assertEquals(24, QuillTheme.Metrics.TAB_BAR_HEIGHT);
+		assertEquals(18, QuillTheme.Metrics.BREADCRUMB_HEIGHT);
+		assertEquals(18, QuillTheme.Metrics.STATUS_BAR_HEIGHT);
+		assertEquals(17, QuillTheme.Metrics.EXPLORER_ROW_HEIGHT);
+		assertEquals(5, QuillTheme.Metrics.SCROLLBAR_SIZE);
+		assertEquals(2, QuillTheme.Metrics.PAD_XS);
+		assertEquals(4, QuillTheme.Metrics.PAD_SM);
+		assertEquals(8, QuillTheme.Metrics.PAD_MD);
+		assertEquals(12, QuillTheme.Metrics.PAD_LG);
+
+		assertEquals(1.0f, QuillAnimator.stepTowards(0.0f, 1.0f, 0.016f, 10.0f, false), 0.0001f);
+		float mid = QuillAnimator.stepTowards(0.0f, 1.0f, 0.016f, 10.0f, true);
+		assertTrue(mid > 0.0f && mid < 1.0f);
+	}
 }

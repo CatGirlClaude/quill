@@ -17,6 +17,27 @@ public record IdeLayout(
 	public static final int MIN_WINDOW_WIDTH = 300;
 	public static final int MIN_WINDOW_HEIGHT = 200;
 	public static final int RESIZE_BORDER = 5;
+	public static final float TARGET_DENSITY = 2.0f;
+	public static final int DEFAULT_TEST_MC_GUI_SCALE = 2;
+
+	public static float computeEffectiveScale(int mcGuiScale, float userZoom) {
+		int safeMcScale = Math.max(1, mcGuiScale);
+		float safeZoom = Math.max(0.50f, Math.min(2.00f, userZoom));
+		return (TARGET_DENSITY * safeZoom) / safeMcScale;
+	}
+
+	public static int toVirtualSize(int screenPx, float effectiveScale) {
+		if (screenPx <= 0) {
+			return 0;
+		}
+		float safeScale = Math.max(0.10f, effectiveScale);
+		return Math.max(1, Math.round(screenPx / safeScale));
+	}
+
+	public static float physicalToVirtualScale(float userZoom) {
+		float safeZoom = Math.max(0.50f, Math.min(2.00f, userZoom));
+		return TARGET_DENSITY * safeZoom;
+	}
 
 	public record Rect(int x, int y, int width, int height) {
 		public int right() {
@@ -54,8 +75,8 @@ public record IdeLayout(
 				showDiagnostics,
 				false,
 				null,
-				QuillTheme.SIDEBAR_DEFAULT_WIDTH,
-				QuillTheme.DIAGNOSTICS_HEIGHT
+				QuillTheme.Metrics.SIDEBAR_DEFAULT_WIDTH,
+				QuillTheme.Metrics.DIAGNOSTICS_HEIGHT
 		);
 	}
 
@@ -105,11 +126,11 @@ public record IdeLayout(
 		}
 
 		Rect window = new Rect(winX, winY, winW, winH);
-		int titleH = QuillTheme.TITLE_BAR_HEIGHT;
-		int statusH = QuillTheme.STATUS_BAR_HEIGHT;
+		int statusH = Math.min(QuillTheme.Metrics.STATUS_BAR_HEIGHT, winH);
+		int titleH = Math.min(QuillTheme.Metrics.TITLE_BAR_HEIGHT, Math.max(0, winH - statusH));
 		int maxDiagH = Math.max(60, winH - titleH - statusH - 70);
 		int diagH = (showDiagnostics && winH >= 200)
-				? Math.max(60, Math.min(maxDiagH, customBottomPanelHeight > 0 ? customBottomPanelHeight : QuillTheme.DIAGNOSTICS_HEIGHT))
+				? Math.max(60, Math.min(maxDiagH, customBottomPanelHeight > 0 ? customBottomPanelHeight : QuillTheme.Metrics.DIAGNOSTICS_HEIGHT))
 				: 0;
 
 		Rect titleBar = new Rect(winX, winY, winW, titleH);
@@ -119,14 +140,14 @@ public record IdeLayout(
 				: new Rect(winX, statusBar.y(), winW, 0);
 
 		int bodyY = winY + titleH;
-		int bodyH = Math.max(40, diagnostics.y() - bodyY);
+		int bodyH = Math.max(0, diagnostics.y() - bodyY);
 
-		int activityW = Math.min(QuillTheme.ACTIVITY_BAR_WIDTH, Math.max(24, winW / 10));
+		int activityW = Math.min(QuillTheme.Metrics.ACTIVITY_BAR_WIDTH, Math.max(24, winW / 10));
 		Rect activityBar = new Rect(winX, bodyY, activityW, bodyH);
 
 		int minEditorWidth = Math.min(160, Math.max(80, winW / 3));
 		int availableForSidebarAndEditor = Math.max(0, winW - activityW);
-		int desiredSidebarW = customSidebarWidth > 0 ? Math.max(110, customSidebarWidth) : QuillTheme.SIDEBAR_DEFAULT_WIDTH;
+		int desiredSidebarW = customSidebarWidth > 0 ? Math.max(110, customSidebarWidth) : QuillTheme.Metrics.SIDEBAR_DEFAULT_WIDTH;
 		int sidebarW = 0;
 		if (!sidebarCollapsed && availableForSidebarAndEditor > minEditorWidth + 90) {
 			sidebarW = Math.min(desiredSidebarW, availableForSidebarAndEditor - minEditorWidth);
@@ -135,10 +156,10 @@ public record IdeLayout(
 
 		int editorAreaX = sidebar.right();
 		int editorAreaW = Math.max(0, winX + winW - editorAreaX);
-		int tabH = QuillTheme.TAB_BAR_HEIGHT;
+		int tabH = Math.min(QuillTheme.Metrics.TAB_BAR_HEIGHT, bodyH);
 		Rect tabBar = new Rect(editorAreaX, bodyY, editorAreaW, tabH);
 
-		int breadH = (showBreadcrumbs && bodyH - tabH > 60) ? QuillTheme.BREADCRUMB_HEIGHT : 0;
+		int breadH = (showBreadcrumbs && bodyH - tabH > 60) ? QuillTheme.Metrics.BREADCRUMB_HEIGHT : 0;
 		Rect breadcrumbs = new Rect(editorAreaX, bodyY + tabH, editorAreaW, breadH);
 		Rect editor = new Rect(editorAreaX, breadcrumbs.bottom(), editorAreaW, Math.max(0, bodyH - tabH - breadH));
 

@@ -26,8 +26,13 @@ import java.util.Objects;
  * datapack template defaults, window geometry, and customizable IDE keyboard shortcuts.
  */
 public final class QuillClientConfig {
-	public static final int MIN_TEXT_SIZE = 7;
-	public static final int MAX_TEXT_SIZE = 16;
+	public static final int MIN_ZOOM_PERCENT = 50;
+	public static final int MAX_ZOOM_PERCENT = 200;
+	public static final int DEFAULT_ZOOM_PERCENT = 100;
+	public static final int ZOOM_STEP_PERCENT = 10;
+
+	public static final int MIN_TEXT_SIZE = 5;
+	public static final int MAX_TEXT_SIZE = 18;
 	public static final int DEFAULT_TEXT_SIZE = 9;
 	public static final int DEFAULT_SIDEBAR_WIDTH = 204;
 	public static final int DEFAULT_BOTTOM_PANEL_HEIGHT = 96;
@@ -186,7 +191,9 @@ public final class QuillClientConfig {
 
 	private String themeId = QuillColorPalette.DARK_PLUS.id();
 	private FontChoice fontChoice = FontChoice.SANS_SERIF;
+	private int zoomPercent = DEFAULT_ZOOM_PERCENT;
 	private int textSize = DEFAULT_TEXT_SIZE;
+	private boolean animationsEnabled = true;
 	private boolean pauseGameWhileOpen = false;
 	private AutosaveMode autosaveMode = AutosaveMode.OFF;
 	private ReloadTriggerMode reloadTriggerMode = ReloadTriggerMode.ON_SAVE;
@@ -270,8 +277,13 @@ public final class QuillClientConfig {
 			if (obj.has("fontId") && obj.get("fontId").isJsonPrimitive()) {
 				cfg.setFontChoice(FontChoice.byId(obj.get("fontId").getAsString()));
 			}
-			if (obj.has("textSize") && obj.get("textSize").isJsonPrimitive()) {
+			if (obj.has("zoomPercent") && obj.get("zoomPercent").isJsonPrimitive()) {
+				cfg.setZoomPercent(obj.get("zoomPercent").getAsInt());
+			} else if (obj.has("textSize") && obj.get("textSize").isJsonPrimitive()) {
 				cfg.setTextSize(obj.get("textSize").getAsInt());
+			}
+			if (obj.has("animationsEnabled") && obj.get("animationsEnabled").isJsonPrimitive()) {
+				cfg.setAnimationsEnabled(obj.get("animationsEnabled").getAsBoolean());
 			}
 			if (obj.has("pauseGameWhileOpen") && obj.get("pauseGameWhileOpen").isJsonPrimitive()) {
 				cfg.setPauseGameWhileOpen(obj.get("pauseGameWhileOpen").getAsBoolean());
@@ -333,7 +345,9 @@ public final class QuillClientConfig {
 		JsonObject obj = new JsonObject();
 		obj.addProperty("themeId", themeId);
 		obj.addProperty("fontId", fontChoice.id());
+		obj.addProperty("zoomPercent", zoomPercent);
 		obj.addProperty("textSize", textSize);
+		obj.addProperty("animationsEnabled", animationsEnabled);
 		obj.addProperty("pauseGameWhileOpen", pauseGameWhileOpen);
 		obj.addProperty("autosaveMode", autosaveMode.id());
 		obj.addProperty("reloadTriggerMode", reloadTriggerMode.id());
@@ -360,7 +374,9 @@ public final class QuillClientConfig {
 		QuillClientConfig fresh = createDefault();
 		this.themeId = fresh.themeId;
 		this.fontChoice = fresh.fontChoice;
+		this.zoomPercent = fresh.zoomPercent;
 		this.textSize = fresh.textSize;
+		this.animationsEnabled = fresh.animationsEnabled;
 		this.pauseGameWhileOpen = fresh.pauseGameWhileOpen;
 		this.autosaveMode = fresh.autosaveMode;
 		this.reloadTriggerMode = fresh.reloadTriggerMode;
@@ -402,16 +418,28 @@ public final class QuillClientConfig {
 		this.fontChoice = fontChoice == null ? FontChoice.SANS_SERIF : fontChoice;
 	}
 
+	public int zoomPercent() {
+		return zoomPercent;
+	}
+
+	public void setZoomPercent(int zoomPercent) {
+		this.zoomPercent = Math.max(MIN_ZOOM_PERCENT, Math.min(MAX_ZOOM_PERCENT, zoomPercent));
+		this.textSize = Math.max(MIN_TEXT_SIZE, Math.min(MAX_TEXT_SIZE,
+				Math.round(DEFAULT_TEXT_SIZE * (this.zoomPercent / 100.0f))));
+	}
+
 	public int textSize() {
 		return textSize;
 	}
 
 	public void setTextSize(int textSize) {
 		this.textSize = Math.max(MIN_TEXT_SIZE, Math.min(MAX_TEXT_SIZE, textSize));
+		int derived = Math.round((this.textSize / (float) DEFAULT_TEXT_SIZE) * 100.0f);
+		this.zoomPercent = Math.max(MIN_ZOOM_PERCENT, Math.min(MAX_ZOOM_PERCENT, derived));
 	}
 
 	public float uiScale() {
-		return textSize / (float) DEFAULT_TEXT_SIZE;
+		return zoomPercent / 100.0f;
 	}
 
 	public float editorTextScale() {
@@ -419,21 +447,29 @@ public final class QuillClientConfig {
 	}
 
 	public boolean zoomIn() {
-		int prev = textSize;
-		setTextSize(textSize + 1);
-		return textSize != prev;
+		int prev = zoomPercent;
+		setZoomPercent(zoomPercent + ZOOM_STEP_PERCENT);
+		return zoomPercent != prev;
 	}
 
 	public boolean zoomOut() {
-		int prev = textSize;
-		setTextSize(textSize - 1);
-		return textSize != prev;
+		int prev = zoomPercent;
+		setZoomPercent(zoomPercent - ZOOM_STEP_PERCENT);
+		return zoomPercent != prev;
 	}
 
 	public boolean resetZoom() {
-		int prev = textSize;
-		setTextSize(DEFAULT_TEXT_SIZE);
-		return textSize != prev;
+		int prev = zoomPercent;
+		setZoomPercent(DEFAULT_ZOOM_PERCENT);
+		return zoomPercent != prev;
+	}
+
+	public boolean animationsEnabled() {
+		return animationsEnabled;
+	}
+
+	public void setAnimationsEnabled(boolean animationsEnabled) {
+		this.animationsEnabled = animationsEnabled;
 	}
 
 	public boolean pauseGameWhileOpen() {

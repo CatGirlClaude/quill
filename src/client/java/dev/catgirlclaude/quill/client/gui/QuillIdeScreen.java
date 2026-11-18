@@ -1,9 +1,11 @@
 package dev.catgirlclaude.quill.client.gui;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.blaze3d.platform.cursor.CursorType;
 import com.mojang.blaze3d.platform.cursor.CursorTypes;
 import dev.catgirlclaude.quill.api.PresetDescriptor;
 import dev.catgirlclaude.quill.api.ReloadReport;
+import dev.catgirlclaude.quill.client.config.QuillClientConfig;
 import dev.catgirlclaude.quill.client.editor.WorkspaceFileCache;
 import dev.catgirlclaude.quill.client.session.ClientEditorSession;
 import dev.catgirlclaude.quill.client.session.OpenTabState;
@@ -21,7 +23,9 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Non-pausing VS Code Dark+ IDE screen rendered directly over the live Minecraft world.
+ * Visual Studio Code-inspired Datapack IDE screen rendered over the Minecraft world.
+ * Supports movable &amp; resizable floating window geometry, draggable splitters,
+ * configurable themes/fonts/shortcuts/autosave/pause settings, breadcrumbs, and live tools.
  */
 public class QuillIdeScreen extends Screen {
 	interface TextInputBridge {
@@ -48,6 +52,17 @@ public class QuillIdeScreen extends Screen {
 		}
 	}
 
+	private enum DragMode {
+		NONE,
+		MOVE_WINDOW,
+		RESIZE_WINDOW,
+		RESIZE_SIDEBAR,
+		RESIZE_BOTTOM_PANEL
+	}
+
+	private record BreadcrumbSegment(String label, String fullPath, boolean isFile, IdeLayout.Rect rect) {
+	}
+
 	private final ClientEditorSession session;
 	private final TextInputBridge textInputBridge;
 	private final WorkspaceFileCache workspaceFileCache = new WorkspaceFileCache();
@@ -57,12 +72,24 @@ public class QuillIdeScreen extends Screen {
 	private final QuickActionsAndPresetsWidget quickActions;
 	private final EditorTabBarWidget tabBarWidget;
 	private final CodeEditorWidget codeEditorWidget;
+	private final SettingsPanelWidget settingsPanel;
 	private final BottomPanelWidget bottomPanelWidget;
 
 	private ModalPromptOverlay activeModal = null;
 	private QuickPickOverlay activeQuickPick = null;
+	private boolean settingsOpen = false;
+	private OpenTabState lastObservedActiveTab = null;
 	private boolean textInputActive = false;
 
+	private DragMode dragMode = DragMode.NONE;
+	private IdeLayout.ResizeEdge activeResizeEdge = IdeLayout.ResizeEdge.NONE;
+	private double dragStartMouseX = 0;
+	private double dragStartMouseY = 0;
+	private IdeLayout.WindowBounds dragStartBounds = null;
+	private int dragStartSplitterSize = 0;
+
+	private IdeLayout lastLayout = IdeLayout.compute(854, 480, false, false, false);
+	private IdeLayout.Rect commandCenterRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect runTitleBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect maximizeBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect closeBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
@@ -70,13 +97,24 @@ public class QuillIdeScreen extends Screen {
 	private IdeLayout.Rect searchIconRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect inspectorIconRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect presetsIconRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect settingsIconRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect sidebarSplitterRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect bottomSplitterRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect statusRemoteBadgeRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect saveReloadBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect reloadBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect statusProblemsBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect statusOutputBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect statusWarningPillRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect welcomeNewPackRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect welcomeNewFnRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private IdeLayout.Rect welcomeSettingsRect = new IdeLayout.Rect(0, 0, 0, 0);
 	private IdeLayout.Rect lastSidebarRect = new IdeLayout.Rect(0, 0, 0, 0);
+	private final List<BreadcrumbSegment> breadcrumbSegments = new ArrayList<>();
+
+	private String hoveredActivityTooltip = null;
+	private int hoveredActivityTooltipX = 0;
+	private int hoveredActivityTooltipY = 0;
 
 	public QuillIdeScreen(ClientEditorSession session) {
 		this(Minecraft.getInstance(), Minecraft.getInstance().font, session, TextInputBridge.forMinecraft(Minecraft.getInstance()));
@@ -93,7 +131,15 @@ public class QuillIdeScreen extends Screen {
 		this.tabBarWidget = new EditorTabBarWidget(session, this::openModal, this::closeModal);
 		this.codeEditorWidget = new CodeEditorWidget();
 		this.codeEditorWidget.setOnBufferEdited(session::notifyTabBufferEdited);
+		this.settingsPanel = new SettingsPanelWidget(this::closeSettings, this::onResetWindowBounds);
 		this.bottomPanelWidget = new BottomPanelWidget(session);
+		this.lastObservedActiveTab = session.activeTab();
+		this.tabBarWidget.setSettingsHooks(
+				() -> settingsOpen,
+				this::openSettings,
+				this::closeSettings,
+				this::closeSettings
+		);
 	}
 
 	public ClientEditorSession session() {
@@ -116,9 +162,54 @@ public class QuillIdeScreen extends Screen {
 		return inspectorSidebar;
 	}
 
+	SettingsPanelWidget settingsPanel() {
+		return settingsPanel;
+	}
+
+	public boolean isSettingsOpen() {
+		return settingsOpen;
+	}
+
+	public void openSettings() {
+		this.codeEditorWidget.dismissAutocomplete();
+		this.explorerTree.cancelInlineInput();
+		this.searchSidebar.unfocus();
+		this.activeQuickPick = null;
+		this.settingsPanel.syncFromConfig();
+		this.settingsOpen = true;
+		this.lastObservedActiveTab = session.activeTab();
+		syncTextInputState();
+	}
+
+	public void closeSettings() {
+		if (!settingsOpen) {
+			return;
+		}
+		this.settingsOpen = false;
+		this.settingsPanel.unfocus();
+		syncTextInputState();
+	}
+
+	public void toggleSettings() {
+		if (settingsOpen) {
+			closeSettings();
+		} else {
+			openSettings();
+		}
+	}
+
+	private void onResetWindowBounds() {
+		if (session.isMaximized()) {
+			session.toggleMaximized();
+		}
+		dragMode = DragMode.NONE;
+		activeResizeEdge = IdeLayout.ResizeEdge.NONE;
+	}
+
 	protected void openModal(ModalPromptOverlay modal) {
 		this.codeEditorWidget.dismissAutocomplete();
 		this.explorerTree.cancelInlineInput();
+		this.settingsPanel.unfocus();
 		this.activeQuickPick = null;
 		this.activeModal = modal;
 		syncTextInputState();
@@ -136,6 +227,7 @@ public class QuillIdeScreen extends Screen {
 		this.codeEditorWidget.dismissAutocomplete();
 		this.searchSidebar.unfocus();
 		this.explorerTree.cancelInlineInput();
+		this.settingsPanel.unfocus();
 		this.activeQuickPick = new QuickPickOverlay(
 				mode,
 				this::buildCommandPaletteItems,
@@ -157,6 +249,7 @@ public class QuillIdeScreen extends Screen {
 	protected void openSearchSidebar() {
 		this.codeEditorWidget.dismissAutocomplete();
 		this.explorerTree.cancelInlineInput();
+		this.settingsPanel.unfocus();
 		session.setSidebarView(ClientEditorSession.SidebarView.SEARCH);
 		OpenTabState active = session.activeTab();
 		String selected = (active != null && active.buffer().hasSelection()) ? active.buffer().getSelectedText() : null;
@@ -168,6 +261,7 @@ public class QuillIdeScreen extends Screen {
 		this.codeEditorWidget.dismissAutocomplete();
 		this.searchSidebar.unfocus();
 		this.explorerTree.cancelInlineInput();
+		this.settingsPanel.unfocus();
 		session.setSidebarView(ClientEditorSession.SidebarView.INSPECTOR);
 		inspectorSidebar.refresh(invalidateCache);
 		syncTextInputState();
@@ -198,6 +292,9 @@ public class QuillIdeScreen extends Screen {
 		if (isSearchInputFocused()) {
 			return true;
 		}
+		if (settingsOpen) {
+			return settingsPanel.hasFocusedTextInput();
+		}
 		return session.activeTab() != null;
 	}
 
@@ -212,6 +309,15 @@ public class QuillIdeScreen extends Screen {
 		} else {
 			textInputBridge.stopTextInput(this);
 		}
+	}
+
+	private void syncActiveTabSelection() {
+		OpenTabState current = session.activeTab();
+		if (settingsOpen && current != null && current != lastObservedActiveTab) {
+			settingsOpen = false;
+			settingsPanel.unfocus();
+		}
+		lastObservedActiveTab = current;
 	}
 
 	private void pollPendingConflictModal() {
@@ -257,6 +363,7 @@ public class QuillIdeScreen extends Screen {
 	@Override
 	public void tick() {
 		super.tick();
+		syncActiveTabSelection();
 		pollPendingConflictModal();
 		syncTextInputState();
 	}
@@ -265,17 +372,20 @@ public class QuillIdeScreen extends Screen {
 	public void removed() {
 		textInputActive = false;
 		textInputBridge.stopTextInput(this);
+		settingsPanel.unfocus();
+		dragMode = DragMode.NONE;
+		session.onIdeClosed();
 		super.removed();
 	}
 
 	@Override
 	public boolean isInputCaptured() {
-		return wantsTextInput() || super.isInputCaptured();
+		return wantsTextInput() || (settingsOpen && settingsPanel.isRecordingKeybind()) || super.isInputCaptured();
 	}
 
 	@Override
 	public boolean isPauseScreen() {
-		return false;
+		return QuillClientConfig.current().pauseGameWhileOpen();
 	}
 
 	@Override
@@ -285,23 +395,56 @@ public class QuillIdeScreen extends Screen {
 		}
 	}
 
+	private IdeLayout computeCurrentLayout() {
+		QuillClientConfig cfg = QuillClientConfig.current();
+		IdeLayout.WindowBounds custom = cfg.hasCustomWindowBounds()
+				? new IdeLayout.WindowBounds(cfg.windowX(), cfg.windowY(), cfg.windowWidth(), cfg.windowHeight())
+				: null;
+		boolean showBreadcrumbs = !settingsOpen && session.activeTab() != null;
+		return IdeLayout.compute(
+				width,
+				height,
+				session.isMaximized(),
+				session.isSidebarCollapsed(),
+				session.isBottomPanelOpen(),
+				showBreadcrumbs,
+				custom,
+				cfg.sidebarWidth(),
+				cfg.bottomPanelHeight()
+		);
+	}
+
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+		syncActiveTabSelection();
 		pollPendingConflictModal();
 		syncTextInputState();
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
 
-		boolean showBottomPanel = session.isBottomPanelOpen();
-		IdeLayout layout = IdeLayout.compute(width, height, session.isMaximized(), session.isSidebarCollapsed(), showBottomPanel);
+		IdeLayout layout = computeCurrentLayout();
+		lastLayout = layout;
 		lastSidebarRect = layout.sidebar();
+		sidebarSplitterRect = layout.sidebar().width() > 0
+				? new IdeLayout.Rect(layout.sidebar().right() - 3, layout.sidebar().y(), 5, layout.sidebar().height())
+				: new IdeLayout.Rect(0, 0, 0, 0);
+		bottomSplitterRect = layout.diagnosticsBanner().height() > 0
+				? new IdeLayout.Rect(layout.window().x(), layout.diagnosticsBanner().y() - 2, layout.window().width(), 5)
+				: new IdeLayout.Rect(0, 0, 0, 0);
 
 		boolean overlayOpen = activeModal != null || activeQuickPick != null;
 		int uiMouseX = overlayOpen ? -1 : mouseX;
 		int uiMouseY = overlayOpen ? -1 : mouseY;
 
-		// Outer frame
+		hoveredActivityTooltip = null;
+
+		// Outer floating drop shadow + crisp frame
+		if (!session.isMaximized()) {
+			QuillDraw.fill(graphics, layout.window().x() + 3, layout.window().y() + 3,
+					layout.window().width(), layout.window().height(), 0x55000000);
+		}
 		QuillDraw.fill(graphics, layout.window().x(), layout.window().y(), layout.window().width(), layout.window().height(), QuillTheme.BG_EDITOR);
-		QuillDraw.outline(graphics, layout.window().x(), layout.window().y(), layout.window().width(), layout.window().height(), QuillTheme.BORDER_SUBTLE);
+		QuillDraw.outline(graphics, layout.window().x(), layout.window().y(), layout.window().width(), layout.window().height(),
+				dragMode != DragMode.NONE ? QuillTheme.ACCENT_BLUE : QuillTheme.BORDER_SUBTLE);
 
 		renderTitleBar(graphics, layout.titleBar(), uiMouseX, uiMouseY);
 		renderActivityBar(graphics, layout.activityBar(), uiMouseX, uiMouseY);
@@ -309,6 +452,11 @@ public class QuillIdeScreen extends Screen {
 			renderSidebar(graphics, layout.sidebar(), uiMouseX, uiMouseY);
 		}
 		renderTabBar(graphics, layout.tabBar(), uiMouseX, uiMouseY);
+		if (layout.breadcrumbs().height() > 0) {
+			renderBreadcrumbs(graphics, layout.breadcrumbs(), uiMouseX, uiMouseY);
+		} else {
+			breadcrumbSegments.clear();
+		}
 		renderEditorArea(graphics, layout.editor(), uiMouseX, uiMouseY);
 		if (layout.diagnosticsBanner().height() > 0) {
 			bottomPanelWidget.render(graphics, font, layout.diagnosticsBanner(), uiMouseX, uiMouseY);
@@ -316,6 +464,41 @@ public class QuillIdeScreen extends Screen {
 			bottomPanelWidget.clearBounds();
 		}
 		renderStatusBar(graphics, layout.statusBar(), uiMouseX, uiMouseY);
+
+		// Splitter hover / active highlights and resize cursors
+		if (!overlayOpen) {
+			boolean hoverSidebarSplit = dragMode == DragMode.RESIZE_SIDEBAR
+					|| (dragMode == DragMode.NONE && sidebarSplitterRect.contains(mouseX, mouseY));
+			boolean hoverBottomSplit = dragMode == DragMode.RESIZE_BOTTOM_PANEL
+					|| (dragMode == DragMode.NONE && bottomSplitterRect.contains(mouseX, mouseY));
+			if (hoverSidebarSplit && layout.sidebar().width() > 0) {
+				QuillDraw.fill(graphics, layout.sidebar().right() - 1, layout.sidebar().y(), 2, layout.sidebar().height(), QuillTheme.ACCENT_BLUE);
+				QuillDraw.requestCursor(graphics, CursorTypes.RESIZE_EW);
+			} else if (hoverBottomSplit && layout.diagnosticsBanner().height() > 0) {
+				QuillDraw.fill(graphics, layout.window().x(), layout.diagnosticsBanner().y(), layout.window().width(), 2, QuillTheme.ACCENT_BLUE);
+				QuillDraw.requestCursor(graphics, CursorTypes.RESIZE_NS);
+			} else if (dragMode == DragMode.MOVE_WINDOW) {
+				QuillDraw.requestCursor(graphics, CursorTypes.RESIZE_ALL);
+			} else if (dragMode == DragMode.RESIZE_WINDOW) {
+				QuillDraw.requestCursor(graphics, cursorForResizeEdge(activeResizeEdge));
+			} else if (!session.isMaximized() && !isTitleBarInteractiveHit(mouseX, mouseY)) {
+				IdeLayout.ResizeEdge hoverEdge = IdeLayout.hitTestResizeEdge(layout.window(), mouseX, mouseY, IdeLayout.RESIZE_BORDER);
+				if (hoverEdge != IdeLayout.ResizeEdge.NONE) {
+					QuillDraw.requestCursor(graphics, cursorForResizeEdge(hoverEdge));
+				}
+			}
+		}
+
+		// Floating Activity Bar tooltip on top of sidebar/editor
+		if (!overlayOpen && hoveredActivityTooltip != null) {
+			int tw = QuillDraw.textWidth(font, hoveredActivityTooltip) + 10;
+			int th = 16;
+			int tx = Math.min(width - tw - 4, hoveredActivityTooltipX);
+			int ty = Math.max(4, Math.min(height - th - 4, hoveredActivityTooltipY));
+			QuillDraw.fill(graphics, tx, ty, tw, th, QuillTheme.BG_POPUP);
+			QuillDraw.outline(graphics, tx, ty, tw, th, QuillTheme.BORDER_SUBTLE);
+			QuillDraw.text(graphics, font, hoveredActivityTooltip, tx + 5, ty + (th - font.lineHeight) / 2, QuillTheme.TEXT_BRIGHT);
+		}
 
 		if (activeQuickPick != null) {
 			activeQuickPick.render(graphics, font, width, height, mouseX, mouseY);
@@ -336,11 +519,12 @@ public class QuillIdeScreen extends Screen {
 		int textY = bar.y() + (bar.height() - font.lineHeight) / 2;
 		int rightBoundary = maximizeBtnRect.x();
 
-		String fnId = session.activeFunctionId();
+		// Optional "> Run" button when viewing an .mcfunction
+		String fnId = settingsOpen ? null : session.activeFunctionId();
 		boolean hoverRun = false;
-		if (fnId != null && bar.width() > 220) {
+		if (fnId != null && bar.width() > 260) {
 			String runLabel = "> Run";
-			int rw = font.width(runLabel) + 10;
+			int rw = QuillDraw.textWidth(font, runLabel) + 10;
 			runTitleBtnRect = new IdeLayout.Rect(maximizeBtnRect.x() - rw - 5, bar.y() + 2, rw, btnSize);
 			hoverRun = runTitleBtnRect.contains(mouseX, mouseY);
 			QuillDraw.fill(graphics, runTitleBtnRect.x(), runTitleBtnRect.y(), runTitleBtnRect.width(), runTitleBtnRect.height(),
@@ -351,6 +535,52 @@ public class QuillIdeScreen extends Screen {
 			runTitleBtnRect = new IdeLayout.Rect(0, 0, 0, 0);
 		}
 
+		// Left brand badge ("Q") + "Quill"
+		int badgeX = bar.x() + 6;
+		int badgeY = bar.y() + 4;
+		QuillDraw.fill(graphics, badgeX, badgeY, 13, 13, QuillTheme.ACCENT_BLUE);
+		QuillDraw.text(graphics, font, "Q", badgeX + (13 - QuillDraw.textWidth(font, "Q")) / 2, badgeY + 2, QuillTheme.TEXT_BRIGHT);
+		int leftBoundary = badgeX + 18;
+		if (bar.width() >= 420) {
+			QuillDraw.text(graphics, font, "Quill", leftBoundary, textY, QuillTheme.TEXT_PRIMARY);
+			leftBoundary += QuillDraw.textWidth(font, "Quill") + 10;
+		}
+
+		// Centered VS Code Command Center search pill
+		int availCenter = rightBoundary - leftBoundary - 12;
+		boolean hoverCmdCenter = false;
+		if (availCenter >= 120) {
+			int pillW = Math.min(280, Math.max(120, availCenter - 16));
+			int pillX = Math.max(leftBoundary + 4, bar.x() + (bar.width() - pillW) / 2);
+			if (pillX + pillW > rightBoundary - 6) {
+				pillX = rightBoundary - 6 - pillW;
+			}
+			commandCenterRect = new IdeLayout.Rect(pillX, bar.y() + 3, pillW, bar.height() - 6);
+			hoverCmdCenter = commandCenterRect.contains(mouseX, mouseY);
+			QuillDraw.fill(graphics, commandCenterRect.x(), commandCenterRect.y(), commandCenterRect.width(), commandCenterRect.height(),
+					hoverCmdCenter ? QuillTheme.BG_HOVER : QuillTheme.BG_INPUT);
+			QuillDraw.outline(graphics, commandCenterRect.x(), commandCenterRect.y(), commandCenterRect.width(), commandCenterRect.height(),
+					hoverCmdCenter ? QuillTheme.ACCENT_BLUE : QuillTheme.BORDER_SUBTLE);
+
+			OpenTabState active = session.activeTab();
+			String quickOpenKey = QuillClientConfig.current().shortcut(QuillClientConfig.ShortcutAction.QUICK_OPEN).displayLabel();
+			String pillText = settingsOpen
+					? "Settings  (" + quickOpenKey + ")"
+					: (active != null
+							? active.fileName() + (active.isDirty() ? " *" : "") + "  (" + quickOpenKey + ")"
+							: "Search files or >commands  (" + quickOpenKey + ")");
+			String clipped = QuillDraw.clipToWidth(font, pillText, pillW - 12);
+			int pillTextX = commandCenterRect.x() + (commandCenterRect.width() - QuillDraw.textWidth(font, clipped)) / 2;
+			QuillDraw.text(graphics, font, clipped, pillTextX, textY, QuillTheme.TEXT_MUTED);
+		} else {
+			commandCenterRect = new IdeLayout.Rect(0, 0, 0, 0);
+			OpenTabState active = session.activeTab();
+			String titleText = active != null ? active.fileName() : "Quill IDE";
+			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, titleText, Math.max(0, rightBoundary - leftBoundary - 6)),
+					leftBoundary, textY, QuillTheme.TEXT_PRIMARY);
+		}
+
+		// Geometric Maximize/Restore & Close buttons
 		boolean hoverMax = maximizeBtnRect.contains(mouseX, mouseY);
 		boolean hoverClose = closeBtnRect.contains(mouseX, mouseY);
 		QuillDraw.fill(graphics, maximizeBtnRect.x(), maximizeBtnRect.y(), maximizeBtnRect.width(), maximizeBtnRect.height(),
@@ -358,64 +588,159 @@ public class QuillIdeScreen extends Screen {
 		QuillDraw.fill(graphics, closeBtnRect.x(), closeBtnRect.y(), closeBtnRect.width(), closeBtnRect.height(),
 				hoverClose ? QuillTheme.BG_BUTTON_DANGER : QuillTheme.BG_TITLE_BAR);
 
-		String maxGlyph = session.isMaximized() ? "[-]" : "[+]";
-		QuillDraw.text(graphics, font, maxGlyph, maximizeBtnRect.x() + (maximizeBtnRect.width() - font.width(maxGlyph)) / 2, textY, QuillTheme.TEXT_PRIMARY);
-		QuillDraw.text(graphics, font, "X", closeBtnRect.x() + (closeBtnRect.width() - font.width("X")) / 2, textY,
-				hoverClose ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY);
-
-		if (hoverMax || hoverClose || hoverRun) {
-			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
+		int iconColor = QuillTheme.TEXT_PRIMARY;
+		int mxIcon = maximizeBtnRect.x() + (maximizeBtnRect.width() - 8) / 2;
+		int myIcon = maximizeBtnRect.y() + (maximizeBtnRect.height() - 8) / 2;
+		if (session.isMaximized()) {
+			// Overlapping restore squares
+			QuillDraw.outline(graphics, mxIcon + 2, myIcon, 6, 6, iconColor);
+			QuillDraw.fill(graphics, mxIcon, myIcon + 2, 6, 6, hoverMax ? QuillTheme.BG_HOVER : QuillTheme.BG_TITLE_BAR);
+			QuillDraw.outline(graphics, mxIcon, myIcon + 2, 6, 6, iconColor);
+		} else {
+			QuillDraw.outline(graphics, mxIcon, myIcon, 8, 8, iconColor);
+			QuillDraw.hLine(graphics, mxIcon, 8, myIcon + 1, iconColor);
 		}
 
-		OpenTabState active = session.activeTab();
-		String titleText = active != null
-				? "Quill  -  datapacks/" + active.relativePath() + (active.isDirty() ? " *" : "")
-				: "Quill  -  Datapack IDE (MC 26.3)";
-		int availableWidth = Math.max(0, rightBoundary - (bar.x() + 8) - 6);
-		String clipped = QuillDraw.clipToWidth(font, titleText, availableWidth);
-		QuillDraw.text(graphics, font, clipped, bar.x() + 8, textY, QuillTheme.TEXT_PRIMARY);
+		int closeColor = hoverClose ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_PRIMARY;
+		QuillDraw.text(graphics, font, "x", closeBtnRect.x() + (closeBtnRect.width() - QuillDraw.textWidth(font, "x")) / 2,
+				textY, closeColor);
+
+		if (hoverMax || hoverClose || hoverRun || hoverCmdCenter) {
+			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
+		}
 	}
 
 	protected void renderActivityBar(GuiGraphicsExtractor graphics, IdeLayout.Rect bar, int mouseX, int mouseY) {
 		QuillDraw.fill(graphics, bar.x(), bar.y(), bar.width(), bar.height(), QuillTheme.BG_ACTIVITY_BAR);
 		QuillDraw.vLine(graphics, bar.right() - 1, bar.y(), bar.height(), QuillTheme.BORDER_SUBTLE);
 
-		int iconSize = bar.width() - 2;
-		explorerIconRect = new IdeLayout.Rect(bar.x(), bar.y() + 4, iconSize, 26);
-		searchIconRect = new IdeLayout.Rect(bar.x(), explorerIconRect.bottom() + 4, iconSize, 26);
-		inspectorIconRect = new IdeLayout.Rect(bar.x(), searchIconRect.bottom() + 4, iconSize, 26);
-		presetsIconRect = new IdeLayout.Rect(bar.x(), inspectorIconRect.bottom() + 4, iconSize, 26);
+		int iconW = bar.width() - 1;
+		int iconH = 28;
+		explorerIconRect = new IdeLayout.Rect(bar.x(), bar.y() + 4, iconW, iconH);
+		searchIconRect = new IdeLayout.Rect(bar.x(), explorerIconRect.bottom() + 2, iconW, iconH);
+		inspectorIconRect = new IdeLayout.Rect(bar.x(), searchIconRect.bottom() + 2, iconW, iconH);
+		presetsIconRect = new IdeLayout.Rect(bar.x(), inspectorIconRect.bottom() + 2, iconW, iconH);
+		settingsIconRect = new IdeLayout.Rect(bar.x(), Math.max(presetsIconRect.bottom() + 4, bar.bottom() - iconH - 4), iconW, iconH);
 
-		drawActivityButton(graphics, explorerIconRect, "E",
-				!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER,
-				explorerIconRect.contains(mouseX, mouseY));
-		drawActivityButton(graphics, searchIconRect, "S",
-				!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.SEARCH,
-				searchIconRect.contains(mouseX, mouseY));
-		drawActivityButton(graphics, inspectorIconRect, "I",
-				!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.INSPECTOR,
-				inspectorIconRect.contains(mouseX, mouseY));
-		drawActivityButton(graphics, presetsIconRect, "P",
-				!session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.PRESETS,
-				presetsIconRect.contains(mouseX, mouseY));
+		QuillClientConfig cfg = QuillClientConfig.current();
+		boolean expActive = !session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.EXPLORER;
+		boolean srcActive = !session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.SEARCH;
+		boolean insActive = !session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.INSPECTOR;
+		boolean preActive = !session.isSidebarCollapsed() && session.sidebarView() == ClientEditorSession.SidebarView.PRESETS;
 
-		if (explorerIconRect.contains(mouseX, mouseY)
-				|| searchIconRect.contains(mouseX, mouseY)
-				|| inspectorIconRect.contains(mouseX, mouseY)
-				|| presetsIconRect.contains(mouseX, mouseY)) {
+		boolean expHover = explorerIconRect.contains(mouseX, mouseY);
+		boolean srcHover = searchIconRect.contains(mouseX, mouseY);
+		boolean insHover = inspectorIconRect.contains(mouseX, mouseY);
+		boolean preHover = presetsIconRect.contains(mouseX, mouseY);
+		boolean setHover = settingsIconRect.contains(mouseX, mouseY);
+
+		drawActivitySlot(graphics, explorerIconRect, expActive, expHover);
+		drawExplorerIcon(graphics, explorerIconRect, expActive || expHover ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
+
+		drawActivitySlot(graphics, searchIconRect, srcActive, srcHover);
+		drawSearchIcon(graphics, searchIconRect, srcActive || srcHover ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
+
+		drawActivitySlot(graphics, inspectorIconRect, insActive, insHover);
+		drawInspectorIcon(graphics, inspectorIconRect, insActive || insHover ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
+
+		drawActivitySlot(graphics, presetsIconRect, preActive, preHover);
+		drawPresetsIcon(graphics, presetsIconRect, preActive || preHover ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
+
+		drawActivitySlot(graphics, settingsIconRect, settingsOpen, setHover);
+		drawGearIcon(graphics, settingsIconRect, settingsOpen || setHover ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
+
+		if (expHover) {
+			setActivityTooltip("Explorer (" + cfg.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_SIDEBAR).displayLabel() + ")", explorerIconRect);
+		} else if (srcHover) {
+			setActivityTooltip("Search (" + cfg.shortcut(QuillClientConfig.ShortcutAction.SEARCH_IN_FILES).displayLabel() + ")", searchIconRect);
+		} else if (insHover) {
+			setActivityTooltip("Macro & Scoreboard Inspector", inspectorIconRect);
+		} else if (preHover) {
+			setActivityTooltip("Presets & Quick Actions", presetsIconRect);
+		} else if (setHover) {
+			setActivityTooltip("Settings (" + cfg.shortcut(QuillClientConfig.ShortcutAction.OPEN_SETTINGS).displayLabel() + ")", settingsIconRect);
+		}
+
+		if (expHover || srcHover || insHover || preHover || setHover) {
 			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 		}
 	}
 
-	private void drawActivityButton(GuiGraphicsExtractor graphics, IdeLayout.Rect rect, String label, boolean active, boolean hovered) {
+	private void setActivityTooltip(String text, IdeLayout.Rect anchor) {
+		hoveredActivityTooltip = text;
+		hoveredActivityTooltipX = anchor.right() + 4;
+		hoveredActivityTooltipY = anchor.y() + (anchor.height() - 16) / 2;
+	}
+
+	private static void drawActivitySlot(GuiGraphicsExtractor graphics, IdeLayout.Rect rect, boolean active, boolean hovered) {
 		if (active) {
-			QuillDraw.fill(graphics, rect.x(), rect.y(), 2, rect.height(), QuillTheme.ACCENT_BLUE);
+			QuillDraw.fill(graphics, rect.x(), rect.y() + 2, 2, rect.height() - 4, QuillTheme.ACCENT_BLUE);
 		} else if (hovered) {
-			QuillDraw.fill(graphics, rect.x(), rect.y(), rect.width(), rect.height(), QuillTheme.BG_HOVER);
+			QuillDraw.fill(graphics, rect.x() + 2, rect.y() + 2, rect.width() - 4, rect.height() - 4, QuillTheme.BG_HOVER);
 		}
-		int tx = rect.x() + (rect.width() - font.width(label)) / 2;
-		int ty = rect.y() + (rect.height() - font.lineHeight) / 2;
-		QuillDraw.text(graphics, font, label, tx, ty, active ? QuillTheme.TEXT_BRIGHT : QuillTheme.TEXT_MUTED);
+	}
+
+	private static void drawExplorerIcon(GuiGraphicsExtractor graphics, IdeLayout.Rect r, int color) {
+		int cx = r.x() + (r.width() - 12) / 2;
+		int cy = r.y() + (r.height() - 13) / 2;
+		// Back document
+		QuillDraw.outline(graphics, cx + 3, cy, 9, 10, color);
+		// Front document (masked interior so lines don't collide)
+		QuillDraw.fill(graphics, cx, cy + 3, 9, 10, QuillTheme.BG_ACTIVITY_BAR);
+		QuillDraw.outline(graphics, cx, cy + 3, 9, 10, color);
+		QuillDraw.hLine(graphics, cx + 2, 5, cy + 6, color);
+		QuillDraw.hLine(graphics, cx + 2, 5, cy + 9, color);
+	}
+
+	private static void drawSearchIcon(GuiGraphicsExtractor graphics, IdeLayout.Rect r, int color) {
+		int cx = r.x() + (r.width() - 12) / 2;
+		int cy = r.y() + (r.height() - 12) / 2;
+		// Magnifier ring
+		QuillDraw.outline(graphics, cx + 1, cy + 1, 7, 7, color);
+		// Diagonal handle
+		QuillDraw.fill(graphics, cx + 7, cy + 7, 2, 2, color);
+		QuillDraw.fill(graphics, cx + 9, cy + 9, 2, 2, color);
+		QuillDraw.fill(graphics, cx + 10, cy + 10, 2, 2, color);
+	}
+
+	private static void drawInspectorIcon(GuiGraphicsExtractor graphics, IdeLayout.Rect r, int color) {
+		int cx = r.x() + (r.width() - 12) / 2;
+		int cy = r.y() + (r.height() - 12) / 2;
+		// Variable tree / nodes icon
+		QuillDraw.fill(graphics, cx, cy + 1, 3, 3, color);
+		QuillDraw.hLine(graphics, cx + 4, 8, cy + 2, color);
+		QuillDraw.vLine(graphics, cx + 1, cy + 4, 7, color);
+		QuillDraw.hLine(graphics, cx + 1, 4, cy + 6, color);
+		QuillDraw.fill(graphics, cx + 5, cy + 5, 7, 2, color);
+		QuillDraw.hLine(graphics, cx + 1, 4, cy + 10, color);
+		QuillDraw.fill(graphics, cx + 5, cy + 9, 5, 2, color);
+	}
+
+	private static void drawPresetsIcon(GuiGraphicsExtractor graphics, IdeLayout.Rect r, int color) {
+		int cx = r.x() + (r.width() - 12) / 2;
+		int cy = r.y() + (r.height() - 12) / 2;
+		// VS Code Extensions 4-tile grid (top-right tile offset)
+		QuillDraw.outline(graphics, cx, cy + 1, 5, 5, color);
+		QuillDraw.outline(graphics, cx, cy + 7, 5, 5, color);
+		QuillDraw.outline(graphics, cx + 6, cy + 7, 5, 5, color);
+		QuillDraw.outline(graphics, cx + 7, cy, 5, 5, color);
+	}
+
+	private static void drawGearIcon(GuiGraphicsExtractor graphics, IdeLayout.Rect r, int color) {
+		int cx = r.x() + r.width() / 2;
+		int cy = r.y() + r.height() / 2;
+		// 4 cardinal + 4 diagonal teeth
+		QuillDraw.fill(graphics, cx - 1, cy - 6, 2, 2, color);
+		QuillDraw.fill(graphics, cx - 1, cy + 4, 2, 2, color);
+		QuillDraw.fill(graphics, cx - 6, cy - 1, 2, 2, color);
+		QuillDraw.fill(graphics, cx + 4, cy - 1, 2, 2, color);
+		QuillDraw.fill(graphics, cx - 5, cy - 5, 2, 2, color);
+		QuillDraw.fill(graphics, cx + 3, cy - 5, 2, 2, color);
+		QuillDraw.fill(graphics, cx - 5, cy + 3, 2, 2, color);
+		QuillDraw.fill(graphics, cx + 3, cy + 3, 2, 2, color);
+		// Outer gear body + hollow center
+		QuillDraw.fill(graphics, cx - 4, cy - 4, 8, 8, color);
+		QuillDraw.fill(graphics, cx - 2, cy - 2, 4, 4, QuillTheme.BG_ACTIVITY_BAR);
 	}
 
 	protected void renderSidebar(GuiGraphicsExtractor graphics, IdeLayout.Rect sidebar, int mouseX, int mouseY) {
@@ -434,50 +759,140 @@ public class QuillIdeScreen extends Screen {
 		tabBarWidget.render(graphics, font, tabBar, mouseX, mouseY);
 	}
 
+	protected void renderBreadcrumbs(GuiGraphicsExtractor graphics, IdeLayout.Rect bar, int mouseX, int mouseY) {
+		breadcrumbSegments.clear();
+		QuillDraw.fill(graphics, bar.x(), bar.y(), bar.width(), bar.height(), QuillTheme.BG_BREADCRUMB);
+		QuillDraw.hLine(graphics, bar.x(), bar.width(), bar.bottom() - 1, QuillTheme.BORDER_SUBTLE);
+
+		OpenTabState active = session.activeTab();
+		if (active == null || bar.width() < 24) {
+			return;
+		}
+		String[] parts = active.relativePath().split("/");
+		int x = bar.x() + 8;
+		int textY = bar.y() + (bar.height() - font.lineHeight) / 2;
+		StringBuilder pathAcc = new StringBuilder();
+		boolean anyHovered = false;
+
+		QuillDraw.beginClip(graphics, bar);
+		for (int i = 0; i < parts.length; i++) {
+			if (i > 0) {
+				String sep = " > ";
+				QuillDraw.text(graphics, font, sep, x, textY, QuillTheme.TEXT_MUTED);
+				x += QuillDraw.textWidth(font, sep);
+				pathAcc.append('/');
+			}
+			pathAcc.append(parts[i]);
+			boolean isFile = i == parts.length - 1;
+			String label = parts[i];
+			int segW = QuillDraw.textWidth(font, label) + 4;
+			IdeLayout.Rect segRect = new IdeLayout.Rect(x - 2, bar.y() + 1, segW, bar.height() - 2);
+			breadcrumbSegments.add(new BreadcrumbSegment(label, pathAcc.toString(), isFile, segRect));
+
+			boolean hover = bar.contains(mouseX, mouseY) && segRect.contains(mouseX, mouseY);
+			if (hover) {
+				anyHovered = true;
+				QuillDraw.fill(graphics, segRect.x(), segRect.y(), segRect.width(), segRect.height(), QuillTheme.BG_HOVER);
+			}
+			int color = isFile ? QuillTheme.TEXT_BRIGHT : (hover ? QuillTheme.TEXT_PRIMARY : QuillTheme.TEXT_MUTED);
+			QuillDraw.text(graphics, font, label, x, textY, color);
+			x += QuillDraw.textWidth(font, label);
+			if (x > bar.right() - 8) {
+				break;
+			}
+		}
+		QuillDraw.endClip(graphics);
+
+		if (anyHovered) {
+			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
+		}
+	}
+
 	protected void renderEditorArea(GuiGraphicsExtractor graphics, IdeLayout.Rect editor, int mouseX, int mouseY) {
 		QuillDraw.fill(graphics, editor.x(), editor.y(), editor.width(), editor.height(), QuillTheme.BG_EDITOR);
+		if (settingsOpen) {
+			welcomeNewPackRect = new IdeLayout.Rect(0, 0, 0, 0);
+			welcomeNewFnRect = new IdeLayout.Rect(0, 0, 0, 0);
+			welcomeSettingsRect = new IdeLayout.Rect(0, 0, 0, 0);
+			settingsPanel.render(graphics, font, editor, mouseX, mouseY);
+			return;
+		}
 		OpenTabState active = session.activeTab();
 		if (active == null) {
 			QuillDraw.beginClip(graphics, editor);
-			int centerY = editor.y() + Math.max(16, editor.height() / 3);
-			int leftX = editor.x() + 20;
-			QuillDraw.textShadow(graphics, font, "Quill Datapack IDE", leftX, centerY, QuillTheme.TEXT_BRIGHT);
-			QuillDraw.text(graphics, font, "Click a file in Explorer or scaffold with Quick Actions:",
-					leftX, centerY + 16, QuillTheme.TEXT_MUTED);
+			int leftX = editor.x() + 24;
+			int topY = editor.y() + Math.max(18, editor.height() / 5);
 
-			int btnY = centerY + 34;
+			QuillDraw.textShadow(graphics, font, "Quill Datapack IDE", leftX, topY, QuillTheme.TEXT_BRIGHT);
+			QuillDraw.text(graphics, font, "Visual Studio Code workspace for Minecraft 26.3 datapacks",
+					leftX, topY + 13, QuillTheme.TEXT_MUTED);
+
+			int btnY = topY + 32;
 			String dpLabel = "+ New Datapack";
 			String fnLabel = "+ New .mcfunction";
-			int dpW = font.width(dpLabel) + 14;
-			int fnW = font.width(fnLabel) + 14;
+			String setLabel = "Settings";
+			int dpW = QuillDraw.textWidth(font, dpLabel) + 14;
+			int fnW = QuillDraw.textWidth(font, fnLabel) + 14;
+			int setW = QuillDraw.textWidth(font, setLabel) + 14;
 			welcomeNewPackRect = new IdeLayout.Rect(leftX, btnY, dpW, 20);
 			welcomeNewFnRect = new IdeLayout.Rect(leftX + dpW + 8, btnY, fnW, 20);
+			welcomeSettingsRect = new IdeLayout.Rect(welcomeNewFnRect.right() + 8, btnY, setW, 20);
 
 			boolean hoverDp = welcomeNewPackRect.contains(mouseX, mouseY);
 			boolean hoverFn = welcomeNewFnRect.contains(mouseX, mouseY);
+			boolean hoverSet = welcomeSettingsRect.contains(mouseX, mouseY);
 			QuillDraw.fill(graphics, welcomeNewPackRect.x(), welcomeNewPackRect.y(), welcomeNewPackRect.width(), welcomeNewPackRect.height(),
 					hoverDp ? QuillTheme.BG_BUTTON_HOVER : QuillTheme.BG_BUTTON);
 			QuillDraw.fill(graphics, welcomeNewFnRect.x(), welcomeNewFnRect.y(), welcomeNewFnRect.width(), welcomeNewFnRect.height(),
 					hoverFn ? QuillTheme.BG_HOVER : QuillTheme.BG_BUTTON_SECONDARY);
+			QuillDraw.fill(graphics, welcomeSettingsRect.x(), welcomeSettingsRect.y(), welcomeSettingsRect.width(), welcomeSettingsRect.height(),
+					hoverSet ? QuillTheme.BG_HOVER : QuillTheme.BG_BUTTON_SECONDARY);
 
 			int btnTextY = btnY + (20 - font.lineHeight) / 2;
 			QuillDraw.text(graphics, font, dpLabel, welcomeNewPackRect.x() + 7, btnTextY, QuillTheme.TEXT_BRIGHT);
 			QuillDraw.text(graphics, font, fnLabel, welcomeNewFnRect.x() + 7, btnTextY, QuillTheme.TEXT_PRIMARY);
-			if (hoverDp || hoverFn) {
+			QuillDraw.text(graphics, font, setLabel, welcomeSettingsRect.x() + 7, btnTextY, QuillTheme.TEXT_PRIMARY);
+			if (hoverDp || hoverFn || hoverSet) {
 				QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 			}
 
-			QuillDraw.text(graphics, font, "Ctrl+P Quick Open  |  Ctrl+Shift+P Commands  |  Ctrl+S Save  |  Ctrl+J Panel",
-					leftX, btnY + 30, QuillTheme.TEXT_MUTED);
+			// Live configured keyboard shortcuts table
+			QuillClientConfig cfg = QuillClientConfig.current();
+			int tableY = btnY + 34;
+			QuillDraw.text(graphics, font, "Shortcuts", leftX, tableY, QuillTheme.TEXT_PRIMARY);
+			tableY += 14;
+			QuillClientConfig.ShortcutAction[] shown = {
+					QuillClientConfig.ShortcutAction.QUICK_OPEN,
+					QuillClientConfig.ShortcutAction.COMMAND_PALETTE,
+					QuillClientConfig.ShortcutAction.SEARCH_IN_FILES,
+					QuillClientConfig.ShortcutAction.SAVE,
+					QuillClientConfig.ShortcutAction.TOGGLE_SIDEBAR,
+					QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL,
+					QuillClientConfig.ShortcutAction.OPEN_SETTINGS
+			};
+			for (QuillClientConfig.ShortcutAction action : shown) {
+				if (tableY + 14 > editor.bottom() - 8) {
+					break;
+				}
+				String keyStr = cfg.shortcut(action).displayLabel();
+				int kw = QuillDraw.textWidth(font, keyStr) + 8;
+				QuillDraw.fill(graphics, leftX, tableY, kw, 12, QuillTheme.BG_SIDEBAR);
+				QuillDraw.outline(graphics, leftX, tableY, kw, 12, QuillTheme.BORDER_SUBTLE);
+				QuillDraw.text(graphics, font, keyStr, leftX + 4, tableY + 2, QuillTheme.TEXT_BRIGHT);
+				QuillDraw.text(graphics, font, action.label(), leftX + Math.max(82, kw + 10), tableY + 2, QuillTheme.TEXT_MUTED);
+				tableY += 15;
+			}
 			QuillDraw.endClip(graphics);
 		} else {
 			welcomeNewPackRect = new IdeLayout.Rect(0, 0, 0, 0);
 			welcomeNewFnRect = new IdeLayout.Rect(0, 0, 0, 0);
+			welcomeSettingsRect = new IdeLayout.Rect(0, 0, 0, 0);
 			codeEditorWidget.render(graphics, font, editor, active, mouseX, mouseY);
 		}
 	}
 
 	protected void renderStatusBar(GuiGraphicsExtractor graphics, IdeLayout.Rect bar, int mouseX, int mouseY) {
+		QuillClientConfig cfg = QuillClientConfig.current();
 		ReloadReport report = session.lastReloadReport();
 		boolean hasErrors = report != null && report.hasErrors();
 		int errorCount = hasErrors ? report.diagnostics().size() : 0;
@@ -490,20 +905,33 @@ public class QuillIdeScreen extends Screen {
 		QuillDraw.fill(graphics, bar.x(), bar.y(), bar.width(), bar.height(), bg);
 
 		int textY = bar.y() + (bar.height() - font.lineHeight) / 2;
-		String saveLabel = "Save & Reload (Ctrl+S)";
+		int leftX = bar.x();
+
+		// Leftmost VS Code remote/local accent badge
+		String badgeText = ">< " + session.backendLabel();
+		int badgeW = QuillDraw.textWidth(font, badgeText) + 10;
+		statusRemoteBadgeRect = new IdeLayout.Rect(leftX, bar.y(), badgeW, bar.height());
+		boolean hoverBadge = statusRemoteBadgeRect.contains(mouseX, mouseY);
+		QuillDraw.fill(graphics, statusRemoteBadgeRect.x(), statusRemoteBadgeRect.y(), statusRemoteBadgeRect.width(), statusRemoteBadgeRect.height(),
+				hoverBadge ? QuillTheme.BG_BUTTON_HOVER : QuillTheme.BG_STATUS_REMOTE_BADGE);
+		QuillDraw.text(graphics, font, badgeText, statusRemoteBadgeRect.x() + 5, textY, QuillTheme.TEXT_BRIGHT);
+		leftX = statusRemoteBadgeRect.right() + 4;
+
+		String saveKey = cfg.shortcut(QuillClientConfig.ShortcutAction.SAVE).displayLabel();
+		String saveLabel = (cfg.shouldReloadOnSave() ? "Save & Reload" : "Save") + " (" + saveKey + ")";
 		String reloadLabel = "Reload";
 		String problemsLabel = "!" + errorCount;
 		String outputLabel = "Output";
 
-		int saveW = font.width(saveLabel) + 10;
-		int reloadW = font.width(reloadLabel) + 10;
-		int probW = font.width(problemsLabel) + 10;
-		int outW = font.width(outputLabel) + 10;
+		int saveW = QuillDraw.textWidth(font, saveLabel) + 8;
+		int reloadW = QuillDraw.textWidth(font, reloadLabel) + 8;
+		int probW = QuillDraw.textWidth(font, problemsLabel) + 8;
+		int outW = QuillDraw.textWidth(font, outputLabel) + 8;
 
-		saveReloadBtnRect = new IdeLayout.Rect(bar.x() + 4, bar.y() + 1, saveW, bar.height() - 2);
-		reloadBtnRect = new IdeLayout.Rect(saveReloadBtnRect.right() + 4, bar.y() + 1, reloadW, bar.height() - 2);
-		statusProblemsBtnRect = new IdeLayout.Rect(reloadBtnRect.right() + 4, bar.y() + 1, probW, bar.height() - 2);
-		statusOutputBtnRect = new IdeLayout.Rect(statusProblemsBtnRect.right() + 4, bar.y() + 1, outW, bar.height() - 2);
+		saveReloadBtnRect = new IdeLayout.Rect(leftX, bar.y() + 1, saveW, bar.height() - 2);
+		reloadBtnRect = new IdeLayout.Rect(saveReloadBtnRect.right() + 3, bar.y() + 1, reloadW, bar.height() - 2);
+		statusProblemsBtnRect = new IdeLayout.Rect(reloadBtnRect.right() + 3, bar.y() + 1, probW, bar.height() - 2);
+		statusOutputBtnRect = new IdeLayout.Rect(statusProblemsBtnRect.right() + 3, bar.y() + 1, outW, bar.height() - 2);
 
 		boolean hoverSave = saveReloadBtnRect.contains(mouseX, mouseY);
 		boolean hoverReload = reloadBtnRect.contains(mouseX, mouseY);
@@ -521,52 +949,116 @@ public class QuillIdeScreen extends Screen {
 		QuillDraw.fill(graphics, statusOutputBtnRect.x(), statusOutputBtnRect.y(), statusOutputBtnRect.width(), statusOutputBtnRect.height(),
 				hoverOut ? 0x33FFFFFF : (outActive ? 0x26FFFFFF : 0x14FFFFFF));
 
-		QuillDraw.text(graphics, font, saveLabel, saveReloadBtnRect.x() + 5, textY, QuillTheme.TEXT_BRIGHT);
-		QuillDraw.text(graphics, font, reloadLabel, reloadBtnRect.x() + 5, textY, QuillTheme.TEXT_BRIGHT);
-		QuillDraw.text(graphics, font, problemsLabel, statusProblemsBtnRect.x() + 5, textY, QuillTheme.TEXT_BRIGHT);
-		QuillDraw.text(graphics, font, outputLabel, statusOutputBtnRect.x() + 5, textY, QuillTheme.TEXT_BRIGHT);
+		QuillDraw.text(graphics, font, saveLabel, saveReloadBtnRect.x() + 4, textY, QuillTheme.TEXT_BRIGHT);
+		QuillDraw.text(graphics, font, reloadLabel, reloadBtnRect.x() + 4, textY, QuillTheme.TEXT_BRIGHT);
+		QuillDraw.text(graphics, font, problemsLabel, statusProblemsBtnRect.x() + 4, textY, QuillTheme.TEXT_BRIGHT);
+		QuillDraw.text(graphics, font, outputLabel, statusOutputBtnRect.x() + 4, textY, QuillTheme.TEXT_BRIGHT);
 
-		OpenTabState active = session.activeTab();
-		String rightInfo = active != null
-				? session.backendLabel() + " | Ln " + active.buffer().oneBasedLine() + ", Col " + active.buffer().oneBasedColumn() + " | UTF-8"
-				: session.backendLabel() + " | UTF-8";
-		int rightW = font.width(rightInfo);
+		int statusX = statusOutputBtnRect.right() + 5;
+		boolean hoverWarn = false;
+		if (cfg.hasInstantAutosaveReloadWarning()) {
+			String warnLabel = "[!] Keypress+Reload";
+			int warnW = QuillDraw.textWidth(font, warnLabel) + 8;
+			statusWarningPillRect = new IdeLayout.Rect(statusX, bar.y() + 1, warnW, bar.height() - 2);
+			hoverWarn = statusWarningPillRect.contains(mouseX, mouseY);
+			QuillDraw.fill(graphics, statusWarningPillRect.x(), statusWarningPillRect.y(), statusWarningPillRect.width(), statusWarningPillRect.height(),
+					hoverWarn ? QuillTheme.WARNING_BANNER_BORDER : QuillTheme.WARNING_BANNER_BG);
+			QuillDraw.text(graphics, font, warnLabel, statusWarningPillRect.x() + 4, textY, QuillTheme.TEXT_WARNING);
+			statusX = statusWarningPillRect.right() + 6;
+		} else {
+			statusWarningPillRect = new IdeLayout.Rect(0, 0, 0, 0);
+		}
+
+		// Right-side VS Code metadata
+		OpenTabState active = settingsOpen ? null : session.activeTab();
+		String rightInfo;
+		if (active != null) {
+			String selInfo = active.buffer().hasSelection()
+					? " (" + active.buffer().selectedCharCount() + " selected)"
+					: "";
+			rightInfo = "Ln " + active.buffer().oneBasedLine() + ", Col " + active.buffer().oneBasedColumn() + selInfo
+					+ "  |  Spaces: 4  |  UTF-8  |  LF  |  " + languageLabel(active.fileName());
+		} else if (settingsOpen) {
+			rightInfo = "Settings  |  UTF-8";
+		} else {
+			rightInfo = (session.isReloadPendingOnClose() ? "Reload on close  |  " : "") + "UTF-8";
+		}
+		int rightW = QuillDraw.textWidth(font, rightInfo);
 		int rightX = bar.right() - rightW - 8;
-		QuillDraw.text(graphics, font, rightInfo, rightX, textY, QuillTheme.TEXT_BRIGHT);
+		if (rightX > statusX + 8) {
+			QuillDraw.text(graphics, font, rightInfo, rightX, textY, QuillTheme.TEXT_BRIGHT);
+		} else {
+			// Compact fallback when window is narrow
+			String compact = active != null
+					? "Ln " + active.buffer().oneBasedLine() + ", Col " + active.buffer().oneBasedColumn()
+					: "UTF-8";
+			int cw = QuillDraw.textWidth(font, compact);
+			rightX = bar.right() - cw - 6;
+			if (rightX > statusX + 4) {
+				QuillDraw.text(graphics, font, compact, rightX, textY, QuillTheme.TEXT_BRIGHT);
+			}
+		}
 
-		int statusX = statusOutputBtnRect.right() + 10;
-		int statusMaxW = Math.max(0, rightX - statusX - 10);
-		if (statusMaxW > 12) {
-			String statusClipped = QuillDraw.clipToWidth(font, session.statusMessage(), statusMaxW);
+		int statusMaxW = Math.max(0, rightX - statusX - 8);
+		if (statusMaxW > 18) {
+			String msg = session.isReloadPendingOnClose()
+					? "[Reload on close] " + session.statusMessage()
+					: session.statusMessage();
+			String statusClipped = QuillDraw.clipToWidth(font, msg, statusMaxW);
 			QuillDraw.text(graphics, font, statusClipped, statusX, textY, QuillTheme.TEXT_BRIGHT);
 		}
 
-		if (hoverSave || hoverReload || hoverProb || hoverOut) {
+		if (hoverBadge || hoverSave || hoverReload || hoverProb || hoverOut || hoverWarn) {
 			QuillDraw.requestCursor(graphics, CursorTypes.POINTING_HAND);
 		}
 	}
 
+	private static String languageLabel(String fileName) {
+		if (fileName.endsWith(".mcfunction")) {
+			return "mcfunction";
+		}
+		if (fileName.endsWith(".json") || fileName.endsWith(".mcmeta")) {
+			return "JSON";
+		}
+		if (fileName.endsWith(".md")) {
+			return "Markdown";
+		}
+		return "Plain Text";
+	}
+
 	private List<QuickPickOverlay.PickItem> buildCommandPaletteItems() {
+		QuillClientConfig cfg = QuillClientConfig.current();
 		List<QuickPickOverlay.PickItem> items = new ArrayList<>();
 		items.add(new QuickPickOverlay.PickItem(
-				"save_reload", "File: Save & Reload Datapacks", "Save active file and run /reload", "Ctrl+S",
+				"save_config", "File: Save Active File", "Save active file (follows Reload Trigger setting)",
+				cfg.shortcut(QuillClientConfig.ShortcutAction.SAVE).displayLabel(),
+				"File: Save Active File save", session::saveActiveTabAccordingToConfig));
+		items.add(new QuickPickOverlay.PickItem(
+				"save_reload", "File: Save & Reload Datapacks", "Save active file and run /reload", "",
 				"File: Save & Reload Datapacks save reload", () -> session.saveActiveTab(true)));
 		items.add(new QuickPickOverlay.PickItem(
 				"save_only", "File: Save Without Reload", "Write active buffer to disk without reloading", "",
 				"File: Save Without Reload save", () -> session.saveActiveTab(false)));
 		items.add(new QuickPickOverlay.PickItem(
-				"quick_open", "File: Quick Open...", "Fuzzy-search files across datapacks/", "Ctrl+P",
+				"quick_open", "File: Quick Open...", "Fuzzy-search files across datapacks/",
+				cfg.shortcut(QuillClientConfig.ShortcutAction.QUICK_OPEN).displayLabel(),
 				"File: Quick Open go to file switcher", () -> openQuickPick(QuickPickOverlay.Mode.FILES)));
+		items.add(new QuickPickOverlay.PickItem(
+				"open_settings", "Preferences: Open Settings", "Configure theme, font, text size, autosave, pause, and shortcuts",
+				cfg.shortcut(QuillClientConfig.ShortcutAction.OPEN_SETTINGS).displayLabel(),
+				"Preferences: Open Settings config theme font keybinds autosave pause", this::openSettings));
 
 		String activeFn = session.activeFunctionId();
 		if (activeFn != null) {
 			items.add(new QuickPickOverlay.PickItem(
-					"run_function", "Datapack: Run Current Function", "/function " + activeFn, "",
+					"run_function", "Datapack: Run Current Function", "/function " + activeFn,
+					cfg.shortcut(QuillClientConfig.ShortcutAction.RUN_FUNCTION).displayLabel(),
 					"Datapack: Run Current Function execute run " + activeFn, session::runCurrentFunction));
 		}
 
 		items.add(new QuickPickOverlay.PickItem(
-				"reload", "Datapack: Reload Datapacks", "Trigger world datapack reload", "",
+				"reload", "Datapack: Reload Datapacks", "Trigger world datapack reload",
+				cfg.shortcut(QuillClientConfig.ShortcutAction.RELOAD_DATAPACKS).displayLabel(),
 				"Datapack: Reload Datapacks reload", session::reloadDatapacks));
 		items.add(new QuickPickOverlay.PickItem(
 				"new_pack", "Datapack: New Datapack...", "Scaffold pack.mcmeta (MC 26.3) and data/", "",
@@ -604,15 +1096,18 @@ public class QuillIdeScreen extends Screen {
 
 		if (session.activeTab() != null) {
 			items.add(new QuickPickOverlay.PickItem(
-					"close_tab", "Editor: Close Active Tab", session.activeTab().fileName(), "Ctrl+W",
+					"close_tab", "Editor: Close Active Tab", session.activeTab().fileName(),
+					cfg.shortcut(QuillClientConfig.ShortcutAction.CLOSE_TAB).displayLabel(),
 					"Editor: Close Active Tab", () -> tabBarWidget.requestCloseTab(session.activeTabIndex())));
 		}
 
 		items.add(new QuickPickOverlay.PickItem(
-				"toggle_sidebar", "View: Toggle Sidebar", "Show or hide left sidebar", "Ctrl+B",
+				"toggle_sidebar", "View: Toggle Sidebar", "Show or hide left sidebar",
+				cfg.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_SIDEBAR).displayLabel(),
 				"View: Toggle Sidebar collapse", session::toggleSidebarCollapsed));
 		items.add(new QuickPickOverlay.PickItem(
-				"toggle_panel", "View: Toggle Bottom Panel", "Show or hide Problems / Output panel", "Ctrl+J",
+				"toggle_panel", "View: Toggle Bottom Panel", "Show or hide Problems / Output panel",
+				cfg.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL).displayLabel(),
 				"View: Toggle Bottom Panel problems output terminal console", session::toggleBottomPanel));
 		items.add(new QuickPickOverlay.PickItem(
 				"show_problems", "View: Show Problems", "Open Problems diagnostics tab", "",
@@ -627,7 +1122,8 @@ public class QuillIdeScreen extends Screen {
 				"view_explorer", "View: Show Explorer", "Focus File Explorer sidebar", "",
 				"View: Show Explorer files", () -> session.setSidebarView(ClientEditorSession.SidebarView.EXPLORER)));
 		items.add(new QuickPickOverlay.PickItem(
-				"view_search", "Search: Find & Replace in Files", "Search across all datapack files", "Ctrl+Shift+F",
+				"view_search", "Search: Find & Replace in Files", "Search across all datapack files",
+				cfg.shortcut(QuillClientConfig.ShortcutAction.SEARCH_IN_FILES).displayLabel(),
 				"Search: Find & Replace in Files grep workspace", this::openSearchSidebar));
 		items.add(new QuickPickOverlay.PickItem(
 				"view_inspector", "View: Show Macro & Scoreboard Inspector", "Inspect scoreboard objectives, storage, and macros", "",
@@ -639,8 +1135,15 @@ public class QuillIdeScreen extends Screen {
 				"view_presets", "View: Show Presets & Quick Actions", "Focus Presets sidebar", "",
 				"View: Show Presets Quick Actions templates", () -> session.setSidebarView(ClientEditorSession.SidebarView.PRESETS)));
 		items.add(new QuickPickOverlay.PickItem(
-				"toggle_maximize", "View: Toggle Maximize IDE Window", "Switch docked vs full-screen mode", "",
+				"toggle_maximize", "View: Toggle Maximize IDE Window", "Switch floating vs full-screen mode", "",
 				"View: Toggle Maximize IDE Window fullscreen", session::toggleMaximized));
+		items.add(new QuickPickOverlay.PickItem(
+				"reset_window", "View: Reset Window Position & Size", "Restore default centered floating window geometry", "",
+				"View: Reset Window Position Size layout", () -> {
+					QuillClientConfig.current().resetWindowBounds();
+					QuillClientConfig.saveCurrent();
+					onResetWindowBounds();
+				}));
 
 		for (PresetDescriptor preset : session.presets()) {
 			items.add(new QuickPickOverlay.PickItem(
@@ -668,10 +1171,29 @@ public class QuillIdeScreen extends Screen {
 					parent,
 					alreadyOpen ? "Open" : "",
 					relPath,
-					() -> session.openFile(relPath)
+					() -> {
+						closeSettings();
+						session.openFile(relPath);
+					}
 			));
 		}
 		return items;
+	}
+
+	private boolean isTitleBarInteractiveHit(double mx, double my) {
+		return closeBtnRect.contains(mx, my)
+				|| maximizeBtnRect.contains(mx, my)
+				|| runTitleBtnRect.contains(mx, my)
+				|| commandCenterRect.contains(mx, my);
+	}
+
+	private static CursorType cursorForResizeEdge(IdeLayout.ResizeEdge edge) {
+		return switch (edge) {
+			case E, W -> CursorTypes.RESIZE_EW;
+			case N, S -> CursorTypes.RESIZE_NS;
+			case NE, NW, SE, SW -> CursorTypes.RESIZE_ALL;
+			case NONE -> CursorTypes.ARROW;
+		};
 	}
 
 	@Override
@@ -686,20 +1208,51 @@ public class QuillIdeScreen extends Screen {
 			syncTextInputState();
 			return handled;
 		}
-		if (!lastSidebarRect.contains(event.x(), event.y())) {
+		double mx = event.x();
+		double my = event.y();
+
+		if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+			// 1. Outer floating frame resize edges/corners
+			if (!session.isMaximized() && !isTitleBarInteractiveHit(mx, my)) {
+				IdeLayout.ResizeEdge edge = IdeLayout.hitTestResizeEdge(lastLayout.window(), mx, my, IdeLayout.RESIZE_BORDER);
+				if (edge != IdeLayout.ResizeEdge.NONE) {
+					dragMode = DragMode.RESIZE_WINDOW;
+					activeResizeEdge = edge;
+					dragStartMouseX = mx;
+					dragStartMouseY = my;
+					IdeLayout.Rect w = lastLayout.window();
+					dragStartBounds = new IdeLayout.WindowBounds(w.x(), w.y(), w.width(), w.height());
+					return true;
+				}
+			}
+			// 2. Draggable splitters (sidebar / bottom panel)
+			if (sidebarSplitterRect.contains(mx, my)) {
+				dragMode = DragMode.RESIZE_SIDEBAR;
+				dragStartMouseX = mx;
+				dragStartSplitterSize = lastLayout.sidebar().width();
+				return true;
+			}
+			if (bottomSplitterRect.contains(mx, my)) {
+				dragMode = DragMode.RESIZE_BOTTOM_PANEL;
+				dragStartMouseY = my;
+				dragStartSplitterSize = lastLayout.diagnosticsBanner().height();
+				return true;
+			}
+		}
+
+		if (!lastSidebarRect.contains(mx, my)) {
 			searchSidebar.unfocus();
 			explorerTree.cancelInlineInput();
 			syncTextInputState();
 		}
 		if (tabBarWidget.mouseClicked(event)) {
+			syncTextInputState();
 			return true;
 		}
 		if (bottomPanelWidget.mouseClicked(event)) {
 			return true;
 		}
 		if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-			double mx = event.x();
-			double my = event.y();
 			if (closeBtnRect.contains(mx, my)) {
 				onClose();
 				return true;
@@ -710,6 +1263,33 @@ public class QuillIdeScreen extends Screen {
 			}
 			if (runTitleBtnRect.contains(mx, my)) {
 				session.runCurrentFunction();
+				return true;
+			}
+			if (commandCenterRect.contains(mx, my)) {
+				openQuickPick(QuickPickOverlay.Mode.FILES);
+				return true;
+			}
+			if (lastLayout.titleBar().contains(mx, my)) {
+				if (doubleClick) {
+					session.toggleMaximized();
+					return true;
+				}
+				if (session.isMaximized()) {
+					session.toggleMaximized();
+					IdeLayout restored = computeCurrentLayout();
+					int rw = restored.window().width();
+					int rh = restored.window().height();
+					int nx = Math.max(0, Math.min(Math.max(0, width - rw), (int) mx - rw / 2));
+					int ny = Math.max(0, Math.min(Math.max(0, height - rh), (int) my - QuillTheme.TITLE_BAR_HEIGHT / 2));
+					QuillClientConfig.current().setCustomWindowBounds(nx, ny, rw, rh);
+					dragStartBounds = new IdeLayout.WindowBounds(nx, ny, rw, rh);
+				} else {
+					IdeLayout.Rect w = lastLayout.window();
+					dragStartBounds = new IdeLayout.WindowBounds(w.x(), w.y(), w.width(), w.height());
+				}
+				dragMode = DragMode.MOVE_WINDOW;
+				dragStartMouseX = mx;
+				dragStartMouseY = my;
 				return true;
 			}
 			if (explorerIconRect.contains(mx, my)) {
@@ -752,6 +1332,10 @@ public class QuillIdeScreen extends Screen {
 				syncTextInputState();
 				return true;
 			}
+			if (settingsIconRect.contains(mx, my)) {
+				toggleSettings();
+				return true;
+			}
 			if (lastSidebarRect.contains(mx, my)) {
 				boolean handled = switch (session.sidebarView()) {
 					case EXPLORER -> explorerTree.mouseClicked(event);
@@ -759,10 +1343,27 @@ public class QuillIdeScreen extends Screen {
 					case INSPECTOR -> inspectorSidebar.mouseClicked(event);
 					case PRESETS -> quickActions.mouseClicked(event);
 				};
+				syncActiveTabSelection();
 				syncTextInputState();
 				if (handled) {
 					return true;
 				}
+			}
+			// Clickable breadcrumbs
+			for (BreadcrumbSegment seg : breadcrumbSegments) {
+				if (seg.rect().contains(mx, my)) {
+					session.setSidebarView(ClientEditorSession.SidebarView.EXPLORER);
+					session.expandAncestors(seg.fullPath() + "/dummy");
+					if (!seg.isFile()) {
+						session.expandedPaths().add(seg.fullPath());
+					}
+					session.setSelectedTreePath(seg.fullPath());
+					return true;
+				}
+			}
+			if (settingsOpen && settingsPanel.mouseClicked(event)) {
+				syncTextInputState();
+				return true;
 			}
 			if (welcomeNewPackRect.contains(mx, my)) {
 				quickActions.promptNewDatapack();
@@ -772,12 +1373,20 @@ public class QuillIdeScreen extends Screen {
 				quickActions.promptNewFunction();
 				return true;
 			}
-			OpenTabState active = session.activeTab();
+			if (welcomeSettingsRect.contains(mx, my)) {
+				openSettings();
+				return true;
+			}
+			OpenTabState active = settingsOpen ? null : session.activeTab();
 			if (active != null && codeEditorWidget.mouseClicked(event, font, active)) {
 				return true;
 			}
+			if (statusRemoteBadgeRect.contains(mx, my)) {
+				openQuickPick(QuickPickOverlay.Mode.COMMANDS);
+				return true;
+			}
 			if (saveReloadBtnRect.contains(mx, my)) {
-				session.saveActiveTab(true);
+				session.saveActiveTabAccordingToConfig();
 				return true;
 			}
 			if (reloadBtnRect.contains(mx, my)) {
@@ -800,6 +1409,10 @@ public class QuillIdeScreen extends Screen {
 				}
 				return true;
 			}
+			if (statusWarningPillRect.contains(mx, my)) {
+				openSettings();
+				return true;
+			}
 		}
 		return super.mouseClicked(event, doubleClick);
 	}
@@ -812,13 +1425,36 @@ public class QuillIdeScreen extends Screen {
 		if (activeQuickPick != null) {
 			return activeQuickPick.mouseDragged(event);
 		}
+		if (dragMode != DragMode.NONE && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+			int dx = (int) Math.round(event.x() - dragStartMouseX);
+			int dy = (int) Math.round(event.y() - dragStartMouseY);
+			QuillClientConfig cfg = QuillClientConfig.current();
+			switch (dragMode) {
+				case MOVE_WINDOW -> {
+					IdeLayout.WindowBounds next = IdeLayout.applyMove(dragStartBounds, dx, dy, width, height);
+					cfg.setCustomWindowBounds(next.x(), next.y(), next.width(), next.height());
+				}
+				case RESIZE_WINDOW -> {
+					IdeLayout.WindowBounds next = IdeLayout.applyResize(dragStartBounds, activeResizeEdge, dx, dy, width, height);
+					cfg.setCustomWindowBounds(next.x(), next.y(), next.width(), next.height());
+				}
+				case RESIZE_SIDEBAR -> cfg.setSidebarWidth(dragStartSplitterSize + dx);
+				case RESIZE_BOTTOM_PANEL -> cfg.setBottomPanelHeight(dragStartSplitterSize - dy);
+				case NONE -> {
+				}
+			}
+			return true;
+		}
 		if (isExplorerInlineInputActive() && explorerTree.mouseDragged(event)) {
 			return true;
 		}
 		if (isSearchInputFocused() && searchSidebar.mouseDragged(event)) {
 			return true;
 		}
-		OpenTabState active = session.activeTab();
+		if (settingsOpen && settingsPanel.mouseDragged(event)) {
+			return true;
+		}
+		OpenTabState active = settingsOpen ? null : session.activeTab();
 		if (active != null && codeEditorWidget.mouseDragged(event, font, active)) {
 			return true;
 		}
@@ -827,9 +1463,16 @@ public class QuillIdeScreen extends Screen {
 
 	@Override
 	public boolean mouseReleased(MouseButtonEvent event) {
+		if (dragMode != DragMode.NONE) {
+			dragMode = DragMode.NONE;
+			activeResizeEdge = IdeLayout.ResizeEdge.NONE;
+			QuillClientConfig.saveCurrent();
+			return true;
+		}
 		codeEditorWidget.mouseReleased(event);
 		searchSidebar.mouseReleased(event);
 		explorerTree.mouseReleased(event);
+		settingsPanel.mouseReleased(event);
 		if (activeModal != null) {
 			activeModal.mouseReleased(event);
 			return true;
@@ -866,7 +1509,10 @@ public class QuillIdeScreen extends Screen {
 				return true;
 			}
 		}
-		OpenTabState active = session.activeTab();
+		if (settingsOpen && settingsPanel.mouseScrolled(mouseX, mouseY, scrollY)) {
+			return true;
+		}
+		OpenTabState active = settingsOpen ? null : session.activeTab();
 		if (active != null && codeEditorWidget.mouseScrolled(mouseX, mouseY, scrollX, scrollY, font, active)) {
 			return true;
 		}
@@ -885,44 +1531,67 @@ public class QuillIdeScreen extends Screen {
 			syncTextInputState();
 			return handled;
 		}
+		if (settingsOpen && (settingsPanel.isRecordingKeybind() || settingsPanel.hasFocusedTextInput())) {
+			boolean handled = settingsPanel.keyPressed(event);
+			syncTextInputState();
+			if (handled) {
+				return true;
+			}
+		}
 		if (isExplorerInlineInputActive() && explorerTree.keyPressed(event)) {
 			syncTextInputState();
 			return true;
 		}
-		if (event.key() == InputConstants.KEY_F1 && !event.hasControlDownWithQuirk() && !event.hasAltDown()) {
+
+		// Configurable IDE keyboard shortcuts
+		QuillClientConfig cfg = QuillClientConfig.current();
+		if (event.key() == InputConstants.KEY_F1 && !event.hasControlDownWithQuirk() && !event.hasAltDown()
+				|| cfg.shortcut(QuillClientConfig.ShortcutAction.COMMAND_PALETTE).matches(event)) {
 			openQuickPick(QuickPickOverlay.Mode.COMMANDS);
 			return true;
 		}
-		if (event.hasControlDownWithQuirk() && !event.hasAltDown()) {
-			int sc = event.shortcutKey();
-			if (sc == 'p') {
-				openQuickPick(event.hasShiftDown() ? QuickPickOverlay.Mode.COMMANDS : QuickPickOverlay.Mode.FILES);
-				return true;
-			}
-			if (event.hasShiftDown() && sc == InputConstants.KEYCODE_F) {
-				openSearchSidebar();
-				return true;
-			}
-			if (!event.hasShiftDown() && sc == InputConstants.KEYCODE_B) {
-				session.toggleSidebarCollapsed();
-				syncTextInputState();
-				return true;
-			}
-			if (!event.hasShiftDown() && sc == 'j') {
-				session.toggleBottomPanel();
-				return true;
-			}
-			if (!event.hasShiftDown() && sc == 's') {
-				session.saveActiveTab(true);
-				return true;
-			}
-			if (!event.hasShiftDown() && sc == InputConstants.KEYCODE_W) {
-				if (session.activeTab() != null) {
-					tabBarWidget.requestCloseTab(session.activeTabIndex());
-				}
-				return true;
-			}
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.QUICK_OPEN).matches(event)) {
+			openQuickPick(QuickPickOverlay.Mode.FILES);
+			return true;
 		}
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.OPEN_SETTINGS).matches(event)) {
+			toggleSettings();
+			return true;
+		}
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.SEARCH_IN_FILES).matches(event)) {
+			openSearchSidebar();
+			return true;
+		}
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_SIDEBAR).matches(event)) {
+			session.toggleSidebarCollapsed();
+			syncTextInputState();
+			return true;
+		}
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL).matches(event)) {
+			session.toggleBottomPanel();
+			return true;
+		}
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.SAVE).matches(event)) {
+			session.saveActiveTabAccordingToConfig();
+			return true;
+		}
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.CLOSE_TAB).matches(event)) {
+			if (settingsOpen) {
+				closeSettings();
+			} else if (session.activeTab() != null) {
+				tabBarWidget.requestCloseTab(session.activeTabIndex());
+			}
+			return true;
+		}
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.RUN_FUNCTION).matches(event)) {
+			session.runCurrentFunction();
+			return true;
+		}
+		if (cfg.shortcut(QuillClientConfig.ShortcutAction.RELOAD_DATAPACKS).matches(event)) {
+			session.reloadDatapacks();
+			return true;
+		}
+
 		if (isSearchInputFocused() && searchSidebar.keyPressed(event)) {
 			syncTextInputState();
 			return true;
@@ -933,6 +1602,13 @@ public class QuillIdeScreen extends Screen {
 				&& explorerTree.keyPressed(event)) {
 			syncTextInputState();
 			return true;
+		}
+		if (settingsOpen) {
+			if (event.isEscape()) {
+				closeSettings();
+				return true;
+			}
+			return super.keyPressed(event);
 		}
 		OpenTabState active = session.activeTab();
 		if (active != null && codeEditorWidget.keyPressed(event, font, active)) {
@@ -949,11 +1625,17 @@ public class QuillIdeScreen extends Screen {
 		if (activeQuickPick != null) {
 			return activeQuickPick.charTyped(event);
 		}
+		if (settingsOpen && (settingsPanel.isRecordingKeybind() || settingsPanel.hasFocusedTextInput())) {
+			return settingsPanel.charTyped(event);
+		}
 		if (isExplorerInlineInputActive() && explorerTree.charTyped(event)) {
 			return true;
 		}
 		if (isSearchInputFocused() && searchSidebar.charTyped(event)) {
 			return true;
+		}
+		if (settingsOpen) {
+			return false;
 		}
 		OpenTabState active = session.activeTab();
 		if (active != null && codeEditorWidget.charTyped(event, font, active)) {

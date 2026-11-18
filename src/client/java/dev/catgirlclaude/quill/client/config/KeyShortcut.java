@@ -58,6 +58,9 @@ public record KeyShortcut(boolean ctrl, boolean shift, boolean alt, int keyCode,
 			if (evCode >= 'A' && evCode <= 'Z' && Character.toLowerCase((char) evCode) == keyCode) {
 				return true;
 			}
+			if (keyCode == ',' && event.key() == InputConstants.KEY_COMMA) {
+				return true;
+			}
 		}
 		if (scanCode > 0 && event.key() == scanCode) {
 			return true;

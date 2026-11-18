@@ -8,9 +8,11 @@ import dev.catgirlclaude.quill.api.FileTreeNode;
 import dev.catgirlclaude.quill.api.PresetDescriptor;
 import dev.catgirlclaude.quill.api.ReloadReport;
 import dev.catgirlclaude.quill.api.SaveResult;
+import dev.catgirlclaude.quill.client.config.QuillClientConfig;
 import dev.catgirlclaude.quill.client.session.ClientEditorSession;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -22,6 +24,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class QuillIdeScreenTextInputTest {
+
+	@AfterEach
+	void resetClientConfig() {
+		QuillClientConfig.setCurrent(QuillClientConfig.createDefault());
+	}
 
 	private static final class RecordingTextInputBridge implements QuillIdeScreen.TextInputBridge {
 		private Object activeOwner = null;
@@ -51,6 +58,9 @@ class QuillIdeScreenTextInputTest {
 		String renamedSourcePath;
 		String renamedTargetPath;
 		int renameCount;
+		int writeCount;
+		boolean lastWriteReload;
+		int reloadCount;
 
 		@Override
 		public CompletableFuture<FileTreeNode> listTree() {
@@ -69,6 +79,8 @@ class QuillIdeScreenTextInputTest {
 				String expectedBaseSha256,
 				boolean reloadAfterSave
 		) {
+			this.writeCount++;
+			this.lastWriteReload = reloadAfterSave;
 			return CompletableFuture.completedFuture(new SaveResult(new FileDocument(relativePath, content, "hash", 0L), null));
 		}
 
@@ -121,6 +133,7 @@ class QuillIdeScreenTextInputTest {
 
 		@Override
 		public CompletableFuture<ReloadReport> reloadDatapacks() {
+			this.reloadCount++;
 			return CompletableFuture.completedFuture(new ReloadReport(true, 1L, 1, List.of()));
 		}
 	}
@@ -471,6 +484,83 @@ class QuillIdeScreenTextInputTest {
 		assertFalse(screen.explorerTree().hasActiveInlineInput());
 		assertFalse(bridge.isActiveFor(screen));
 		assertEquals(1, backend.renameCount);
+	}
+
+	@Test
+	void pauseScreenFlagDynamicallyReflectsClientConfig() {
+		StubEditorBackend backend = new StubEditorBackend();
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+
+		assertFalse(screen.isPauseScreen(), "Default config must keep game running while IDE is open.");
+		QuillClientConfig.current().setPauseGameWhileOpen(true);
+		assertTrue(screen.isPauseScreen(), "Enabling pauseGameWhileOpen must make isPauseScreen() return true.");
+		QuillClientConfig.current().setPauseGameWhileOpen(false);
+		assertFalse(screen.isPauseScreen());
+	}
+
+	@Test
+	void removedTriggersAutosaveAndReloadOnCloseWhenConfigured() {
+		QuillClientConfig cfg = QuillClientConfig.current();
+		cfg.setAutosaveMode(QuillClientConfig.AutosaveMode.ON_GUI_CLOSE);
+		cfg.setReloadTriggerMode(QuillClientConfig.ReloadTriggerMode.ON_GUI_CLOSE);
+
+		StubEditorBackend backend = new StubEditorBackend();
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		session.openOrFocusDocument(new FileDocument("pack/data/demo/function/a.mcfunction", "say hi", "sha1", 0L));
+
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+
+		session.activeTab().buffer().insertText("# changed\n");
+		assertEquals(0, backend.writeCount);
+		assertEquals(0, backend.reloadCount);
+
+		screen.removed();
+
+		assertEquals(1, backend.writeCount);
+		assertFalse(backend.lastWriteReload, "Reload-on-close mode must save without per-file reload first.");
+		assertEquals(1, backend.reloadCount, "Closing IDE must trigger reloadDatapacks once.");
+		assertFalse(bridge.isActiveFor(screen));
+	}
+
+	@Test
+	void settingsShortcutOpensSettingsCapturesTextInputAndRecordsCustomKeybind() {
+		StubEditorBackend backend = new StubEditorBackend();
+		ClientEditorSession session = new ClientEditorSession(backend, Runnable::run);
+		RecordingTextInputBridge bridge = new RecordingTextInputBridge();
+		QuillIdeScreen screen = new QuillIdeScreen(null, null, session, bridge);
+		screen.init();
+		assertFalse(screen.isSettingsOpen());
+
+		// Ctrl+, opens Settings panel
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_COMMA, ',', net.minecraft.client.input.InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER));
+		assertTrue(screen.isSettingsOpen());
+		assertFalse(bridge.isActiveFor(screen), "Settings without focused text field does not capture SDL text input.");
+
+		// Focusing template default namespace input captures SDL text input and live-updates config
+		screen.settingsPanel().focusTemplateField(0);
+		screen.tick();
+		assertTrue(bridge.isActiveFor(screen));
+		simulateSdlTextInput(screen, bridge, "my_ns");
+		assertEquals("my_ns", QuillClientConfig.current().defaultTemplateNamespace());
+
+		// Recording a custom shortcut (F6) for Toggle Bottom Panel
+		screen.settingsPanel().beginRecordingKeybind(QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL);
+		screen.tick();
+		assertTrue(screen.isInputCaptured(), "Keybind recorder must keep screen input captured.");
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_F6, 0, 0));
+		assertFalse(screen.settingsPanel().isRecordingKeybind());
+		assertEquals("F6", QuillClientConfig.current().shortcut(QuillClientConfig.ShortcutAction.TOGGLE_BOTTOM_PANEL).displayLabel());
+
+		// Escape closes Settings, then pressing newly bound F6 toggles bottom panel
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0));
+		assertFalse(screen.isSettingsOpen());
+		assertFalse(session.isBottomPanelOpen());
+		screen.keyPressed(new KeyEvent(InputConstants.KEY_F6, 0, 0));
+		assertTrue(session.isBottomPanelOpen());
 	}
 
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {

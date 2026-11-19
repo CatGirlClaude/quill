@@ -23,7 +23,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.ToIntFunction;
@@ -48,11 +52,39 @@ public final class CodeEditorWidget {
 	private static final int MAX_VISIBLE_SUGGESTIONS = 8;
 	private static final int SUGGESTION_ROW_HEIGHT = 13;
 	private static final long MULTI_CLICK_WINDOW_MS = 400L;
+	static final long HOVER_DELAY_MS = 500L;
 
 	public record FindMatch(int line, int startCol, int endCol) {
 	}
 
 	public record CtrlClickRequest(OpenTabState tab, TextDocumentBuffer.Position position) {
+	}
+
+	public record FunctionPreview(
+			String functionId,
+			String relativePath,
+			List<String> headerLines,
+			boolean truncated
+	) {
+	}
+
+	enum HoverKind {
+		NONE,
+		COMMAND_SIGNATURES,
+		FUNCTION_PREVIEW
+	}
+
+	record HoverTooltipState(
+			HoverKind kind,
+			int anchorRow,
+			List<String> signatures,
+			FunctionPreview functionPreview
+	) {
+		static final HoverTooltipState NONE = new HoverTooltipState(HoverKind.NONE, -1, List.of(), null);
+
+		boolean isVisible() {
+			return kind != HoverKind.NONE;
+		}
 	}
 
 	public static final class WordWrapLayout {
@@ -185,9 +217,14 @@ public final class CodeEditorWidget {
 	private String lastCaretTabPath = "";
 	private BrigadierAssistService.AssistResult currentAssist = BrigadierAssistService.AssistResult.EMPTY;
 
-	private String lastHoverKey = "";
-	private List<String> cachedHoverSignatures = List.of();
-	private int lastHoverLine = -1;
+	private LongSupplier clock = System::currentTimeMillis;
+	private BiFunction<String, Integer, List<String>> commandHoverResolver = CodeEditorWidget::queryLiveHoverSignatures;
+	private Function<String, CompletableFuture<FunctionPreview>> functionPreviewResolver = fnId -> CompletableFuture.completedFuture(null);
+	private String pendingHoverKey = "";
+	private long pendingHoverStartMs = 0L;
+	private boolean hoverQueryIssued = false;
+	private long hoverGeneration = 0L;
+	private HoverTooltipState activeHoverTooltip = HoverTooltipState.NONE;
 
 	public void setOnBufferEdited(Consumer<OpenTabState> onBufferEdited) {
 		this.onBufferEdited = onBufferEdited != null ? onBufferEdited : tab -> {
@@ -196,6 +233,28 @@ public final class CodeEditorWidget {
 
 	public void setCtrlClickHandler(Predicate<CtrlClickRequest> ctrlClickHandler) {
 		this.ctrlClickHandler = ctrlClickHandler != null ? ctrlClickHandler : req -> false;
+	}
+
+	public void setFunctionPreviewResolver(Function<String, CompletableFuture<FunctionPreview>> functionPreviewResolver) {
+		this.functionPreviewResolver = functionPreviewResolver != null
+				? functionPreviewResolver
+				: fnId -> CompletableFuture.completedFuture(null);
+	}
+
+	void setClockForTest(LongSupplier clock) {
+		this.clock = clock != null ? clock : System::currentTimeMillis;
+	}
+
+	void setCommandHoverResolverForTest(BiFunction<String, Integer, List<String>> commandHoverResolver) {
+		this.commandHoverResolver = commandHoverResolver != null ? commandHoverResolver : CodeEditorWidget::queryLiveHoverSignatures;
+	}
+
+	void resetHoverState() {
+		pendingHoverKey = "";
+		pendingHoverStartMs = 0L;
+		hoverQueryIssued = false;
+		hoverGeneration++;
+		activeHoverTooltip = HoverTooltipState.NONE;
 	}
 
 	public void setContextMenuHooks(Consumer<ContextMenuOverlay> contextMenuOpener, Runnable contextMenuDismisser) {
@@ -313,6 +372,7 @@ public final class CodeEditorWidget {
 
 	private void touchCaret() {
 		lastCaretActivityMs = System.currentTimeMillis();
+		resetHoverState();
 	}
 
 	private boolean isCaretVisible() {
@@ -352,8 +412,7 @@ public final class CodeEditorWidget {
 			lastCaretTabPath = tab.relativePath();
 			dismissAutocomplete();
 			currentAssist = BrigadierAssistService.AssistResult.EMPTY;
-			lastHoverKey = "";
-			cachedHoverSignatures = List.of();
+			resetHoverState();
 		}
 
 		float scale = textScale();
@@ -582,17 +641,21 @@ public final class CodeEditorWidget {
 		// Brigadier autocomplete popup & hover signature tooltips (.mcfunction only)
 		if (language == SyntaxHighlighter.Language.MCFUNCTION) {
 			if (isAutocompleteOpen()) {
+				resetHoverState();
 				renderAutocompletePopup(graphics, font, editorRect, caretScreenX, caretScreenY, lineHeight, mouseX, mouseY);
 			} else {
 				lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
 				suggestionRowRects.clear();
-				if (!hoveringFind) {
+				if (hoveringFind) {
+					resetHoverState();
+				} else {
 					renderHoverOrUsageTooltip(graphics, font, editorRect, tab, lineHeight, mouseX, mouseY);
 				}
 			}
 		} else {
 			lastPopupRect = new IdeLayout.Rect(0, 0, 0, 0);
 			suggestionRowRects.clear();
+			resetHoverState();
 		}
 	}
 
@@ -900,6 +963,146 @@ public final class CodeEditorWidget {
 		}
 	}
 
+	HoverTooltipState evaluateHoverAt(Font font, OpenTabState tab, int mouseX, int mouseY) {
+		if (tab == null || SyntaxHighlighter.languageForPath(tab.relativePath()) != SyntaxHighlighter.Language.MCFUNCTION) {
+			resetHoverState();
+			return HoverTooltipState.NONE;
+		}
+		if (isAutocompleteOpen() || (findBarOpen && findBarRect.contains(mouseX, mouseY)) || !lastCodeViewport.contains(mouseX, mouseY)) {
+			resetHoverState();
+			return HoverTooltipState.NONE;
+		}
+
+		float scale = textScale();
+		int lineHeight = scaledLineHeight(font, scale);
+		int rawRelY = mouseY - (lastCodeViewport.y() + 4);
+		if (rawRelY < 0) {
+			resetHoverState();
+			return HoverTooltipState.NONE;
+		}
+		int rawRowIdx = tab.scrollLine() + (rawRelY / lineHeight);
+		TextDocumentBuffer buffer = tab.buffer();
+
+		final int hoverLine;
+		final int hoverCol;
+		final int anchorRow;
+		if (QuillClientConfig.current().wordWrap() && !cachedVisualRows.isEmpty()) {
+			if (rawRowIdx < 0 || rawRowIdx >= cachedVisualRows.size()) {
+				resetHoverState();
+				return HoverTooltipState.NONE;
+			}
+			WordWrapLayout.VisualRow vr = cachedVisualRows.get(rawRowIdx);
+			hoverLine = vr.logicalLine();
+			anchorRow = rawRowIdx;
+			String fullLine = buffer.line(hoverLine);
+			int segStart = Math.min(vr.startCol(), fullLine.length());
+			int segEnd = Math.min(vr.endCol(), fullLine.length());
+			String segText = fullLine.substring(segStart, segEnd);
+			int lineStartX = lastCodeViewport.x() + CODE_LEFT_PADDING;
+			int lineWidthPx = font != null ? QuillDraw.textWidth(font, segText, scale) : segText.length() * 6;
+			if (mouseX < lineStartX || mouseX > lineStartX + lineWidthPx + 2) {
+				resetHoverState();
+				return HoverTooltipState.NONE;
+			}
+			int relX = mouseX - lineStartX;
+			int localCol = font != null
+					? QuillDraw.charIndexAtPixel(font, segText, relX, scale)
+					: Math.min(segText.length(), relX / 6);
+			hoverCol = segStart + localCol;
+		} else {
+			if (rawRowIdx < 0 || rawRowIdx >= buffer.lineCount()) {
+				resetHoverState();
+				return HoverTooltipState.NONE;
+			}
+			hoverLine = rawRowIdx;
+			anchorRow = rawRowIdx;
+			String fullLine = buffer.line(hoverLine);
+			int lineStartX = lastCodeViewport.x() + CODE_LEFT_PADDING - tab.scrollX();
+			int lineWidthPx = font != null ? QuillDraw.textWidth(font, fullLine, scale) : fullLine.length() * 6;
+			if (mouseX < lastCodeViewport.x() + CODE_LEFT_PADDING || mouseX > lineStartX + lineWidthPx + 2) {
+				resetHoverState();
+				return HoverTooltipState.NONE;
+			}
+			int relX = Math.max(0, mouseX - lineStartX);
+			hoverCol = font != null
+					? QuillDraw.charIndexAtPixel(font, fullLine, relX, scale)
+					: Math.min(fullLine.length(), relX / 6);
+		}
+
+		String lineText = buffer.line(hoverLine);
+		if (lineText.isBlank()) {
+			resetHoverState();
+			return HoverTooltipState.NONE;
+		}
+
+		WorkspaceNavigation.NavigationTarget fnCall =
+				WorkspaceNavigation.resolveFunctionCallTargetAtCursor(tab.relativePath(), lineText, hoverCol);
+		WorkspaceNavigation.CommandHoverTarget cmdVerb =
+				WorkspaceNavigation.findCommandVerbAtCursor(tab.relativePath(), lineText, hoverCol);
+		if (fnCall == null && cmdVerb == null) {
+			resetHoverState();
+			return HoverTooltipState.NONE;
+		}
+
+		String targetKey = fnCall != null
+				? tab.relativePath() + "|FN|" + hoverLine + "|" + fnCall.identifier() + "|" + lineText
+				: tab.relativePath() + "|CMD|" + hoverLine + "|" + cmdVerb.startCol() + "|" + cmdVerb.commandName() + "|" + lineText;
+
+		long now = clock.getAsLong();
+		if (!targetKey.equals(pendingHoverKey)) {
+			pendingHoverKey = targetKey;
+			pendingHoverStartMs = now;
+			hoverQueryIssued = false;
+			hoverGeneration++;
+			activeHoverTooltip = HoverTooltipState.NONE;
+			return HoverTooltipState.NONE;
+		}
+
+		if (now - pendingHoverStartMs < HOVER_DELAY_MS) {
+			return HoverTooltipState.NONE;
+		}
+
+		if (!hoverQueryIssued) {
+			hoverQueryIssued = true;
+			final long gen = hoverGeneration;
+			if (fnCall != null) {
+				String fnId = fnCall.identifier();
+				boolean fallbackToCommand = cmdVerb != null && "function".equals(cmdVerb.commandName());
+				CompletableFuture<FunctionPreview> future = functionPreviewResolver.apply(fnId);
+				if (future != null) {
+					future.whenComplete((preview, error) -> {
+						Runnable apply = () -> {
+							if (gen != hoverGeneration) {
+								return;
+							}
+							if (error == null && preview != null) {
+								activeHoverTooltip = new HoverTooltipState(HoverKind.FUNCTION_PREVIEW, anchorRow, List.of(), preview);
+							} else if (fallbackToCommand) {
+								List<String> sigs = commandHoverResolver.apply(lineText, hoverCol);
+								if (sigs != null && !sigs.isEmpty()) {
+									activeHoverTooltip = new HoverTooltipState(HoverKind.COMMAND_SIGNATURES, anchorRow, List.copyOf(sigs), null);
+								}
+							}
+						};
+						Minecraft mc = Minecraft.getInstance();
+						if (mc != null && !mc.isSameThread()) {
+							mc.execute(apply);
+						} else {
+							apply.run();
+						}
+					});
+				}
+			} else {
+				List<String> sigs = commandHoverResolver.apply(lineText, hoverCol);
+				if (sigs != null && !sigs.isEmpty()) {
+					activeHoverTooltip = new HoverTooltipState(HoverKind.COMMAND_SIGNATURES, anchorRow, List.copyOf(sigs), null);
+				}
+			}
+		}
+
+		return activeHoverTooltip;
+	}
+
 	private void renderHoverOrUsageTooltip(
 			GuiGraphicsExtractor graphics,
 			Font font,
@@ -909,51 +1112,111 @@ public final class CodeEditorWidget {
 			int mouseX,
 			int mouseY
 	) {
-		if (!lastCodeViewport.contains(mouseX, mouseY)) {
+		HoverTooltipState state = evaluateHoverAt(font, tab, mouseX, mouseY);
+		if (!state.isVisible()) {
 			return;
 		}
-		TextDocumentBuffer buffer = tab.buffer();
-		int hoverLine = hitTestLine(font, tab, mouseY);
-		if (hoverLine < 0 || hoverLine >= buffer.lineCount()) {
+		if (state.kind() == HoverKind.FUNCTION_PREVIEW && state.functionPreview() != null) {
+			renderFunctionPreviewTooltip(graphics, font, editorRect, tab, lineHeight, mouseX, state.anchorRow(), state.functionPreview());
 			return;
 		}
-		String lineText = buffer.line(hoverLine);
-		if (lineText.isBlank()) {
+		List<String> signatures = state.signatures();
+		if (signatures.isEmpty()) {
 			return;
 		}
-		TextDocumentBuffer.Position hoverPos = hitTest(font, tab, mouseX, mouseY);
-		String hoverKey = tab.relativePath() + "|" + hoverLine + "|" + hoverPos.column() + "|" + lineText;
-		if (!hoverKey.equals(lastHoverKey)) {
-			lastHoverKey = hoverKey;
-			lastHoverLine = hoverLine;
-			cachedHoverSignatures = queryLiveHoverSignatures(lineText, hoverPos.column());
-		}
-
-		if (cachedHoverSignatures.isEmpty() || lastHoverLine != hoverLine) {
-			return;
-		}
-		int maxLines = Math.min(2, cachedHoverSignatures.size());
+		int maxLines = Math.min(2, signatures.size());
 		int maxW = 0;
 		for (int i = 0; i < maxLines; i++) {
-			maxW = Math.max(maxW, QuillDraw.textWidth(font, cachedHoverSignatures.get(i)));
+			maxW = Math.max(maxW, QuillDraw.textWidth(font, signatures.get(i)));
 		}
 		int boxW = Math.min(Math.max(80, editorRect.width() - 20), maxW + 12);
 		int boxH = maxLines * 11 + 6;
-		int rowY = editorRect.y() + 4 + (hoverLine - tab.scrollLine()) * lineHeight;
+		int rowY = editorRect.y() + 4 + (state.anchorRow() - tab.scrollLine()) * lineHeight;
 		int bx = Math.max(editorRect.x() + 6, Math.min(mouseX + 8, editorRect.right() - boxW - 6));
 		int by = rowY - boxH - 3;
 		if (by < editorRect.y() + 2) {
 			by = Math.min(editorRect.bottom() - boxH - 4, rowY + lineHeight + 3);
 		}
+		QuillDraw.fill(graphics, bx - 1, by + 1, boxW + 3, boxH + 3, QuillTheme.Metrics.SHADOW_OUTER);
 		QuillDraw.fill(graphics, bx, by, boxW, boxH, QuillTheme.BG_POPUP);
 		QuillDraw.outline(graphics, bx, by, boxW, boxH, QuillTheme.BORDER_SUBTLE);
 		for (int i = 0; i < maxLines; i++) {
-			String text = QuillDraw.clipToWidth(font, cachedHoverSignatures.get(i), boxW - 8);
+			String text = QuillDraw.clipToWidth(font, signatures.get(i), boxW - 8);
 			QuillDraw.text(graphics, font, text, bx + 4, by + 3 + i * 11, QuillTheme.SYNTAX_PROPERTY);
 		}
 	}
 
+	private static void renderFunctionPreviewTooltip(
+			GuiGraphicsExtractor graphics,
+			Font font,
+			IdeLayout.Rect editorRect,
+			OpenTabState tab,
+			int lineHeight,
+			int mouseX,
+			int anchorRow,
+			FunctionPreview preview
+	) {
+		String title = preview.functionId() != null ? preview.functionId() : "";
+		String path = preview.relativePath() != null ? preview.relativePath() : "";
+		int maxW = Math.max(QuillDraw.textWidth(font, title), QuillDraw.textWidth(font, path));
+		for (String hLine : preview.headerLines()) {
+			maxW = Math.max(maxW, QuillDraw.textWidth(font, hLine));
+		}
+		int boxW = Math.min(Math.max(120, editorRect.width() - 20), Math.min(340, Math.max(140, maxW + 14)));
+		int headerH = path.isBlank() ? 15 : 26;
+		int bodyLineCount = preview.headerLines().isEmpty() ? 1 : preview.headerLines().size();
+		if (preview.truncated()) {
+			bodyLineCount++;
+		}
+		int bodyH = bodyLineCount * 11 + 6;
+		int boxH = headerH + 1 + bodyH;
+
+		int rowY = editorRect.y() + 4 + (anchorRow - tab.scrollLine()) * lineHeight;
+		int bx = Math.max(editorRect.x() + 6, Math.min(mouseX + 8, editorRect.right() - boxW - 6));
+		int by = rowY - boxH - 3;
+		if (by < editorRect.y() + 2) {
+			by = Math.min(editorRect.bottom() - boxH - 4, rowY + lineHeight + 3);
+		}
+
+		QuillDraw.fill(graphics, bx - 1, by + 1, boxW + 3, boxH + 3, QuillTheme.Metrics.SHADOW_OUTER);
+		QuillDraw.fill(graphics, bx, by, boxW, boxH, QuillTheme.BG_POPUP);
+		QuillDraw.fill(graphics, bx + 1, by + 1, boxW - 2, headerH - 1, QuillTheme.BG_TAB_INACTIVE);
+		QuillDraw.outline(graphics, bx, by, boxW, boxH, QuillTheme.BORDER_SUBTLE);
+
+		QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, title, boxW - 10), bx + 5, by + 3, QuillTheme.SYNTAX_COMMAND);
+		if (!path.isBlank()) {
+			QuillDraw.text(graphics, font, QuillDraw.clipToWidth(font, path, boxW - 10), bx + 5, by + 14, QuillTheme.TEXT_MUTED);
+		}
+		QuillDraw.hLine(graphics, bx + 1, boxW - 2, by + headerH, QuillTheme.BORDER_SUBTLE);
+
+		int bodyY = by + headerH + 4;
+		QuillDraw.beginClip(graphics, new IdeLayout.Rect(bx + 4, by + headerH + 1, boxW - 8, bodyH));
+		if (preview.headerLines().isEmpty()) {
+			QuillDraw.text(graphics, font, "(empty file)", bx + 5, bodyY, QuillTheme.TEXT_MUTED);
+		} else {
+			for (int i = 0; i < preview.headerLines().size(); i++) {
+				String codeLine = preview.headerLines().get(i);
+				int ly = bodyY + i * 11;
+				List<SyntaxHighlighter.TokenSpan> spans = SyntaxHighlighter.tokenizeLine(codeLine, SyntaxHighlighter.Language.MCFUNCTION);
+				for (SyntaxHighlighter.TokenSpan span : spans) {
+					if (span.end() <= span.start()) {
+						continue;
+					}
+					String part = codeLine.substring(span.start(), span.end());
+					int lx = bx + 5 + (span.start() == 0 ? 0 : QuillDraw.textWidth(font, codeLine.substring(0, span.start())));
+					QuillDraw.text(graphics, font, part, lx, ly, span.color());
+				}
+			}
+			if (preview.truncated()) {
+				int ly = bodyY + preview.headerLines().size() * 11;
+				QuillDraw.text(graphics, font, "...", bx + 5, ly, QuillTheme.TEXT_MUTED);
+			}
+		}
+		QuillDraw.endClip(graphics);
+	}
+
 	public boolean mouseClicked(MouseButtonEvent event, Font font, OpenTabState tab) {
+		resetHoverState();
 		if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
 			if (findBarOpen && findBarRect.contains(event.x(), event.y())) {
 				return true;
@@ -1147,6 +1410,7 @@ public final class CodeEditorWidget {
 		if (!lastEditorRect.contains(mouseX, mouseY)) {
 			return false;
 		}
+		resetHoverState();
 		boolean wordWrap = QuillClientConfig.current().wordWrap();
 		if (shiftDown && scrollY != 0) {
 			if (!wordWrap) {

@@ -213,6 +213,134 @@ class CodeEditorWidgetTest {
 		assertFalse(tab.buffer().hasSelection(), "Handled Ctrl+Click must not create a text selection.");
 	}
 
+	@Test
+	void hoverTooltipWaitsHalfSecondAndOnlyTriggersOnCommandFirstWordOrExecuteSubcommand() {
+		CodeEditorWidget widget = new CodeEditorWidget();
+		OpenTabState tab = new OpenTabState(new FileDocument(
+				"pack/data/demo/function/hover.mcfunction",
+				"scoreboard players set @a coins 1\nexecute as @a run scoreboard players set @s coins 1",
+				"sha",
+				0L
+		));
+		widget.setViewportBoundsForTest(
+				new IdeLayout.Rect(0, 0, 500, 120),
+				new IdeLayout.Rect(0, 0, 32, 115),
+				new IdeLayout.Rect(32, 0, 463, 115)
+		);
+
+		java.util.concurrent.atomic.AtomicLong nowMs = new java.util.concurrent.atomic.AtomicLong(1_000L);
+		widget.setClockForTest(nowMs::get);
+		widget.setCommandHoverResolverForTest((line, col) -> {
+			if (line.startsWith("execute") && col < 10) {
+				return List.of("execute as <targets> run ...");
+			}
+			return List.of("scoreboard players set <targets> <objective> <score>");
+		});
+
+		// Coordinates: codeViewport.x=32, leftPadding=2 => col c is at x = 34 + c*6 + 2.
+		// Line 0 y in [4..15), Line 1 y in [15..26)
+		int xScoreboard = 34 + 3 * 6;
+		int yLine0 = 8;
+		int xPlayers = 34 + 13 * 6;
+
+		// At t=1000ms and t=1499ms: no tooltip yet (< 500ms delay)
+		assertFalse(widget.evaluateHoverAt(null, tab, xScoreboard, yLine0).isVisible());
+		nowMs.set(1_499L);
+		assertFalse(widget.evaluateHoverAt(null, tab, xScoreboard, yLine0).isVisible());
+
+		// At t=1500ms (>= 500ms delay): tooltip appears for first command word
+		nowMs.set(1_500L);
+		var state = widget.evaluateHoverAt(null, tab, xScoreboard, yLine0);
+		assertTrue(state.isVisible());
+		assertEquals(List.of("scoreboard players set <targets> <objective> <score>"), state.signatures());
+
+		// Moving cursor onto non-first argument token ('players') hides tooltip immediately even after waiting > 500ms
+		assertFalse(widget.evaluateHoverAt(null, tab, xPlayers, yLine0).isVisible());
+		nowMs.addAndGet(1_000L);
+		assertFalse(widget.evaluateHoverAt(null, tab, xPlayers, yLine0).isVisible(),
+				"Tooltip must not appear when hovering non-first command arguments.");
+
+		// Moving back to 'scoreboard' restarts the 500ms timer from scratch
+		assertFalse(widget.evaluateHoverAt(null, tab, xScoreboard, yLine0).isVisible());
+		nowMs.addAndGet(499L);
+		assertFalse(widget.evaluateHoverAt(null, tab, xScoreboard, yLine0).isVisible());
+		nowMs.addAndGet(1L);
+		assertTrue(widget.evaluateHoverAt(null, tab, xScoreboard, yLine0).isVisible());
+
+		// Hovering empty space past end of line or below last line hides tooltip and does not trigger on short lines
+		assertFalse(widget.evaluateHoverAt(null, tab, 460, yLine0).isVisible(),
+				"Hovering past end-of-line empty canvas must not trigger tooltip.");
+		assertFalse(widget.evaluateHoverAt(null, tab, xScoreboard, 90).isVisible(),
+				"Hovering below last line must not trigger tooltip.");
+
+		// Line 1: `execute as @a run scoreboard players set @s coins 1`
+		int yLine1 = 19;
+		int xExecute = 34 + 2 * 6;
+		int xSubScore = 34 + ("execute as @a run ".length() + 3) * 6;
+		int xRun = 34 + ("execute as @a ".length() + 1) * 6;
+
+		assertFalse(widget.evaluateHoverAt(null, tab, xExecute, yLine1).isVisible());
+		nowMs.addAndGet(500L);
+		var execState = widget.evaluateHoverAt(null, tab, xExecute, yLine1);
+		assertTrue(execState.isVisible());
+		assertEquals(List.of("execute as <targets> run ..."), execState.signatures());
+
+		assertFalse(widget.evaluateHoverAt(null, tab, xRun, yLine1).isVisible());
+		nowMs.addAndGet(600L);
+		assertFalse(widget.evaluateHoverAt(null, tab, xRun, yLine1).isVisible());
+
+		assertFalse(widget.evaluateHoverAt(null, tab, xSubScore, yLine1).isVisible());
+		nowMs.addAndGet(500L);
+		var subState = widget.evaluateHoverAt(null, tab, xSubScore, yLine1);
+		assertTrue(subState.isVisible());
+		assertEquals(List.of("scoreboard players set <targets> <objective> <score>"), subState.signatures());
+	}
+
+	@Test
+	void hoveringFunctionCommandOrIdShowsFunctionHeaderPreviewAfterHalfSecond() {
+		CodeEditorWidget widget = new CodeEditorWidget();
+		OpenTabState tab = new OpenTabState(new FileDocument(
+				"pack/data/demo/function/caller.mcfunction",
+				"/function demo:shop\nexecute as @a run function demo:shop",
+				"sha",
+				0L
+		));
+		widget.setViewportBoundsForTest(
+				new IdeLayout.Rect(0, 0, 500, 120),
+				new IdeLayout.Rect(0, 0, 32, 115),
+				new IdeLayout.Rect(32, 0, 463, 115)
+		);
+
+		java.util.concurrent.atomic.AtomicLong nowMs = new java.util.concurrent.atomic.AtomicLong(2_000L);
+		widget.setClockForTest(nowMs::get);
+		widget.setFunctionPreviewResolver(fnId -> java.util.concurrent.CompletableFuture.completedFuture(
+				"demo:shop".equals(fnId)
+						? new CodeEditorWidget.FunctionPreview(
+								"demo:shop",
+								"pack/data/demo/function/shop.mcfunction",
+								List.of("# Shop header", "say Welcome", "scoreboard players remove @s coins 5"),
+								false)
+						: null
+		));
+
+		int xFunctionVerb = 34 + 3 * 6; // on `function` in `/function demo:shop`
+		int yLine0 = 8;
+
+		assertFalse(widget.evaluateHoverAt(null, tab, xFunctionVerb, yLine0).isVisible());
+		nowMs.set(2_499L);
+		assertFalse(widget.evaluateHoverAt(null, tab, xFunctionVerb, yLine0).isVisible());
+
+		nowMs.set(2_500L);
+		var fnState = widget.evaluateHoverAt(null, tab, xFunctionVerb, yLine0);
+		assertTrue(fnState.isVisible());
+		assertTrue(fnState.functionPreview() != null);
+		assertEquals("demo:shop", fnState.functionPreview().functionId());
+		assertEquals(
+				List.of("# Shop header", "say Welcome", "scoreboard players remove @s coins 5"),
+				fnState.functionPreview().headerLines()
+		);
+	}
+
 	private static ContextMenuOverlay.ActionItem findItem(List<ContextMenuOverlay.MenuEntry> entries, String label) {
 		return entries.stream()
 				.filter(ContextMenuOverlay.ActionItem.class::isInstance)

@@ -156,10 +156,12 @@ public class QuillIdeScreen extends Screen {
 		this.codeEditorWidget.setOnBufferEdited(session::notifyTabBufferEdited);
 		this.codeEditorWidget.setContextMenuHooks(this::openContextMenu, this::closeContextMenu);
 		this.codeEditorWidget.setCtrlClickHandler(this::handleCtrlClick);
+		this.codeEditorWidget.setFunctionPreviewResolver(this::resolveFunctionPreview);
 		this.secondaryCodeEditorWidget = new CodeEditorWidget();
 		this.secondaryCodeEditorWidget.setOnBufferEdited(session::notifyTabBufferEdited);
 		this.secondaryCodeEditorWidget.setContextMenuHooks(this::openContextMenu, this::closeContextMenu);
 		this.secondaryCodeEditorWidget.setCtrlClickHandler(this::handleCtrlClick);
+		this.secondaryCodeEditorWidget.setFunctionPreviewResolver(this::resolveFunctionPreview);
 		this.settingsPanel = new SettingsPanelWidget(this::closeSettings, this::onResetWindowBounds);
 		this.bottomPanelWidget = new BottomPanelWidget(session);
 		this.notificationBanner = new QuillNotificationBanner(session);
@@ -170,6 +172,29 @@ public class QuillIdeScreen extends Screen {
 				this::closeSettings,
 				this::closeSettings
 		);
+	}
+
+	private java.util.concurrent.CompletableFuture<CodeEditorWidget.FunctionPreview> resolveFunctionPreview(String functionId) {
+		if (functionId == null || functionId.isBlank()) {
+			return java.util.concurrent.CompletableFuture.completedFuture(null);
+		}
+		String fnPath = WorkspaceNavigation.resolveFunctionFilePath(functionId, session.listAllFilePaths());
+		if (fnPath == null) {
+			return java.util.concurrent.CompletableFuture.completedFuture(null);
+		}
+		return workspaceFileCache.loadFile(session, fnPath).thenApply(snapshot -> {
+			if (snapshot == null) {
+				return null;
+			}
+			WorkspaceNavigation.FunctionHeaderPreview preview =
+					WorkspaceNavigation.extractFunctionHeaderPreview(snapshot.content(), 5);
+			return new CodeEditorWidget.FunctionPreview(
+					functionId,
+					fnPath,
+					preview.lines(),
+					preview.truncated()
+			);
+		});
 	}
 
 	void setUriOpenerForTest(Consumer<String> uriOpener) {

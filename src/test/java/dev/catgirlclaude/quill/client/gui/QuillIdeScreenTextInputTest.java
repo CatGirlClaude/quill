@@ -1163,6 +1163,14 @@ class QuillIdeScreenTextInputTest {
 				false
 		));
 		assertEquals("pack/data/demo/function/shop.mcfunction", session.activeTab().relativePath());
+
+		// 4. Switch back to main.mcfunction and Ctrl+Click directly on `function` verb (line 2, col 2 -> x = 132 + 2 + 2*6 = 146, y = 77)
+		session.openFile("pack/data/demo/function/main.mcfunction");
+		assertTrue(screen.mouseClicked(
+				new net.minecraft.client.input.MouseButtonEvent(146, 77, new net.minecraft.client.input.MouseButtonInfo(InputConstants.MOUSE_BUTTON_LEFT, ctrl)),
+				false
+		));
+		assertEquals("pack/data/demo/function/shop.mcfunction", session.activeTab().relativePath());
 	}
 
 	private static void simulateSdlTextInput(QuillIdeScreen screen, RecordingTextInputBridge bridge, String text) {

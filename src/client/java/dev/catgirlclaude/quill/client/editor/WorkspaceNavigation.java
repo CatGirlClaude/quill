@@ -46,6 +46,19 @@ public final class WorkspaceNavigation {
 	) {
 	}
 
+	public record CommandHoverTarget(
+			String commandName,
+			int startCol,
+			int endCol
+	) {
+	}
+
+	public record FunctionHeaderPreview(
+			List<String> lines,
+			boolean truncated
+	) {
+	}
+
 	private record Token(String text, int startCol, int endCol) {
 	}
 
@@ -126,25 +139,127 @@ public final class WorkspaceNavigation {
 			return null;
 		}
 
-		// 3. Function references (`function <id>` or `schedule function <id>`)
-		NavigationTarget fnTarget = findFunctionTargetAtCol(tokens, 0, col);
+		// 3. Function references (`function <id>` or `schedule function <id>`, on verb or ID)
+		NavigationTarget fnTarget = findFunctionTargetAtCol(line, lead, tokens, 0, col);
 		if (fnTarget != null) {
 			return fnTarget;
 		}
 
 		// 4. Command verbs (leading command or subcommand after `execute ... run` / `return run`)
 		for (Token cmdTok : findCommandTokens(tokens, 0)) {
-			if (col >= cmdTok.startCol() && col <= cmdTok.endCol()) {
+			int spanStart = tokenStartWithPrefix(line, lead, tokens, cmdTok);
+			if (col >= spanStart && col <= cmdTok.endCol()) {
 				String normalized = normalizeCommandToken(cmdTok.text());
 				if (isKnownCommand(normalized, registeredRootCommands)) {
 					String docUrl = commandDocumentationUrl(normalized);
 					if (docUrl != null) {
-						return new NavigationTarget(TargetKind.COMMAND_DOC, normalized, docUrl, cmdTok.startCol(), cmdTok.endCol());
+						return new NavigationTarget(TargetKind.COMMAND_DOC, normalized, docUrl, spanStart, cmdTok.endCol());
 					}
 				}
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Resolves a {@code /function <id>} or {@code schedule function <id>} call when the cursor is on
+	 * either the {@code function} verb or the function ID token (including after {@code execute ... run}).
+	 */
+	public static NavigationTarget resolveFunctionCallTargetAtCursor(
+			String relativePath,
+			String line,
+			int column
+	) {
+		if (line == null || line.isEmpty() || SyntaxHighlighter.languageForPath(relativePath) != SyntaxHighlighter.Language.MCFUNCTION) {
+			return null;
+		}
+		int lead = skipWhitespace(line, 0);
+		if (lead >= line.length() || line.charAt(lead) == '#') {
+			return null;
+		}
+		int col = Math.max(0, Math.min(line.length(), column));
+		int cmdStart = lead;
+		if (line.charAt(cmdStart) == '$' || line.charAt(cmdStart) == '/') {
+			cmdStart++;
+		}
+		List<Token> tokens = tokenizeLine(line, cmdStart);
+		if (tokens.isEmpty()) {
+			return null;
+		}
+		return findFunctionTargetAtCol(line, lead, tokens, 0, col);
+	}
+
+	/**
+	 * Returns the command verb token if the cursor is over the first word of a top-level command
+	 * or a redirected subcommand after {@code execute ... run} / {@code return run}.
+	 */
+	public static CommandHoverTarget findCommandVerbAtCursor(
+			String relativePath,
+			String line,
+			int column
+	) {
+		if (line == null || line.isEmpty() || SyntaxHighlighter.languageForPath(relativePath) != SyntaxHighlighter.Language.MCFUNCTION) {
+			return null;
+		}
+		int lead = skipWhitespace(line, 0);
+		if (lead >= line.length() || line.charAt(lead) == '#') {
+			return null;
+		}
+		int col = Math.max(0, Math.min(line.length(), column));
+		int cmdStart = lead;
+		if (line.charAt(cmdStart) == '$' || line.charAt(cmdStart) == '/') {
+			cmdStart++;
+		}
+		List<Token> tokens = tokenizeLine(line, cmdStart);
+		if (tokens.isEmpty()) {
+			return null;
+		}
+		for (Token cmdTok : findCommandTokens(tokens, 0)) {
+			int spanStart = tokenStartWithPrefix(line, lead, tokens, cmdTok);
+			if (col >= spanStart && col <= cmdTok.endCol()) {
+				String normalized = normalizeCommandToken(cmdTok.text());
+				if (!normalized.isEmpty()) {
+					return new CommandHoverTarget(normalized, spanStart, cmdTok.endCol());
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Extracts the first {@code maxLines} header/code lines of an {@code .mcfunction} file,
+	 * skipping leading blank lines and indicating whether additional non-blank lines remain.
+	 */
+	public static FunctionHeaderPreview extractFunctionHeaderPreview(String content, int maxLines) {
+		if (content == null || content.isBlank() || maxLines <= 0) {
+			return new FunctionHeaderPreview(List.of(), false);
+		}
+		String normalized = TextDocumentBuffer.normalizeLineEndings(content);
+		String[] rawLines = normalized.split("\n", -1);
+		int start = 0;
+		while (start < rawLines.length && rawLines[start].isBlank()) {
+			start++;
+		}
+		if (start >= rawLines.length) {
+			return new FunctionHeaderPreview(List.of(), false);
+		}
+		int sliceEnd = Math.min(rawLines.length, start + maxLines);
+		int trimmedEnd = sliceEnd;
+		while (trimmedEnd > start && rawLines[trimmedEnd - 1].isBlank()) {
+			trimmedEnd--;
+		}
+		List<String> previewLines = new ArrayList<>(trimmedEnd - start);
+		for (int i = start; i < trimmedEnd; i++) {
+			previewLines.add(rawLines[i]);
+		}
+		boolean truncated = false;
+		for (int i = sliceEnd; i < rawLines.length; i++) {
+			if (!rawLines[i].isBlank()) {
+				truncated = true;
+				break;
+			}
+		}
+		return new FunctionHeaderPreview(List.copyOf(previewLines), truncated);
 	}
 
 	public static List<DatapackInspector.Occurrence> findAllUsages(
@@ -320,7 +435,23 @@ public final class WorkspaceNavigation {
 		return line.substring(startCol, endCol);
 	}
 
-	private static NavigationTarget findFunctionTargetAtCol(List<Token> tokens, int startIdx, int col) {
+	private static int tokenStartWithPrefix(String line, int lead, List<Token> tokens, Token tok) {
+		if (!tokens.isEmpty() && tok == tokens.getFirst()
+				&& lead < tok.startCol()
+				&& tok.startCol() == lead + 1
+				&& (line.charAt(lead) == '/' || line.charAt(lead) == '$')) {
+			return lead;
+		}
+		return tok.startCol();
+	}
+
+	private static NavigationTarget findFunctionTargetAtCol(
+			String line,
+			int lead,
+			List<Token> tokens,
+			int startIdx,
+			int col
+	) {
 		for (Token cmdTok : findCommandTokens(tokens, startIdx)) {
 			int idx = tokens.indexOf(cmdTok);
 			if (idx < 0) {
@@ -329,13 +460,25 @@ public final class WorkspaceNavigation {
 			String cmd = normalizeCommandToken(cmdTok.text());
 			if ("function".equals(cmd) && idx + 1 < tokens.size()) {
 				Token idTok = tokens.get(idx + 1);
-				if (col >= idTok.startCol() && col <= idTok.endCol() && !idTok.text().startsWith("$(")) {
-					return new NavigationTarget(TargetKind.FUNCTION_ID, idTok.text(), null, idTok.startCol(), idTok.endCol());
+				if (!idTok.text().isEmpty() && !idTok.text().startsWith("$(")) {
+					int verbStart = tokenStartWithPrefix(line, lead, tokens, cmdTok);
+					if (col >= idTok.startCol() && col <= idTok.endCol()) {
+						return new NavigationTarget(TargetKind.FUNCTION_ID, idTok.text(), null, idTok.startCol(), idTok.endCol());
+					}
+					if (col >= verbStart && col <= cmdTok.endCol()) {
+						return new NavigationTarget(TargetKind.FUNCTION_ID, idTok.text(), null, verbStart, cmdTok.endCol());
+					}
 				}
 			} else if ("schedule".equals(cmd) && idx + 2 < tokens.size() && "function".equals(tokens.get(idx + 1).text())) {
+				Token fnTok = tokens.get(idx + 1);
 				Token idTok = tokens.get(idx + 2);
-				if (col >= idTok.startCol() && col <= idTok.endCol() && !idTok.text().startsWith("$(")) {
-					return new NavigationTarget(TargetKind.FUNCTION_ID, idTok.text(), null, idTok.startCol(), idTok.endCol());
+				if (!idTok.text().isEmpty() && !idTok.text().startsWith("$(")) {
+					if (col >= idTok.startCol() && col <= idTok.endCol()) {
+						return new NavigationTarget(TargetKind.FUNCTION_ID, idTok.text(), null, idTok.startCol(), idTok.endCol());
+					}
+					if (col >= fnTok.startCol() && col <= fnTok.endCol()) {
+						return new NavigationTarget(TargetKind.FUNCTION_ID, idTok.text(), null, fnTok.startCol(), fnTok.endCol());
+					}
 				}
 			}
 		}

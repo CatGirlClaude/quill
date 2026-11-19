@@ -152,9 +152,14 @@ public final class BrigadierAssistService {
 
 		CommandContextBuilder<S> cursorCtx = context;
 		while (cursorCtx != null) {
+			boolean clearedForRedirect = false;
 			for (ParsedCommandNode<S> parsedNode : cursorCtx.getNodes()) {
 				StringRange range = parsedNode.getRange();
 				if (range.getStart() <= relativeCursor) {
+					if (cursorCtx != context && !clearedForRedirect) {
+						prefix.setLength(0);
+						clearedForRedirect = true;
+					}
 					activeNode = parsedNode.getNode();
 					if (!prefix.isEmpty()) {
 						prefix.append(' ');

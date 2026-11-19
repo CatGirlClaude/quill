@@ -49,6 +49,43 @@ public final class WorkspaceFileCache {
 	}
 
 	/**
+	 * Loads a single file snapshot from open tabs, cache, or {@code EditorBackend.readFile}.
+	 */
+	public CompletableFuture<WorkspaceFileSnapshot> loadFile(
+			ClientEditorSession session,
+			String relativePath
+	) {
+		if (session == null || relativePath == null || relativePath.isBlank()) {
+			return CompletableFuture.completedFuture(null);
+		}
+		long rev = session.workspaceRevision();
+		ensureRevision(rev);
+
+		OpenTabState openTab = session.findOpenTab(relativePath);
+		if (openTab != null) {
+			return CompletableFuture.completedFuture(
+					new WorkspaceFileSnapshot(relativePath, openTab.buffer().getText(), openTab.sha256(), true)
+			);
+		}
+		FileDocument cached = cachedDocuments.get(relativePath);
+		if (cached != null) {
+			return CompletableFuture.completedFuture(
+					new WorkspaceFileSnapshot(relativePath, cached.content(), cached.sha256(), false)
+			);
+		}
+		return session.backend().readFile(relativePath)
+				.handle((doc, error) -> {
+					if (error != null || doc == null) {
+						return null;
+					}
+					if (cachedRevision == rev) {
+						cachedDocuments.put(relativePath, doc);
+					}
+					return new WorkspaceFileSnapshot(relativePath, doc.content(), doc.sha256(), false);
+				});
+	}
+
+	/**
 	 * Loads text snapshots for all workspace files matching {@code pathFilter}, combining live open tabs
 	 * with cached or freshly fetched backend documents.
 	 */

@@ -152,5 +152,70 @@ class WorkspaceNavigationTest {
 				"my_pack/data/demo/function/nested/init.mcfunction",
 				WorkspaceNavigation.resolveFunctionFilePath("demo:nested/init", allPaths)
 		);
+
+		// Ctrl+Click directly on `/function` or `function` command verb also resolves to called function
+		String slashFnLine = "/function demo:nested/init";
+		var verbTarget = WorkspaceNavigation.resolveTargetAtCursor(
+				"pack/data/demo/function/a.mcfunction",
+				slashFnLine,
+				slashFnLine.indexOf("function") + 2,
+				Set.of("function")
+		);
+		assertNotNull(verbTarget);
+		assertEquals(WorkspaceNavigation.TargetKind.FUNCTION_ID, verbTarget.kind());
+		assertEquals("demo:nested/init", verbTarget.identifier());
+
+		String execFnLine = "execute as @a run function demo:nested/init";
+		var execVerbTarget = WorkspaceNavigation.resolveTargetAtCursor(
+				"pack/data/demo/function/a.mcfunction",
+				execFnLine,
+				execFnLine.indexOf("function") + 3,
+				Set.of("execute", "function")
+		);
+		assertNotNull(execVerbTarget);
+		assertEquals(WorkspaceNavigation.TargetKind.FUNCTION_ID, execVerbTarget.kind());
+		assertEquals("demo:nested/init", execVerbTarget.identifier());
+	}
+
+	@Test
+	void findCommandVerbAtCursorMatchesOnlyFirstWordIncludingAfterExecuteRun() {
+		String simple = "scoreboard players set @s coins 1";
+		var scoreVerb = WorkspaceNavigation.findCommandVerbAtCursor(
+				"pack/data/demo/function/a.mcfunction", simple, simple.indexOf("scoreboard") + 3);
+		assertNotNull(scoreVerb);
+		assertEquals("scoreboard", scoreVerb.commandName());
+
+		assertNull(WorkspaceNavigation.findCommandVerbAtCursor(
+				"pack/data/demo/function/a.mcfunction", simple, simple.indexOf("players") + 2));
+		assertNull(WorkspaceNavigation.findCommandVerbAtCursor(
+				"pack/data/demo/function/a.mcfunction", simple, simple.indexOf("set") + 1));
+
+		String chained = "execute as @a at @s run scoreboard players set @s coins 1";
+		var execVerb = WorkspaceNavigation.findCommandVerbAtCursor(
+				"pack/data/demo/function/a.mcfunction", chained, 2);
+		assertNotNull(execVerb);
+		assertEquals("execute", execVerb.commandName());
+
+		var runScoreVerb = WorkspaceNavigation.findCommandVerbAtCursor(
+				"pack/data/demo/function/a.mcfunction", chained, chained.indexOf("scoreboard") + 4);
+		assertNotNull(runScoreVerb);
+		assertEquals("scoreboard", runScoreVerb.commandName());
+
+		assertNull(WorkspaceNavigation.findCommandVerbAtCursor(
+				"pack/data/demo/function/a.mcfunction", chained, chained.indexOf("run") + 1));
+		assertNull(WorkspaceNavigation.findCommandVerbAtCursor(
+				"pack/data/demo/function/a.mcfunction", chained, chained.indexOf("players") + 2));
+	}
+
+	@Test
+	void extractFunctionHeaderPreviewSkipsLeadingBlankLinesAndLimitsCount() {
+		String content = "\n\n# Header line 1\n# Header line 2\nsay step 1\nsay step 2\nsay step 3\nsay step 4\n";
+		var preview = WorkspaceNavigation.extractFunctionHeaderPreview(content, 5);
+		assertEquals(List.of("# Header line 1", "# Header line 2", "say step 1", "say step 2", "say step 3"), preview.lines());
+		assertTrue(preview.truncated());
+
+		var shortPreview = WorkspaceNavigation.extractFunctionHeaderPreview("say only one line\n", 5);
+		assertEquals(List.of("say only one line"), shortPreview.lines());
+		assertEquals(false, shortPreview.truncated());
 	}
 }

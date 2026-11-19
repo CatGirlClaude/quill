@@ -84,4 +84,30 @@ class BrigadierAssistServiceTest {
 		assertFalse(hover.isEmpty());
 		assertTrue(hover.getFirst().contains("scoreboard players set"));
 	}
+
+	@Test
+	void hoverSignaturesFocusOnRedirectedSubcommandAfterExecuteRun() {
+		com.mojang.brigadier.arguments.ArgumentType<String> selectorOrWord = reader -> {
+			int start = reader.getCursor();
+			while (reader.canRead() && !Character.isWhitespace(reader.peek())) {
+				reader.skip();
+			}
+			return reader.getString().substring(start, reader.getCursor());
+		};
+		dispatcher.register(LiteralArgumentBuilder.literal("execute")
+				.then(LiteralArgumentBuilder.literal("as")
+						.then(RequiredArgumentBuilder.argument("targets", selectorOrWord)
+								.then(LiteralArgumentBuilder.literal("run")
+										.redirect(dispatcher.getRoot())))));
+
+		String line = "execute as @a run scoreboard players set @s 5";
+		List<String> execHover = BrigadierAssistService.queryHoverSignatures(dispatcher, source, line, 2);
+		assertFalse(execHover.isEmpty());
+		assertTrue(execHover.stream().anyMatch(s -> s.startsWith("execute ")));
+
+		List<String> scoreHover = BrigadierAssistService.queryHoverSignatures(dispatcher, source, line, line.indexOf("scoreboard") + 2);
+		assertFalse(scoreHover.isEmpty());
+		assertTrue(scoreHover.stream().anyMatch(s -> s.startsWith("scoreboard ")),
+				"Expected concise subcommand usage starting with 'scoreboard ', got: " + scoreHover);
+	}
 }

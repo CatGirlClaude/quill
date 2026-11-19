@@ -47,10 +47,27 @@ public final class SyntaxHighlighter {
 			"loaded", "predicate", "score", "data", "storage", "bossbar", "function",
 			"items", "matches", "with", "from", "value", "string", "append", "prepend",
 			"insert", "merge", "set", "get", "remove", "add", "reset", "enable", "operation",
-			"objectives", "players", "list", "modify", "display"
+			"objectives", "players", "list", "modify", "display",
+			"byte", "short", "int", "long", "float", "double", "spawn"
 	);
 
 	private static final Set<String> BOOLEAN_LITERALS = Set.of("true", "false", "null");
+
+	private enum ContainerKind {
+		COMPOUND,
+		KV_BRACKET,
+		LIST_BRACKET
+	}
+
+	private static final class ContainerFrame {
+		final ContainerKind kind;
+		boolean expectValue;
+
+		ContainerFrame(ContainerKind kind, boolean expectValue) {
+			this.kind = kind;
+			this.expectValue = expectValue;
+		}
+	}
 
 	private SyntaxHighlighter() {
 	}
@@ -131,12 +148,18 @@ public final class SyntaxHighlighter {
 
 		boolean expectCommandVerb = true;
 		boolean inExecuteOrReturn = false;
-		int braceDepth = 0;
-		int bracketDepth = 0;
-		boolean expectValue = false;
+		boolean inDataOrStoreContext = false;
+		int nbtTargetTokensRemaining = 0;
+		boolean expectNbtPathNext = false;
+		boolean canContinueNbtPath = false;
+		TokenKind lastTopLevelKind = TokenKind.PLAIN;
+		int lastTopLevelEnd = -1;
+		java.util.ArrayDeque<ContainerFrame> containers = new java.util.ArrayDeque<>();
 
 		while (pos < len) {
 			char c = line.charAt(pos);
+			boolean inContainer = !containers.isEmpty();
+			ContainerFrame topFrame = containers.peek();
 
 			// Macro interpolation $(var_name) anywhere on a macro line
 			if (macroLine && c == '$' && pos + 1 < len && line.charAt(pos + 1) == '(') {
@@ -144,6 +167,7 @@ public final class SyntaxHighlighter {
 				if (close > pos + 1) {
 					out.add(span(pos, close + 1, TokenKind.MACRO));
 					pos = close + 1;
+					canContinueNbtPath = false;
 					continue;
 				}
 			}
@@ -155,6 +179,33 @@ public final class SyntaxHighlighter {
 					pos++;
 				}
 				out.add(span(start, pos, TokenKind.PLAIN));
+				canContinueNbtPath = false;
+				continue;
+			}
+
+			// NBT path dot continuation (e.g., ArmorItems[0].components."minecraft:dyed_color".rgb)
+			if (!inContainer && c == '.' && canContinueNbtPath && pos + 1 < len && line.charAt(pos + 1) != '.') {
+				out.add(span(pos, pos + 1, TokenKind.PLAIN));
+				pos++;
+				if (pos < len && (line.charAt(pos) == '"' || line.charAt(pos) == '\'')) {
+					int end = scanQuotedString(line, pos, line.charAt(pos));
+					emitWithMacroHighlights(out, line, pos, end, TokenKind.PROPERTY, macroLine);
+					pos = end;
+					canContinueNbtPath = true;
+					lastTopLevelKind = TokenKind.PROPERTY;
+					lastTopLevelEnd = pos;
+				} else if (pos < len && isPathSegmentChar(line.charAt(pos))) {
+					int segStart = pos;
+					while (pos < len && isPathSegmentChar(line.charAt(pos))) {
+						pos++;
+					}
+					emitWithMacroHighlights(out, line, segStart, pos, TokenKind.PROPERTY, macroLine);
+					canContinueNbtPath = true;
+					lastTopLevelKind = TokenKind.PROPERTY;
+					lastTopLevelEnd = pos;
+				} else {
+					canContinueNbtPath = false;
+				}
 				continue;
 			}
 
@@ -162,28 +213,80 @@ public final class SyntaxHighlighter {
 			if (c == '"' || c == '\'') {
 				int end = scanQuotedString(line, pos, c);
 				int look = skipWhitespace(line, end);
-				boolean isKey = (braceDepth > 0 || bracketDepth > 0) && !expectValue
-						&& look < len && (line.charAt(look) == ':' || line.charAt(look) == '=');
-				emitWithMacroHighlights(out, line, pos, end, isKey ? TokenKind.PROPERTY : TokenKind.STRING, macroLine);
+				boolean isKey = false;
+				if (inContainer && !topFrame.expectValue && topFrame.kind != ContainerKind.LIST_BRACKET) {
+					isKey = look < len && (line.charAt(look) == ':' || line.charAt(look) == '=' || line.charAt(look) == '~');
+				} else if (!inContainer && (canContinueNbtPath
+						|| (nbtTargetTokensRemaining == 0 && expectNbtPathNext)
+						|| (end < len && line.charAt(end) == '['))) {
+					isKey = true;
+				}
+				TokenKind qKind = isKey ? TokenKind.PROPERTY : TokenKind.STRING;
+				emitWithMacroHighlights(out, line, pos, end, qKind, macroLine);
 				pos = end;
 				expectCommandVerb = false;
+				if (!inContainer) {
+					if (nbtTargetTokensRemaining > 0) {
+						nbtTargetTokensRemaining--;
+						canContinueNbtPath = false;
+					} else if (expectNbtPathNext) {
+						expectNbtPathNext = false;
+						canContinueNbtPath = true;
+					} else {
+						canContinueNbtPath = isKey || (pos < len && line.charAt(pos) == '.');
+					}
+					lastTopLevelKind = qKind;
+					lastTopLevelEnd = pos;
+				}
 				continue;
 			}
 
-			// Braces & brackets (SNBT / selector arguments)
+			// Braces & brackets (SNBT, item components, NBT paths, selector arguments)
 			if (c == '{' || c == '}' || c == '[' || c == ']') {
 				if (c == '{') {
-					braceDepth++;
-					expectValue = false;
+					containers.push(new ContainerFrame(ContainerKind.COMPOUND, false));
+					expectNbtPathNext = false;
+					canContinueNbtPath = false;
 				} else if (c == '}') {
-					braceDepth = Math.max(0, braceDepth - 1);
-					expectValue = false;
+					if (!containers.isEmpty() && containers.peek().kind == ContainerKind.COMPOUND) {
+						containers.pop();
+					}
+					canContinueNbtPath = containers.isEmpty();
 				} else if (c == '[') {
-					bracketDepth++;
-					expectValue = false;
+					ContainerKind bracketKind;
+					if (!inContainer) {
+						boolean precededBySelectorOrItem = lastTopLevelEnd == pos
+								&& (lastTopLevelKind == TokenKind.SELECTOR || lastTopLevelKind == TokenKind.IDENTIFIER);
+						bracketKind = isKeyValueBracket(line, pos, precededBySelectorOrItem)
+								? ContainerKind.KV_BRACKET
+								: ContainerKind.LIST_BRACKET;
+						expectNbtPathNext = false;
+					} else {
+						bracketKind = ContainerKind.LIST_BRACKET;
+					}
+					containers.push(new ContainerFrame(bracketKind, bracketKind == ContainerKind.LIST_BRACKET));
+					out.add(span(pos, pos + 1, TokenKind.BRACKET));
+					pos++;
+					expectCommandVerb = false;
+					canContinueNbtPath = false;
+					// Handle SNBT typed array prefixes: [B; ...], [I; ...], [L; ...]
+					if (bracketKind == ContainerKind.LIST_BRACKET
+							&& pos + 1 < len
+							&& (line.charAt(pos) == 'B' || line.charAt(pos) == 'I' || line.charAt(pos) == 'L')
+							&& line.charAt(pos + 1) == ';') {
+						out.add(span(pos, pos + 1, TokenKind.KEYWORD));
+						out.add(span(pos + 1, pos + 2, TokenKind.PLAIN));
+						pos += 2;
+					}
+					continue;
 				} else {
-					bracketDepth = Math.max(0, bracketDepth - 1);
-					expectValue = false;
+					if (!containers.isEmpty() && containers.peek().kind != ContainerKind.COMPOUND) {
+						containers.pop();
+					}
+					canContinueNbtPath = containers.isEmpty();
+					if (containers.isEmpty() && nbtTargetTokensRemaining > 0) {
+						nbtTargetTokensRemaining--;
+					}
 				}
 				out.add(span(pos, pos + 1, TokenKind.BRACKET));
 				pos++;
@@ -191,12 +294,13 @@ public final class SyntaxHighlighter {
 				continue;
 			}
 
-			// Punctuation inside SNBT / selectors
-			if (c == ',' || c == '=' || c == '!' || (c == ':' && (braceDepth > 0 || bracketDepth > 0))) {
-				if (c == ',' ) {
-					expectValue = false;
-				} else if (c == '=' || c == ':') {
-					expectValue = true;
+			// Punctuation inside SNBT / item components / selectors
+			if (inContainer && (c == ',' || c == '=' || c == '!' || c == '~' || c == '|'
+					|| (c == ':' && !topFrame.expectValue && topFrame.kind == ContainerKind.COMPOUND))) {
+				if (c == ',') {
+					topFrame.expectValue = (topFrame.kind == ContainerKind.LIST_BRACKET);
+				} else if (c == '=' || c == ':' || c == '~') {
+					topFrame.expectValue = true;
 				}
 				out.add(span(pos, pos + 1, TokenKind.PLAIN));
 				pos++;
@@ -204,31 +308,51 @@ public final class SyntaxHighlighter {
 			}
 
 			// Target selector (@a, @e, @p, @r, @s, @n)
-			if (c == '@' && pos + 1 < len && isSelectorLetter(line.charAt(pos + 1))
+			if (!inContainer && c == '@' && pos + 1 < len && isSelectorLetter(line.charAt(pos + 1))
 					&& (pos + 2 >= len || !isWordChar(line.charAt(pos + 2)))) {
 				out.add(span(pos, pos + 2, TokenKind.SELECTOR));
 				pos += 2;
 				expectCommandVerb = false;
+				canContinueNbtPath = false;
+				lastTopLevelKind = TokenKind.SELECTOR;
+				lastTopLevelEnd = pos;
+				if (nbtTargetTokensRemaining > 0 && (pos >= len || line.charAt(pos) != '[')) {
+					nbtTargetTokensRemaining--;
+				}
 				continue;
 			}
 
 			// Relative / local coordinates (~, ~1.5, ~-2, ^, ^0.5)
-			if ((c == '~' || c == '^') && braceDepth == 0 && bracketDepth == 0) {
+			if (!inContainer && (c == '~' || c == '^')) {
 				int end = scanCoordinate(line, pos);
 				emitWithMacroHighlights(out, line, pos, end, TokenKind.COORDINATE, macroLine);
 				pos = end;
 				expectCommandVerb = false;
+				canContinueNbtPath = false;
+				lastTopLevelKind = TokenKind.COORDINATE;
+				lastTopLevelEnd = pos;
+				if (nbtTargetTokensRemaining > 0) {
+					nbtTargetTokensRemaining--;
+				}
 				continue;
 			}
 
-			// Structured token inside SNBT / selector args vs top-level command argument
+			// Structured token inside SNBT / item components / selector args
 			int start = pos;
-			if (braceDepth > 0 || bracketDepth > 0) {
-				pos = scanStructuredAtom(line, pos, macroLine, expectValue);
+			if (inContainer) {
+				boolean keyContainsColon = topFrame.kind == ContainerKind.KV_BRACKET
+						|| (topFrame.kind == ContainerKind.COMPOUND && !topFrame.expectValue && looksLikeAssignmentKeyWithColon(line, pos));
+				pos = scanStructuredAtom(line, pos, macroLine, topFrame.expectValue || keyContainsColon);
 				String atom = line.substring(start, pos);
 				int look = skipWhitespace(line, pos);
 				TokenKind kind;
-				if (!expectValue && look < len && (line.charAt(look) == ':' || line.charAt(look) == '=')) {
+				boolean hasDelimiterAfter = look < len
+						&& (line.charAt(look) == ':' || line.charAt(look) == '=' || line.charAt(look) == '~');
+				boolean isRemovedComponent = topFrame.kind == ContainerKind.KV_BRACKET
+						&& !topFrame.expectValue
+						&& start > 0 && line.charAt(start - 1) == '!';
+				if (!topFrame.expectValue && topFrame.kind != ContainerKind.LIST_BRACKET
+						&& (hasDelimiterAfter || isRemovedComponent)) {
 					kind = TokenKind.PROPERTY;
 				} else if (isBooleanLiteral(atom)) {
 					kind = TokenKind.BOOLEAN;
@@ -244,34 +368,98 @@ public final class SyntaxHighlighter {
 				continue;
 			}
 
-			// Top-level command word
+			// Top-level command word or argument / NBT path
 			pos = scanTopLevelToken(line, pos, macroLine);
 			String token = line.substring(start, pos);
+			boolean followedByBracket = pos < len && line.charAt(pos) == '[';
+			boolean isKvBracketNext = followedByBracket && isKeyValueBracket(line, pos, isResourceIdentifier(token));
 			TokenKind kind;
 			if (expectCommandVerb) {
 				kind = TokenKind.COMMAND;
 				String verb = token.startsWith("/") ? token.substring(1) : token;
 				expectCommandVerb = false;
+				inDataOrStoreContext = "data".equals(verb);
+				nbtTargetTokensRemaining = 0;
+				expectNbtPathNext = false;
+				canContinueNbtPath = false;
 				if ("execute".equals(verb) || "return".equals(verb)) {
 					inExecuteOrReturn = true;
 				}
 			} else if (inExecuteOrReturn && "run".equals(token)) {
 				kind = TokenKind.KEYWORD;
 				expectCommandVerb = true;
+				inDataOrStoreContext = false;
+				nbtTargetTokensRemaining = 0;
+				expectNbtPathNext = false;
+				canContinueNbtPath = false;
 			} else if (EXECUTE_KEYWORDS.contains(token)) {
 				kind = TokenKind.KEYWORD;
+				canContinueNbtPath = false;
+				if ("data".equals(token) || "store".equals(token)) {
+					inDataOrStoreContext = true;
+				}
+				if (inDataOrStoreContext && ("entity".equals(token) || "storage".equals(token))) {
+					nbtTargetTokensRemaining = 1;
+					expectNbtPathNext = true;
+				} else if (inDataOrStoreContext && "block".equals(token)) {
+					nbtTargetTokensRemaining = 3;
+					expectNbtPathNext = true;
+				} else if ("set".equals(token) || "merge".equals(token) || "get".equals(token)
+						|| "remove".equals(token) || "from".equals(token) || "value".equals(token)) {
+					expectNbtPathNext = false;
+				}
 			} else if (isBooleanLiteral(token)) {
 				kind = TokenKind.BOOLEAN;
+				canContinueNbtPath = false;
 			} else if (isCoordinateToken(token)) {
 				kind = TokenKind.COORDINATE;
-			} else if (isNumberOrRange(token)) {
+				canContinueNbtPath = false;
+				if (nbtTargetTokensRemaining > 0) {
+					nbtTargetTokensRemaining--;
+				}
+			} else if (isNumberOrRange(token) || isSnbtNumberOrRange(token)) {
 				kind = TokenKind.NUMBER;
+				canContinueNbtPath = false;
 			} else if (isResourceIdentifier(token)) {
 				kind = TokenKind.IDENTIFIER;
+				canContinueNbtPath = false;
+				if (nbtTargetTokensRemaining > 0) {
+					nbtTargetTokensRemaining--;
+				}
+			} else if (isDottedNbtPath(token)) {
+				emitDottedNbtPath(out, line, start, pos, macroLine);
+				lastTopLevelKind = TokenKind.PROPERTY;
+				lastTopLevelEnd = pos;
+				if (nbtTargetTokensRemaining > 0) {
+					nbtTargetTokensRemaining--;
+				} else {
+					expectNbtPathNext = false;
+				}
+				canContinueNbtPath = true;
+				continue;
+			} else if (followedByBracket && !token.equals("*")) {
+				kind = isKvBracketNext ? TokenKind.IDENTIFIER : TokenKind.PROPERTY;
+				canContinueNbtPath = !isKvBracketNext;
+				if (isKvBracketNext && nbtTargetTokensRemaining > 0) {
+					nbtTargetTokensRemaining--;
+				} else if (!isKvBracketNext) {
+					expectNbtPathNext = false;
+				}
+			} else if (nbtTargetTokensRemaining > 0) {
+				kind = TokenKind.PLAIN;
+				nbtTargetTokensRemaining--;
+				canContinueNbtPath = false;
+			} else if (expectNbtPathNext) {
+				kind = TokenKind.PROPERTY;
+				expectNbtPathNext = false;
+				canContinueNbtPath = true;
 			} else {
 				kind = TokenKind.PLAIN;
+				canContinueNbtPath = false;
 			}
 			emitWithMacroHighlights(out, line, start, pos, kind, macroLine);
+			lastTopLevelKind = kind;
+			lastTopLevelEnd = pos;
 		}
 		return out;
 	}
@@ -425,16 +613,16 @@ public final class SyntaxHighlighter {
 		return pos == start ? start + 1 : pos;
 	}
 
-	private static int scanStructuredAtom(String line, int start, boolean macroLine, boolean expectValue) {
+	private static int scanStructuredAtom(String line, int start, boolean macroLine, boolean allowColon) {
 		int len = line.length();
 		int pos = start;
 		while (pos < len) {
 			char c = line.charAt(pos);
 			if (Character.isWhitespace(c) || c == '{' || c == '}' || c == '[' || c == ']'
-					|| c == ',' || c == '=' || c == '"' || c == '\'' || c == '!') {
+					|| c == ',' || c == '=' || c == '~' || c == '|' || c == '"' || c == '\'' || c == '!') {
 				break;
 			}
-			if (c == ':' && !expectValue) {
+			if (c == ':' && !allowColon) {
 				break;
 			}
 			if (macroLine && c == '$' && pos + 1 < len && line.charAt(pos + 1) == '(') {
@@ -447,6 +635,129 @@ public final class SyntaxHighlighter {
 			pos++;
 		}
 		return pos == start ? start + 1 : pos;
+	}
+
+	private static boolean isKeyValueBracket(String line, int bracketPos, boolean precededBySelectorOrItem) {
+		int len = line.length();
+		int i = skipWhitespace(line, bracketPos + 1);
+		if (i >= len) {
+			return precededBySelectorOrItem;
+		}
+		char first = line.charAt(i);
+		if (first == ']' || first == '{' || first == '"' || first == '\'' || first == '+' || first == '-' || Character.isDigit(first)) {
+			return false;
+		}
+		if (i + 1 < len && (first == 'B' || first == 'I' || first == 'L') && line.charAt(i + 1) == ';') {
+			return false;
+		}
+		int braceDepth = 0;
+		int bracketDepth = 0;
+		boolean inQuote = false;
+		char quote = 0;
+		for (int p = i; p < len; p++) {
+			char c = line.charAt(p);
+			if (inQuote) {
+				if (c == '\\' && p + 1 < len) {
+					p++;
+					continue;
+				}
+				if (c == quote) {
+					inQuote = false;
+				}
+				continue;
+			}
+			if (c == '"' || c == '\'') {
+				inQuote = true;
+				quote = c;
+				continue;
+			}
+			if (c == '{') {
+				braceDepth++;
+			} else if (c == '}' && braceDepth > 0) {
+				braceDepth--;
+			} else if (c == '[') {
+				bracketDepth++;
+			} else if (c == ']') {
+				if (bracketDepth == 0) {
+					break;
+				}
+				bracketDepth--;
+			} else if (braceDepth == 0 && bracketDepth == 0) {
+				if (c == '=') {
+					return true;
+				}
+				if (c == '~' || c == '!') {
+					return true;
+				}
+				if (c == ',') {
+					break;
+				}
+			}
+		}
+		return precededBySelectorOrItem;
+	}
+
+	private static boolean looksLikeAssignmentKeyWithColon(String line, int start) {
+		int len = line.length();
+		for (int p = start; p < len; p++) {
+			char c = line.charAt(p);
+			if (c == '=') {
+				return true;
+			}
+			if (c == ',' || c == '{' || c == '}' || c == '[' || c == ']' || Character.isWhitespace(c)) {
+				return false;
+			}
+		}
+		return false;
+	}
+
+	private static boolean isPathSegmentChar(char c) {
+		return Character.isLetterOrDigit(c) || c == '_' || c == '-';
+	}
+
+	private static boolean isDottedNbtPath(String token) {
+		int dot = token.indexOf('.');
+		if (dot <= 0 || dot >= token.length() - 1 || token.contains("..") || token.indexOf(':') >= 0) {
+			return false;
+		}
+		if (token.startsWith("/") || token.startsWith("$") || token.startsWith("~") || token.startsWith("^")) {
+			return false;
+		}
+		String[] parts = token.split("\\.", -1);
+		if (parts.length < 2) {
+			return false;
+		}
+		for (String part : parts) {
+			if (part.isEmpty()) {
+				return false;
+			}
+			char first = part.charAt(0);
+			if (!(Character.isLetter(first) || first == '_')) {
+				return false;
+			}
+			for (int i = 1; i < part.length(); i++) {
+				if (!isPathSegmentChar(part.charAt(i))) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	private static void emitDottedNbtPath(List<TokenSpan> out, String line, int start, int end, boolean macroLine) {
+		int cursor = start;
+		while (cursor < end) {
+			int dot = line.indexOf('.', cursor);
+			if (dot < 0 || dot >= end) {
+				emitWithMacroHighlights(out, line, cursor, end, TokenKind.PROPERTY, macroLine);
+				return;
+			}
+			if (dot > cursor) {
+				emitWithMacroHighlights(out, line, cursor, dot, TokenKind.PROPERTY, macroLine);
+			}
+			out.add(span(dot, dot + 1, TokenKind.PLAIN));
+			cursor = dot + 1;
+		}
 	}
 
 	private static int skipWhitespace(String line, int pos) {
@@ -522,14 +833,51 @@ public final class SyntaxHighlighter {
 				return false;
 			}
 		}
+		// Hexadecimal literal (0xFF)
+		if (i + 2 < text.length() && text.charAt(i) == '0' && (text.charAt(i + 1) == 'x' || text.charAt(i + 1) == 'X')) {
+			i += 2;
+			boolean sawHex = false;
+			for (; i < text.length(); i++) {
+				char c = text.charAt(i);
+				if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+					sawHex = true;
+				} else if (c != '_' || !sawHex) {
+					return false;
+				}
+			}
+			return sawHex;
+		}
+		// Binary literal (0b1010)
+		if (i + 2 < text.length() && text.charAt(i) == '0' && (text.charAt(i + 1) == 'b' || text.charAt(i + 1) == 'B')) {
+			i += 2;
+			boolean sawBin = false;
+			for (; i < text.length(); i++) {
+				char c = text.charAt(i);
+				if (c == '0' || c == '1') {
+					sawBin = true;
+				} else if (c != '_' || !sawBin) {
+					return false;
+				}
+			}
+			return sawBin;
+		}
 		boolean sawDigit = false;
 		boolean sawDot = false;
+		boolean sawExp = false;
 		for (; i < text.length(); i++) {
 			char c = text.charAt(i);
 			if (Character.isDigit(c)) {
 				sawDigit = true;
-			} else if (c == '.' && !sawDot) {
+			} else if (c == '_' && sawDigit) {
+				// numeric separator
+			} else if (c == '.' && !sawDot && !sawExp) {
 				sawDot = true;
+			} else if ((c == 'e' || c == 'E') && sawDigit && !sawExp) {
+				sawExp = true;
+				sawDigit = false; // require at least one exponent digit
+				if (i + 1 < text.length() && (text.charAt(i + 1) == '+' || text.charAt(i + 1) == '-')) {
+					i++;
+				}
 			} else {
 				return false;
 			}
